@@ -106,15 +106,33 @@ async function fetchLayerOnce(def) {
   };
 }
 
+const loadedLayers = [];
+const layerListeners = new Set();
+
+export function subscribeLayers(listener) {
+  loadedLayers.forEach(listener);
+  layerListeners.add(listener);
+  return () => layerListeners.delete(listener);
+}
+
+function publishLayer(layer) {
+  loadedLayers.push(layer);
+  layerListeners.forEach((listener) => listener(layer));
+}
+
 async function describeService() {
   const layers = [];
-  for (const def of LRS_LAYER_DEFS) {
+  const pointFirst = [...LRS_LAYER_DEFS].sort((a, b) => Number(b.kind === "point") - Number(a.kind === "point"));
+  for (const def of pointFirst) {
+    let layer;
     try {
-      layers.push(await fetchLayerOnce(def));
+      layer = await fetchLayerOnce(def);
     } catch (error) {
       console.error(def.title, error);
-      layers.push({ id: def.id, name: def.title, features: [], fields: [], oidField: "OBJECTID", geometryType: def.kind === "point" ? "point" : "polyline", routeField: null, fromField: null, toField: null, def });
+      layer = { id: def.id, name: def.title, features: [], fields: [], oidField: "OBJECTID", geometryType: def.kind === "point" ? "point" : "polyline", routeField: null, fromField: null, toField: null, def };
     }
+    layers.push(layer);
+    publishLayer(layer);
   }
   const centerline = layers.find((layer) => layer.def.route);
   if (!centerline) throw new Error("Road Network was not loaded");
