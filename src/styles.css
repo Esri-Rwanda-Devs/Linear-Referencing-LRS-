@@ -98,6 +98,38 @@ main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(24
 .legend button.off { opacity: 0.45; }
 .legend input { margin: 0; pointer-events: none; }
 .legend i { width: 8px; height: 8px; border-radius: 999px; display: inline-block; border: 1px solid rgba(255,255,255,0.7); flex: none; }
+.map-loader {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(120, 53, 15, 0.92);
+  color: #fff7ed;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.map-loader .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 247, 237, 0.35);
+  border-top-color: #fff7ed;
+  border-radius: 50%;
+  animation: lrs-spin 0.8s linear infinite;
+}
+
+@keyframes lrs-spin {
+  to { transform: rotate(360deg); }
+}
+
 .cursor-card {
   position: absolute;
   top: 12px;

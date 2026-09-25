@@ -1,5 +1,5 @@
 import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS } from "../config";
-import { buildRoute, flattenPaths, lineMeasureSpan, locateOnRoute } from "./geometry";
+import { buildRoute, flattenPaths, lineMeasureSpan, locateOnRoute, toLonLat } from "./geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
@@ -168,9 +168,13 @@ export async function loadLayerCache() {
   return service();
 }
 
+function routeFieldOf(centerline) {
+  return centerline.routeField || centerline.fields.find((item) => item.type === "esriFieldTypeString" && !/globalid|objectid/i.test(item.name))?.name || null;
+}
+
 export async function loadRouteCatalog() {
   const { centerline } = await service();
-  const field = centerline.routeField || centerline.fields.find((item) => item.type === "esriFieldTypeString" && !/globalid|objectid/i.test(item.name))?.name;
+  const field = routeFieldOf(centerline);
   if (!field) throw new Error("Road Network has no route id field");
   const codeField = pickField(centerline.fields, CODE_FIELDS);
   const features = centerline.features;
@@ -186,8 +190,10 @@ export async function loadRouteCatalog() {
 
 export async function loadRoute(routeId) {
   const { centerline } = await service();
-  const field = centerline.routeField;
-  const features = centerline.features.filter((feature) => String(feature.attributes[field] ?? "") === routeId);
+  const field = routeFieldOf(centerline);
+  const wanted = String(routeId).trim();
+  const features = centerline.features.filter((feature) => String(feature.attributes[field] ?? "").trim() === wanted);
+  if (!features.length) throw new Error(`No Road Network geometry found for route ${wanted}`);
   const route = buildRoute(features);
   const codeField = pickField(centerline.fields, CODE_FIELDS);
   const code = codeField ? features.map((feature) => feature.attributes[codeField]).find(Boolean) : "";
@@ -205,7 +211,29 @@ export async function loadRoute(routeId) {
 
 function matchesRoute(layer, feature, route) {
   if (!layer.routeField) return true;
-  return String(feature.attributes[layer.routeField] ?? "") === String(route.id);
+  return String(feature.attributes[layer.routeField] ?? "").trim() === String(route.id).trim();
+}
+
+function routeBox(route, padDeg) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  route.vertices.forEach(([x, y]) => {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  });
+  return { minX: minX - padDeg, minY: minY - padDeg, maxX: maxX + padDeg, maxY: maxY + padDeg };
+}
+
+function nearBox(feature, box) {
+  const g = feature.geometry;
+  if (!g) return false;
+  const first = g.x !== undefined ? [g.x, g.y] : (g.paths?.[0]?.[0] || g.curvePaths?.[0]?.[0]);
+  const at = first ? toLonLat(first[0], first[1]) : null;
+  return Boolean(at) && at[0] >= box.minX && at[0] <= box.maxX && at[1] >= box.minY && at[1] <= box.maxY;
 }
 
 export async function loadEvents(route) {
@@ -216,7 +244,11 @@ export async function loadEvents(route) {
 
   for (const layer of layers) {
     if (layer.def.route) continue;
-    const features = layer.features.filter((feature) => matchesRoute(layer, feature, route));
+    let features = layer.features.filter((feature) => matchesRoute(layer, feature, route));
+    if (!features.length && route.vertices?.length) {
+      const box = routeBox(route, 0.01);
+      features = layer.features.filter((feature) => nearBox(feature, box));
+    }
     mapLayers.push({ id: layer.id, title: layer.name });
     features.forEach((feature, index) => {
       const name = titleOf(feature.attributes, layer.routeField);
@@ -230,7 +262,9 @@ export async function loadEvents(route) {
         return;
       }
       if (feature.geometry?.x !== undefined) {
-        const hit = locateOnRoute(route.vertices, route.measures, [feature.geometry.x, feature.geometry.y], maxKm * 4);
+        const locatedPoint = toLonLat(feature.geometry.x, feature.geometry.y);
+        if (!locatedPoint) return;
+        const hit = locateOnRoute(route.vertices, route.measures, locatedPoint, maxKm * 8);
         if (!hit) return;
         events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, hit.point));
         return;

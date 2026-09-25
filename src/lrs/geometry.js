@@ -101,12 +101,25 @@ export function densifyCurvePath(parts) {
   return points;
 }
 
+export function toLonLat(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (Math.abs(x) <= 180 && Math.abs(y) <= 90) return [x, y];
+  const origin = 20037508.342789244;
+  const lon = (x / origin) * 180;
+  const lat = (180 / Math.PI) * (2 * Math.atan(Math.exp((y / origin) * Math.PI)) - Math.PI / 2);
+  return [lon, lat];
+}
+
+function asLonLatPath(path) {
+  return path.map((point) => toLonLat(point[0], point[1])).filter(Boolean);
+}
+
 export function flattenPaths(geometry) {
   if (geometry?.curvePaths?.length) {
-    return geometry.curvePaths.map(densifyCurvePath).filter((path) => path.length > 1);
+    return geometry.curvePaths.map((part) => asLonLatPath(densifyCurvePath(part))).filter((path) => path.length > 1);
   }
   const paths = geometry?.paths || [];
-  return paths.map((path) => path.map((point) => [point[0], point[1]])).filter((path) => path.length > 1);
+  return paths.map((path) => asLonLatPath(path)).filter((path) => path.length > 1);
 }
 
 function endpointKey(pt) {

@@ -1,4 +1,5 @@
-import { GROUPS } from "../config";
+import { useEffect, useRef } from "react";
+import { GROUPS, LRS_LAYER_DEFS } from "../config";
 
 const ROW_H = 22;
 const GROUP_H = 18;
@@ -7,10 +8,10 @@ const AXIS_H = 28;
 function rowsFor(events) {
   const rows = [];
   GROUPS.forEach((group) => {
-    const titles = [...new Set(events.filter((event) => event.group === group.id).map((event) => event.title))];
-    if (!titles.length && group.id !== "PLN") return;
+    const layers = LRS_LAYER_DEFS.filter((layer) => layer.group === group.id);
+    if (!layers.length && group.id !== "PLN") return;
     rows.push({ type: "group", ...group });
-    titles.forEach((title) => rows.push({ type: "layer", group: group.id, title, color: group.color }));
+    layers.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.shape, layerId: layer.id }));
     if (group.id === "PLN") rows.push({ type: "layer", group: "PLN", title: "Projects", color: group.color });
   });
   return rows;
@@ -52,10 +53,25 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
   const ticks = [];
   const step = span > 40 ? 5 : span > 16 ? 2 : 1;
   for (let m = Math.ceil(from); m <= to; m += step) ticks.push(m);
+  const svgRef = useRef(null);
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!node) return undefined;
+    const onWheel = (event) => {
+      event.preventDefault();
+      const delta = event.deltaY > 0 ? span * 0.08 : -span * 0.08;
+      const mid = (from + to) / 2;
+      const next = Math.max(2, span + delta);
+      onWindow(mid - next / 2, mid + next / 2);
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, [from, to, span, onWindow]);
 
   return (
     <div className="chart-wrap">
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         className="chart"
         onMouseMove={(event) => {
@@ -65,13 +81,6 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
         onClick={(event) => {
           const measure = measureOf(event.clientX, event.currentTarget);
           if (measure >= from && measure <= to) onHoverMeasure(measure);
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const delta = event.deltaY > 0 ? span * 0.08 : -span * 0.08;
-          const mid = (from + to) / 2;
-          const next = Math.max(2, span + delta);
-          onWindow(mid - next / 2, mid + next / 2);
         }}
       >
         <rect x="0" y="0" width={width} height={height} fill="#f8fafc" />
@@ -99,10 +108,11 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
               title: "Projects",
               group: "PLN",
             }))
-            : events.filter((item) => item.group === row.group && item.title === row.title);
+            : events.filter((item) => item.layerId === row.layerId);
           return (
             <g key={`${row.group}-${row.title}`}>
-              <text x="14" y={y + 15} fill="#334155" fontSize="11">{row.title}</text>
+              <circle cx="10" cy={yMid} r="4" fill={row.color} stroke="#fff" strokeWidth="0.6" />
+              <text x="20" y={y + 15} fill="#334155" fontSize="11">{row.title}</text>
               <line x1={labelW} x2={width - 8} y1={yMid} y2={yMid} stroke="#e2e8f0" />
               {rowEvents.map((item) => {
                 if (item.to < from || item.from > to) return null;

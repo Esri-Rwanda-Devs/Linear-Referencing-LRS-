@@ -30,7 +30,7 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [activeEvent, setActiveEvent] = useState(null);
   const [mapLayers, setMapLayers] = useState([]);
-  const [hiddenLayerIds, setHiddenLayerIds] = useState([]);
+  const [hiddenLayerIds, setHiddenLayerIds] = useState(() => LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id));
 
   useEffect(() => {
     loadRouteCatalog()
@@ -104,9 +104,12 @@ export default function App() {
 
   const onHoverLonLat = useCallback((longitude, latitude) => {
     if (!route) return;
-    const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.15);
+    const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.25);
     if (!hit) return;
-    setCursor((current) => (current && Math.abs(current.measure - hit.measure) < 0.03 ? current : { measure: hit.measure, source: "map" }));
+    setCursor((current) => {
+      if (current && Math.abs(current.measure - hit.measure) < 0.05) return current;
+      return { measure: hit.measure, source: "map" };
+    });
     if (follow) {
       setWindowKm((prev) => {
         const span = prev[1] - prev[0];
@@ -118,7 +121,15 @@ export default function App() {
   }, [route, follow]);
 
   const onLeave = useCallback(() => {}, []);
+  const [focusing, setFocusing] = useState(null);
   const mapRef = useRoadMap({
+    onFocusChange: setFocusing,
+    onPickRoute: (id) => {
+      setRouteId(id);
+      setActiveId(null);
+      setActiveEvent(null);
+      setFollow(true);
+    },
     route,
     cursor,
     project: activeProject,
@@ -183,6 +194,12 @@ export default function App() {
         <main>
           <section className="map-pane">
             <div ref={mapRef} className="map" />
+            {(focusing || (routeId && !route && status.startsWith("Signing in"))) && (
+              <div className="map-loader" role="status">
+                <span className="spinner" />
+                {focusing || `Loading route ${routeId}…`}
+              </div>
+            )}
             <ul className="legend">
               {LRS_LAYER_DEFS.map((layer) => {
                 const hidden = hiddenLayerIds.includes(layer.id);
