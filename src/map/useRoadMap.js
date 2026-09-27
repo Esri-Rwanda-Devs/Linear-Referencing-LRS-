@@ -61,7 +61,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter] = mods;
       const overlay = new GraphicsLayer({ id: "lrs-overlay", listMode: "hide" });
       const cursorLayer = new GraphicsLayer({ id: "lrs-cursor", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [overlay, cursorLayer] });
+      const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [overlay, projectLayer, cursorLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -99,7 +100,9 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         const graphicsLayer = lrsLayers[index];
         if (!graphicsLayer) return;
         const symbol = layer.def.kind === "point"
-          ? new SimpleMarkerSymbol({ style: "circle", color: layer.def.color, size: 8, outline: { color: [255, 255, 255, 0.95], width: 1 } })
+          ? new SimpleMarkerSymbol(layer.def.shape === "x"
+            ? { style: "x", color: layer.def.color, size: 9, outline: { color: layer.def.color, width: 2.5 } }
+            : { style: layer.def.shape || "circle", color: layer.def.color, size: layer.def.shape === "triangle" ? 10 : 8, outline: { color: [255, 255, 255, 0.95], width: 1 } })
           : new SimpleLineSymbol({ color: layer.def.color, width: layer.def.width || 2.5, cap: "round", join: "round" });
         const graphics = [];
         layer.features.forEach((feature) => {
@@ -184,7 +187,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           styleLayer(source, lrsLayers[index], activeRoute);
         });
       };
-      api.current = { view, map, overlay, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       setReady(true);
     });
     return () => {
@@ -213,25 +216,6 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       overlay.add(new Graphic({ geometry, symbol: ink }));
     });
 
-    if (project) {
-      const slice = sliceVertices(route.vertices, route.measures, project.startKm, project.endKm);
-      if (slice.length > 1) {
-        const segment = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
-        const buffer = geometryEngine.geodesicBuffer(segment, project.bufferM || 80, "meters");
-        overlay.add(new Graphic({
-          geometry: buffer,
-          symbol: new SimpleFillSymbol({
-            color: [244, 114, 182, 0.28],
-            outline: { color: [190, 24, 93, 0.9], width: 1.5 },
-          }),
-        }));
-        overlay.add(new Graphic({
-          geometry: segment,
-          symbol: new SimpleLineSymbol({ color: [190, 24, 93], width: 6 }),
-        }));
-      }
-    }
-
     const target = curved.length ? curved : line;
     const label = `${route.id}${route.trajectory && route.trajectory !== route.id ? ` · ${route.trajectory}` : ""}`;
     const started = performance.now();
@@ -245,6 +229,31 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         if (error?.name !== "AbortError") console.warn(`[LRS] Could not zoom to route ${label}`, error);
       })
       .finally(() => focusRef.current?.(null));
+  }, [route, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.projectLayer) return;
+    const { projectLayer, Graphic, Polyline, Point, geometryEngine, SimpleFillSymbol, SimpleLineSymbol, SimpleMarkerSymbol } = bag;
+    projectLayer.removeAll();
+    if (!route || !project) return;
+    const slice = sliceVertices(route.vertices, route.measures, project.startKm, project.endKm);
+    if (slice.length > 1) {
+      const segment = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
+      const buffer = geometryEngine.geodesicBuffer(segment, Number(project.bufferM) || 80, "meters");
+      projectLayer.add(new Graphic({
+        geometry: buffer,
+        symbol: new SimpleFillSymbol({ color: [244, 114, 182, 0.28], outline: { color: [190, 24, 93, 0.9], width: 1.5 } }),
+      }));
+      projectLayer.add(new Graphic({ geometry: segment, symbol: new SimpleLineSymbol({ color: [190, 24, 93], width: 6 }) }));
+    }
+    (project.attached || []).forEach((item) => {
+      if (!item.point) return;
+      projectLayer.add(new Graphic({
+        geometry: new Point({ longitude: item.point[0], latitude: item.point[1] }),
+        symbol: new SimpleMarkerSymbol({ style: "circle", color: [255, 255, 255, 0], size: 16, outline: { color: [190, 24, 93], width: 3 } }),
+      }));
+    });
   }, [route, project, ready]);
 
   useEffect(() => {

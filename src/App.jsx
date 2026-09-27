@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Planner from "./components/Planner";
-import StripChart from "./components/StripChart";
+import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
 import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog } from "./lrs/lrsService";
 import { locateOnRoute } from "./lrs/geometry";
@@ -179,11 +179,18 @@ export default function App() {
           route={route}
           windowKm={windowKm}
           projects={routeProjects}
+          events={events}
           activeId={activeId}
           onSelect={(project) => {
             setActiveId(project.id);
-            setWindowKm([project.startKm, project.endKm]);
+            const pad = Math.max(0.2, (project.endKm - project.startKm) * 0.1);
+            setWindowKm([Math.max(0, project.startKm - pad), project.endKm + pad]);
             setFollow(false);
+          }}
+          onUpdate={(next) => setProjects((prev) => prev.map((project) => (project.id === next.id ? next : project)))}
+          onDelete={(target) => {
+            setProjects((prev) => prev.filter((project) => project.id !== target.id));
+            setActiveId(null);
           }}
           onCreate={(draft) => {
             const project = { ...draft, id: `p-${Date.now()}` };
@@ -214,7 +221,9 @@ export default function App() {
                       ))}
                     >
                       <input type="checkbox" readOnly checked={!hidden} />
-                      <i style={{ background: layer.swatch }} />
+                      <svg className="legend-symbol" width="14" height="14" viewBox="0 0 14 14">
+                        <ChartSymbol shape={layer.kind === "point" ? layer.shape : "bar"} color={layer.swatch} x={7} y={7} size={0.9} />
+                      </svg>
                       {layer.title}
                     </button>
                   </li>
@@ -293,6 +302,7 @@ export default function App() {
                   setCursor({ measure: clamped, source: "chart" });
                 }}
                 activeEventId={activeEvent?.id}
+                attachedIds={(activeProject?.attached || []).map((item) => item.id)}
                 onSelectEvent={focusEvent}
                 onPickProject={(project) => setActiveId(project.id)}
               />

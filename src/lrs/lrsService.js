@@ -5,7 +5,9 @@ const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid"
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
 const TO_FIELDS = ["tomeasure", "to_measure", "endmeasure", "tom", "tokm", "endmeasure"];
 const CODE_FIELDS = ["routecode", "route_code", "roadcode", "road_code", "routename", "route_name"];
-const LABEL_FIELDS = ["routecode", "route_code", "routename", "name", "assetname", "eventname", "type", "pavementtype", "draintype", "speed", "speedlimit", "description", "remarks"];
+const LABEL_FIELDS = ["name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drain_type", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
+const SKIP_LABEL = /globalid|objectid|guid|date|created|edited|user|shape|routeid|route_id|measure|^fid$/i;
+const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
 
 let session = null;
 
@@ -54,15 +56,21 @@ function pickField(fields, candidates) {
   return names.find((name) => /routeid/i.test(name)) || null;
 }
 
-function titleOf(attributes, routeField) {
+function usableLabel(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value).trim();
+  return text && !GUID.test(text) ? text : "";
+}
+
+function titleOf(attributes, routeField, fallbackTitle = "Event") {
+  const keys = Object.keys(attributes);
   for (const field of LABEL_FIELDS) {
-    const key = Object.keys(attributes).find((name) => name.toLowerCase() === field);
-    if (key && attributes[key]) return String(attributes[key]);
+    const key = keys.find((name) => name.toLowerCase() === field);
+    const text = key ? usableLabel(attributes[key]) : "";
+    if (text) return text;
   }
-  const fallback = Object.entries(attributes).find(([name, value]) => {
-    return name !== routeField && typeof value === "string" && value.trim();
-  });
-  return fallback ? fallback[1] : "Event";
+  const fallback = keys.find((name) => name !== routeField && !SKIP_LABEL.test(name) && typeof attributes[name] === "string" && usableLabel(attributes[name]));
+  return fallback ? usableLabel(attributes[fallback]) : fallbackTitle;
 }
 
 function fieldsOf(features) {
@@ -251,7 +259,7 @@ export async function loadEvents(route) {
     }
     mapLayers.push({ id: layer.id, title: layer.name });
     features.forEach((feature, index) => {
-      const name = titleOf(feature.attributes, layer.routeField);
+      const name = titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toValue = layer.toField ? Number(feature.attributes[layer.toField]) : fromValue;
       const hasMeasure = Number.isFinite(fromValue);
@@ -266,7 +274,7 @@ export async function loadEvents(route) {
         if (!locatedPoint) return;
         const hit = locateOnRoute(route.vertices, route.measures, locatedPoint, maxKm * 8);
         if (!hit) return;
-        events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, hit.point));
+        events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, locatedPoint, hit.distanceKm * 1000));
         return;
       }
       const span = lineMeasureSpan(route.vertices, route.measures, flattenPaths(feature.geometry), maxKm * 4);
@@ -278,13 +286,13 @@ export async function loadEvents(route) {
 }
 
 function featurePoint(feature) {
-  if (feature.geometry?.x !== undefined) return [feature.geometry.x, feature.geometry.y];
-  const path = feature.geometry?.paths?.[0];
+  if (feature.geometry?.x !== undefined) return toLonLat(feature.geometry.x, feature.geometry.y);
+  const path = flattenPaths(feature.geometry)[0];
   if (path?.length) return path[Math.floor(path.length / 2)];
   return null;
 }
 
-function eventRecord(layer, feature, index, name, from, to, point) {
+function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0) {
   return {
     id: `${layer.id}-${feature.attributes.OBJECTID || feature.attributes.objectid || index}`,
     layerId: layer.id,
@@ -293,12 +301,12 @@ function eventRecord(layer, feature, index, name, from, to, point) {
     name,
     shape: layer.def.shape,
     color: layer.def.swatch,
-    kind: to - from > 0.02 ? "span" : "point",
+    kind: layer.def.kind === "point" || to - from <= 0.02 ? "point" : "span",
     from,
     to,
     measure: (from + to) / 2,
     point,
-    distanceM: 0,
+    distanceM,
   };
 }
 

@@ -36,13 +36,13 @@ export const LRS_LAYER_DEFS = [
   { id: 7, title: "Drain Type", group: "ATT", kind: "line", shape: "bar", color: [34, 211, 238, 0.9], width: 2, swatch: "#22d3ee" },
   { id: 5, title: "Speed Limit", group: "ATT", kind: "line", shape: "bar", color: [74, 222, 128, 0.95], width: 2.5, swatch: "#4ade80" },
   { id: 2, title: "Carriageway Type", group: "ATT", kind: "line", shape: "bar", color: [196, 181, 253, 0.95], width: 2, swatch: "#c4b5fd" },
-  { id: 13, title: "Bridges", group: "POI", kind: "point", shape: "circle", color: [255, 255, 255, 0.95], swatch: "#ffffff" },
-  { id: 12, title: "Calibration Points", group: "POI", kind: "point", shape: "circle", color: [45, 212, 191, 0.95], swatch: "#2dd4bf" },
-  { id: 11, title: "Transformers", group: "POI", kind: "point", shape: "circle", color: [232, 121, 249, 0.95], swatch: "#e879f9" },
-  { id: 10, title: "Culverts", group: "POI", kind: "point", shape: "circle", color: [253, 186, 116, 0.95], swatch: "#fdba74" },
-  { id: 9, title: "LV Supports", group: "POI", kind: "point", shape: "circle", color: [250, 204, 21, 0.95], swatch: "#facc15" },
-  { id: 6, title: "Point Assets", group: "POI", kind: "point", shape: "circle", color: [96, 165, 250, 0.95], swatch: "#60a5fa" },
-  { id: 0, title: "KM Stones", group: "POI", kind: "point", shape: "circle", color: [244, 114, 182, 0.95], swatch: "#f472b6" },
+  { id: 13, title: "Bridges", group: "POI", kind: "point", shape: "square", color: [30, 41, 59, 0.95], swatch: "#1e293b" },
+  { id: 12, title: "Calibration Points", group: "POI", kind: "point", shape: "diamond", color: [13, 148, 136, 0.95], swatch: "#0d9488" },
+  { id: 11, title: "Transformers", group: "POI", kind: "point", shape: "triangle", color: [192, 38, 211, 0.95], swatch: "#c026d3" },
+  { id: 10, title: "Culverts", group: "POI", kind: "point", shape: "x", color: [234, 88, 12, 0.95], swatch: "#ea580c" },
+  { id: 9, title: "LV Supports", group: "POI", kind: "point", shape: "triangle", color: [22, 163, 74, 0.95], swatch: "#16a34a" },
+  { id: 6, title: "Point Assets", group: "POI", kind: "point", shape: "circle", color: [37, 99, 235, 0.95], swatch: "#2563eb" },
+  { id: 0, title: "KM Stones", group: "POI", kind: "point", shape: "diamond", color: [219, 39, 119, 0.95], swatch: "#db2777" },
 ];
 
 export const RWANDA_EXTENT = {

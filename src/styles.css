@@ -98,6 +98,47 @@ main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(24
 .legend button.off { opacity: 0.45; }
 .legend input { margin: 0; pointer-events: none; }
 .legend i { width: 8px; height: 8px; border-radius: 999px; display: inline-block; border: 1px solid rgba(255,255,255,0.7); flex: none; }
+.legend-symbol { flex: none; background: rgba(255, 255, 255, 0.92); border-radius: 3px; }
+
+.project-editor {
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fffbf5;
+  display: grid;
+  gap: 8px;
+}
+.project-editor label { margin: 0; }
+.project-editor input[type="range"] { width: 100%; accent-color: #be185d; }
+.project-editor .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.attach-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.attach-head strong { flex: 1; }
+.attach-head button, .project-editor .danger {
+  width: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid #e7e5e4;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.project-editor .danger { color: #b91c1c; border-color: #fecaca; justify-self: start; }
+.attach-list { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow: auto; border-top: 1px solid #f5e6d8; }
+.attach-item {
+  display: grid !important;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: #292524;
+  border-bottom: 1px solid #f5e6d8;
+  cursor: pointer;
+}
+.attach-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-item em { color: #78716c; font-style: normal; font-size: 11px; }
+.attach-count { margin: 0; font-size: 12px; color: #9d174d; font-weight: 600; }
 .map-loader {
   position: absolute;
   top: 50%;
