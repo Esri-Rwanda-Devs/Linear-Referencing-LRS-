@@ -166,15 +166,15 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Rwanda Space Agency · Linear referencing</p>
-          <h1>Inline asset chart</h1>
+          {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
+          <h1>Asset Mapping System</h1>
         </div>
-        <p className="source">
+        {/* <p className="source">
           Signin to Road_Asset_LRS_Map to view the map.
-        </p>
+        </p> */}
       </header>
       <div className="workspace">
-        <Planner
+        {/* <Planner
           route={route}
           windowKm={windowKm}
           projects={routeProjects}
@@ -196,7 +196,7 @@ export default function App() {
             setProjects((prev) => [project, ...prev]);
             setActiveId(project.id);
           }}
-        />
+        /> */}
         <main>
           <section className="map-pane">
             <div ref={mapRef} className="map" />
