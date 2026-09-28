@@ -342,6 +342,43 @@ export function featuresAtMeasure(events, measure, toleranceKm = 0.35) {
   });
 }
 
+/** Point assets and per-value attribute lengths for the stretch from–to of the loaded route. */
+export function summariseSegment(events, from, to) {
+  const order = (layerId) => LRS_LAYER_DEFS.findIndex((def) => def.id === layerId);
+  const points = new Map();
+  const spans = new Map();
+  events.forEach((event) => {
+    if (event.kind !== "span") {
+      if (event.measure < from || event.measure > to) return;
+      const layer = points.get(event.layerId) || { layerId: event.layerId, title: event.title, shape: event.shape, color: event.color, items: [] };
+      layer.items.push(event);
+      points.set(event.layerId, layer);
+      return;
+    }
+    const overlap = Math.min(to, event.to) - Math.max(from, event.from);
+    if (overlap <= 0) return;
+    const layer = spans.get(event.layerId) || { layerId: event.layerId, title: event.title, color: event.color, byName: new Map() };
+    layer.byName.set(event.name, (layer.byName.get(event.name) || 0) + overlap);
+    spans.set(event.layerId, layer);
+  });
+  const pointLayers = [...points.values()]
+    .map((layer) => ({ ...layer, items: layer.items.sort((a, b) => a.measure - b.measure) }))
+    .sort((a, b) => order(a.layerId) - order(b.layerId));
+  const spanLayers = [...spans.values()].map((layer) => {
+    const coveredKm = [...layer.byName.values()].reduce((sum, value) => sum + value, 0);
+    const values = [...layer.byName.entries()]
+      .map(([name, value]) => ({ name, km: value, share: coveredKm ? value / coveredKm : 0 }))
+      .sort((a, b) => b.km - a.km);
+    return { layerId: layer.layerId, title: layer.title, color: layer.color, coveredKm, values };
+  }).sort((a, b) => order(a.layerId) - order(b.layerId));
+  return {
+    lengthKm: to - from,
+    pointCount: pointLayers.reduce((sum, layer) => sum + layer.items.length, 0),
+    points: pointLayers,
+    spans: spanLayers,
+  };
+}
+
 const roadPaths = new WeakMap();
 
 /** Road Network routes within maxKm of [lon, lat], nearest first, one entry per route id. */

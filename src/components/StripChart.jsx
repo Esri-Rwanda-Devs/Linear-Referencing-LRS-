@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GROUPS, LRS_LAYER_DEFS } from "../config";
 
 const ROW_H = 20;
@@ -111,7 +111,8 @@ function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   );
 }
 
-export default function StripChart({ events, projects, route, windowKm, cursor, activeEventId, attachedIds, onWindow, onHoverMeasure, onPickProject, onSelectEvent }) {
+export default function StripChart({ events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
+  const [drag, setDrag] = useState(null);
   const rows = rowsFor();
   const labelW = 150;
   const width = 1100;
@@ -159,12 +160,26 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
-        className="chart"
+        className={`chart${selectingSegment ? " selecting" : ""}`}
+        onMouseDown={(event) => {
+          if (!selectingSegment) return;
+          const measure = Math.max(from, Math.min(to, measureOf(event.clientX, event.currentTarget)));
+          event.preventDefault();
+          setDrag({ start: measure, end: measure });
+        }}
         onMouseMove={(event) => {
           const measure = measureOf(event.clientX, event.currentTarget);
+          if (drag) setDrag({ ...drag, end: Math.max(from, Math.min(to, measure)) });
           if (measure >= from && measure <= to) onHoverMeasure(measure);
         }}
+        onMouseUp={() => {
+          if (!drag) return;
+          if (Math.abs(drag.end - drag.start) > span * 0.005) onSegment?.(drag.start, drag.end);
+          setDrag(null);
+        }}
+        onMouseLeave={() => setDrag(null)}
         onClick={(event) => {
+          if (selectingSegment) return;
           const measure = measureOf(event.clientX, event.currentTarget);
           if (measure >= from && measure <= to) onHoverMeasure(measure);
         }}
@@ -265,6 +280,23 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
             </g>
           );
         })}
+        {(() => {
+          const band = drag ? { from: Math.min(drag.start, drag.end), to: Math.max(drag.start, drag.end) } : segment;
+          if (!band || band.to < from || band.from > to) return null;
+          const x1 = clampX(xOf(band.from));
+          const x2 = clampX(xOf(band.to));
+          return (
+            <g pointerEvents="none">
+              <rect x={x1} y={AXIS_H - 4} width={Math.max(1, x2 - x1)} height={height - AXIS_H} fill="#facc15" opacity="0.14" />
+              <line x1={x1} x2={x1} y1={AXIS_H - 4} y2={height - 4} stroke="#ca8a04" strokeWidth="1.2" strokeDasharray="3 2" />
+              <line x1={x2} x2={x2} y1={AXIS_H - 4} y2={height - 4} stroke="#ca8a04" strokeWidth="1.2" strokeDasharray="3 2" />
+              <text x={(x1 + x2) / 2} y={AXIS_H + 2} textAnchor="middle" fontSize="8" fontWeight="700" fill="#854d0e"
+                stroke="rgba(255,255,255,0.9)" strokeWidth="2" paintOrder="stroke">
+                {`${band.from.toFixed(2)} – ${band.to.toFixed(2)} km (${(band.to - band.from).toFixed(2)} km)`}
+              </text>
+            </g>
+          );
+        })()}
         {cursor && cursor.measure >= from && cursor.measure <= to && (
           <g pointerEvents="none">
             <line x1={xOf(cursor.measure)} x2={xOf(cursor.measure)} y1="20" y2={height - 2} stroke="#ea580c" strokeWidth="2" />

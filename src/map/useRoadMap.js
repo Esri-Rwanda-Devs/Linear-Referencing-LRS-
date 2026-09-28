@@ -41,7 +41,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
@@ -69,7 +69,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       const cursorLayer = new GraphicsLayer({ id: "lrs-cursor", listMode: "hide" });
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
       const analysisLayer = new GraphicsLayer({ id: "lrs-analysis", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, overlay, projectLayer, cursorLayer] });
+      const segmentLayer = new GraphicsLayer({ id: "lrs-segment", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, overlay, segmentLayer, projectLayer, cursorLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -94,7 +95,12 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       locate.on("locate-error", (event) => console.warn("[LRS] Could not get current location", event.error));
       view.ui.add(search, { position: "top-right", index: 0 });
       view.ui.add(locate, { position: "top-right", index: 1 });
-      if (uiPanel) view.ui.add(uiPanel, { position: "top-right", index: 2 });
+      if (uiPanel) {
+        uiPanel.className = "analysis-host";
+        view.ui.add(uiPanel, { position: "top-right", index: 2 });
+        view.watch("height", (height) => { uiPanel.style.maxHeight = `${Math.max(140, height - 120)}px`; });
+        uiPanel.style.maxHeight = `${Math.max(140, (view.height || 500) - 120)}px`;
+      }
       const lrsLayers = LRS_LAYER_DEFS.map((def) => new GraphicsLayer({ id: `lrs-${def.id}`, title: def.title, listMode: "hide" }));
       map.addMany(lrsLayers, 0);
       const drawn = new Set();
@@ -216,7 +222,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           styleLayer(source, lrsLayers[index], activeRoute);
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       setReady(true);
     });
     return () => {
@@ -290,6 +296,26 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
     }));
     if (analysis.zoom) view.goTo({ target: circle, padding: 40 }, { duration: 500 }).catch(() => {});
   }, [analysis, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.segmentLayer) return;
+    const { view, segmentLayer, Graphic, Point, Polyline, SimpleLineSymbol, SimpleMarkerSymbol } = bag;
+    segmentLayer.removeAll();
+    if (!route || !segment) return;
+    const slice = sliceVertices(route.vertices, route.measures, segment.from, segment.to);
+    if (slice.length < 2) return;
+    const line = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
+    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: [15, 23, 42, 0.85], width: 9, cap: "round", join: "round" }) }));
+    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: [250, 204, 21, 1], width: 5, cap: "round", join: "round" }) }));
+    [slice[0], slice[slice.length - 1]].forEach((vertex) => {
+      segmentLayer.add(new Graphic({
+        geometry: new Point({ longitude: vertex[0], latitude: vertex[1] }),
+        symbol: new SimpleMarkerSymbol({ style: "square", size: 8, color: [250, 204, 21, 1], outline: { color: [15, 23, 42], width: 1.5 } }),
+      }));
+    });
+    view.goTo({ target: line, padding: 60 }, { duration: 500 }).catch(() => {});
+  }, [route, segment, ready]);
 
   useEffect(() => {
     const bag = api.current;

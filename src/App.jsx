@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Planner from "./components/Planner";
+import SegmentAnalysis from "./components/SegmentAnalysis";
 import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
 import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog, nearestRoads } from "./lrs/lrsService";
@@ -37,6 +38,10 @@ export default function App() {
   const [nearest, setNearest] = useState({ loading: false, results: [], error: "" });
   const pendingPoint = useRef(null);
   const [panelHost] = useState(() => document.createElement("div"));
+  const [panelTab, setPanelTab] = useState("nearest");
+  const [legendOpen, setLegendOpen] = useState(true);
+  const [segment, setSegment] = useState(null);
+  const [selectingSegment, setSelectingSegment] = useState(false);
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() => LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id));
 
   useEffect(() => {
@@ -61,6 +66,8 @@ export default function App() {
     setRoute(null);
     setEvents([]);
     setMapLayers([]);
+    setSegment(null);
+    setSelectingSegment(false);
     setCursor(null);
     setActiveEvent(null);
     loadRoute(routeId)
@@ -193,6 +200,7 @@ export default function App() {
     project: activeProject,
     activeEvent,
     hiddenLayerIds,
+    segment,
     uiPanel: panelHost,
     analysis,
     pickingOrigin,
@@ -261,7 +269,7 @@ export default function App() {
           }}
         /> */}
         <main>
-          <section className="map-pane">
+          <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
             {(focusing || (routeId && !route && status.startsWith("Signing in"))) && (
               <div className="map-loader" role="status">
@@ -269,7 +277,11 @@ export default function App() {
                 {focusing || `Loading route ${routeId}…`}
               </div>
             )}
-            <ul className="legend">
+            <div className="legend-box">
+            <button type="button" className="legend-toggle" aria-expanded={legendOpen} onClick={() => setLegendOpen((value) => !value)}>
+              Layers <span>{LRS_LAYER_DEFS.length - hiddenLayerIds.length}/{LRS_LAYER_DEFS.length}</span> {legendOpen ? "▾" : "▸"}
+            </button>
+            {legendOpen && <ul className="legend">
               {LRS_LAYER_DEFS.map((layer) => {
                 const hidden = hiddenLayerIds.includes(layer.id);
                 return (
@@ -291,8 +303,33 @@ export default function App() {
                   </li>
                 );
               })}
-            </ul>
+            </ul>}
+            </div>
             {createPortal(<div className="analysis-panel">
+              <div className="analysis-tabs" role="tablist">
+                <button type="button" role="tab" aria-selected={panelTab === "nearest"} className={panelTab === "nearest" ? "on" : ""} onClick={() => setPanelTab("nearest")}>Nearest road</button>
+                <button type="button" role="tab" aria-selected={panelTab === "segment"} className={panelTab === "segment" ? "on" : ""} onClick={() => setPanelTab("segment")}>Route segment</button>
+              </div>
+              {panelTab === "segment" ? (
+                <SegmentAnalysis
+                  route={route}
+                  events={events}
+                  segment={segment}
+                  selecting={selectingSegment}
+                  windowKm={windowKm}
+                  onSegment={(next) => {
+                    setSegment(next);
+                    setSelectingSegment(false);
+                    if (next) {
+                      const pad = Math.max(0.05, (next.to - next.from) * 0.15);
+                      setFollow(false);
+                      setWindowKm([Math.max(0, next.from - pad), Math.min(route.lengthKm, next.to + pad)]);
+                    }
+                  }}
+                  onSelecting={setSelectingSegment}
+                  onSelectEvent={focusEvent}
+                />
+              ) : (<>
               <div className="analysis-head">
                 <b>Nearest road analysis</b>
                 {origin && <button type="button" className="link" onClick={() => setOrigin(null)}>Clear</button>}
@@ -331,6 +368,7 @@ export default function App() {
                   )}
                 </div>
               )}
+              </>)}
             </div>, panelHost)}
             <div className="cursor-card">
               <strong>{cursor ? `${cursor.measure.toFixed(2)} km` : "Hover the amber route"}</strong>
@@ -412,6 +450,13 @@ export default function App() {
                 route={route}
                 windowKm={windowKm}
                 cursor={cursor}
+                segment={segment}
+                selectingSegment={selectingSegment}
+                onSegment={(from, to) => {
+                  setSegment({ from: Math.max(0, Math.min(from, to)), to: Math.min(route.lengthKm, Math.max(from, to)) });
+                  setSelectingSegment(false);
+                  setPanelTab("segment");
+                }}
                 onWindow={(start, end) => {
                   const span = end - start;
                   const from = Math.max(0, Math.min((route.lengthKm || span) - span, start));
