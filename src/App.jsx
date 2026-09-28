@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Planner from "./components/Planner";
 import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
-import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog } from "./lrs/lrsService";
+import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog, nearestRoads } from "./lrs/lrsService";
 import { locateOnRoute } from "./lrs/geometry";
 import { useRoadMap } from "./map/useRoadMap";
 
@@ -30,6 +31,12 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [activeEvent, setActiveEvent] = useState(null);
   const [mapLayers, setMapLayers] = useState([]);
+  const [origin, setOrigin] = useState(null);
+  const [radiusM, setRadiusM] = useState(500);
+  const [pickingOrigin, setPickingOrigin] = useState(false);
+  const [nearest, setNearest] = useState({ loading: false, results: [], error: "" });
+  const pendingPoint = useRef(null);
+  const [panelHost] = useState(() => document.createElement("div"));
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() => LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id));
 
   useEffect(() => {
@@ -60,7 +67,16 @@ export default function App() {
       .then(async (next) => {
         if (cancel) return;
         setRoute(next);
-        setWindowKm([0, Math.min(WINDOW_KM, next.lengthKm || WINDOW_KM)]);
+        const span = Math.min(WINDOW_KM, next.lengthKm || WINDOW_KM);
+        const hit = pendingPoint.current && locateOnRoute(next.vertices, next.measures, pendingPoint.current, 2);
+        pendingPoint.current = null;
+        if (hit) {
+          const start = Math.max(0, Math.min(next.lengthKm - span, hit.measure - span / 2));
+          setWindowKm([start, start + span]);
+          setCursor({ measure: hit.measure, source: "analysis" });
+        } else {
+          setWindowKm([0, span]);
+        }
         setStatus("Reading bridge, culvert, pavement, and network events…");
         const located = await loadEvents(next);
         if (cancel) return;
@@ -119,6 +135,49 @@ export default function App() {
     }
   }, [route, follow]);
 
+  useEffect(() => {
+    if (!origin) {
+      setNearest({ loading: false, results: [], error: "" });
+      return undefined;
+    }
+    let cancel = false;
+    setNearest((prev) => ({ ...prev, loading: true, error: "" }));
+    const timer = setTimeout(() => {
+      nearestRoads(origin.point, radiusM / 1000)
+        .then((results) => { if (!cancel) setNearest({ loading: false, results, error: "" }); })
+        .catch((error) => { if (!cancel) setNearest({ loading: false, results: [], error: error.message }); });
+    }, 200);
+    return () => {
+      cancel = true;
+      clearTimeout(timer);
+    };
+  }, [origin, radiusM]);
+
+  const onOrigin = useCallback((point, label) => {
+    setOrigin({ point, label });
+    setPickingOrigin(false);
+  }, []);
+
+  const openNearest = (item) => {
+    if (item.id === routeId && route) {
+      const hit = locateOnRoute(route.vertices, route.measures, item.point, 2);
+      if (hit) {
+        const span = windowKm[1] - windowKm[0];
+        const start = Math.max(0, Math.min(route.lengthKm - span, hit.measure - span / 2));
+        setWindowKm([start, start + span]);
+        setCursor({ measure: hit.measure, source: "analysis" });
+      }
+      return;
+    }
+    pendingPoint.current = item.point;
+    setRouteId(item.id);
+    setActiveId(null);
+    setActiveEvent(null);
+    setFollow(true);
+  };
+
+  const analysis = useMemo(() => (origin ? { origin: origin.point, radiusM, results: nearest.results, zoom: !route } : null), [origin, radiusM, nearest.results, route]);
+
   const onLeave = useCallback(() => {}, []);
   const [focusing, setFocusing] = useState(null);
   const mapRef = useRoadMap({
@@ -134,6 +193,10 @@ export default function App() {
     project: activeProject,
     activeEvent,
     hiddenLayerIds,
+    uiPanel: panelHost,
+    analysis,
+    pickingOrigin,
+    onOrigin,
     onHoverMeasure: onHoverLonLat,
     onLeave,
   });
@@ -229,6 +292,46 @@ export default function App() {
                 );
               })}
             </ul>
+            {createPortal(<div className="analysis-panel">
+              <div className="analysis-head">
+                <b>Nearest road analysis</b>
+                {origin && <button type="button" className="link" onClick={() => setOrigin(null)}>Clear</button>}
+              </div>
+              <p className="analysis-origin">
+                {origin
+                  ? <>{origin.label} <span>{origin.point[1].toFixed(5)}, {origin.point[0].toFixed(5)}</span></>
+                  : "Search a place, use the location button, or pick a point on the map."}
+              </p>
+              <button type="button" className={`analysis-pick${pickingOrigin ? " on" : ""}`} onClick={() => setPickingOrigin((value) => !value)}>
+                {pickingOrigin ? "Click the map… (cancel)" : "Pick point on map"}
+              </button>
+              <label className="analysis-radius">
+                <span>Distance</span>
+                <input type="range" min="50" max="10000" step="50" value={radiusM} onChange={(event) => setRadiusM(Number(event.target.value))} />
+                <input type="number" min="10" max="50000" step="10" value={radiusM} onChange={(event) => setRadiusM(Math.max(10, Number(event.target.value) || 10))} />
+                <em>m</em>
+              </label>
+              {origin && (
+                <div className="analysis-results">
+                  {nearest.loading && <em>Analysing roads within {radiusM} m…</em>}
+                  {nearest.error && <em className="error">{nearest.error}</em>}
+                  {!nearest.loading && !nearest.error && nearest.results.length === 0 && <em>No road within {radiusM} m. Increase the distance.</em>}
+                  {!nearest.loading && nearest.results.length > 0 && (
+                    <ol>
+                      {nearest.results.map((item, index) => (
+                        <li key={item.id}>
+                          <button type="button" className={item.id === routeId ? "active" : ""} onClick={() => openNearest(item)} title="Open this route in the chart">
+                            <span className={index === 0 ? "rank first" : "rank"}>{index + 1}</span>
+                            <span className="road">{item.id}{item.code ? ` · ${item.code}` : ""}</span>
+                            <span className="dist">{item.distanceKm < 1 ? `${Math.round(item.distanceKm * 1000)} m` : `${item.distanceKm.toFixed(2)} km`}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              )}
+            </div>, panelHost)}
             <div className="cursor-card">
               <strong>{cursor ? `${cursor.measure.toFixed(2)} km` : "Hover the amber route"}</strong>
               {route && <span>{route.id} · {route.trajectory}</span>}

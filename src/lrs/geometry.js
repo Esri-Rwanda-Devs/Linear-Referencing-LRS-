@@ -187,7 +187,7 @@ export function buildRoute(features) {
   };
 }
 
-function projectSegment(a, b, p) {
+export function projectSegment(a, b, p) {
   const ax = a[0];
   const ay = a[1];
   const bx = b[0];

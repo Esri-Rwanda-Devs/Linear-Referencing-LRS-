@@ -1,5 +1,5 @@
 import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS } from "../config";
-import { buildRoute, flattenPaths, lineMeasureSpan, locateOnRoute, toLonLat } from "./geometry";
+import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, projectSegment, toLonLat } from "./geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
@@ -340,4 +340,42 @@ export function featuresAtMeasure(events, measure, toleranceKm = 0.35) {
     if (event.kind === "span") return measure >= event.from && measure <= event.to;
     return Math.abs(event.measure - measure) <= toleranceKm;
   });
+}
+
+const roadPaths = new WeakMap();
+
+/** Road Network routes within maxKm of [lon, lat], nearest first, one entry per route id. */
+export async function nearestRoads(point, maxKm, limit = 12) {
+  const { centerline } = await service();
+  const field = routeFieldOf(centerline);
+  const codeField = pickField(centerline.fields, CODE_FIELDS);
+  const padLat = maxKm / 111;
+  const padLon = maxKm / (111 * Math.cos((point[1] * Math.PI) / 180));
+  const byRoute = new Map();
+  centerline.features.forEach((feature) => {
+    const id = field ? String(feature.attributes?.[field] ?? "").trim() : "";
+    if (!id || !feature.geometry) return;
+    let paths = roadPaths.get(feature);
+    if (!paths) {
+      paths = flattenPaths(feature.geometry);
+      roadPaths.set(feature, paths);
+    }
+    paths.forEach((path) => {
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const a = path[i];
+        const b = path[i + 1];
+        if (Math.min(a[0], b[0]) - padLon > point[0] || Math.max(a[0], b[0]) + padLon < point[0]) continue;
+        if (Math.min(a[1], b[1]) - padLat > point[1] || Math.max(a[1], b[1]) + padLat < point[1]) continue;
+        const proj = projectSegment(a, b, point);
+        const distanceKm = haversineKm(point, proj.point);
+        if (distanceKm > maxKm) continue;
+        const best = byRoute.get(id);
+        if (!best || distanceKm < best.distanceKm) {
+          const code = codeField ? String(feature.attributes[codeField] ?? "").trim() : "";
+          byRoute.set(id, { id, code: code && code !== id ? code : "", distanceKm, point: proj.point });
+        }
+      }
+    });
+  });
+  return [...byRoute.values()].sort((a, b) => a.distanceKm - b.distanceKm).slice(0, limit);
 }

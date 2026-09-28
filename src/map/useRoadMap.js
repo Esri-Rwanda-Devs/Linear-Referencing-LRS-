@@ -17,6 +17,8 @@ const MODULES = [
   "esri/symbols/SimpleFillSymbol",
   "esri/layers/support/FeatureEffect",
   "esri/layers/support/FeatureFilter",
+  "esri/widgets/Search",
+  "esri/widgets/Locate",
 ];
 
 function loadModules(names) {
@@ -39,9 +41,13 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
+  const originRef = useRef(onOrigin);
+  originRef.current = onOrigin;
+  const pickingRef = useRef(pickingOrigin);
+  pickingRef.current = pickingOrigin;
   const ref = useRef(null);
   const api = useRef(null);
   const hoverRef = useRef(onHoverMeasure);
@@ -58,11 +64,12 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
     let unsubscribe = () => {};
     loadModules(MODULES).then(async (mods) => {
       if (cancelled || !ref.current) return;
-      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter] = mods;
+      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate] = mods;
       const overlay = new GraphicsLayer({ id: "lrs-overlay", listMode: "hide" });
       const cursorLayer = new GraphicsLayer({ id: "lrs-cursor", listMode: "hide" });
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [overlay, projectLayer, cursorLayer] });
+      const analysisLayer = new GraphicsLayer({ id: "lrs-analysis", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, overlay, projectLayer, cursorLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -70,6 +77,24 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         highlightOptions: { color: [232, 122, 46], haloOpacity: 0 },
       });
       view.ui.remove("attribution");
+      const search = new Search({ view, popupEnabled: false, resultGraphicEnabled: false, locationEnabled: false, placeholder: "Search a place in Rwanda" });
+      search.when(() => {
+        search.defaultSources?.forEach((source) => { source.countryCode = "RWA"; });
+      }).catch(() => {});
+      search.on("select-result", (event) => {
+        const geometry = event.result?.feature?.geometry;
+        const point = geometry?.type === "point" ? geometry : geometry?.extent?.center;
+        if (point) originRef.current?.([point.longitude, point.latitude], event.result.name || "Search result");
+      });
+      const locate = new Locate({ view, popupEnabled: false, scale: 12000 });
+      locate.on("locate", (event) => {
+        const coords = event.position?.coords;
+        if (coords) originRef.current?.([coords.longitude, coords.latitude], "My location");
+      });
+      locate.on("locate-error", (event) => console.warn("[LRS] Could not get current location", event.error));
+      view.ui.add(search, { position: "top-right", index: 0 });
+      view.ui.add(locate, { position: "top-right", index: 1 });
+      if (uiPanel) view.ui.add(uiPanel, { position: "top-right", index: 2 });
       const lrsLayers = LRS_LAYER_DEFS.map((def) => new GraphicsLayer({ id: `lrs-${def.id}`, title: def.title, listMode: "hide" }));
       map.addMany(lrsLayers, 0);
       const drawn = new Set();
@@ -144,6 +169,10 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       const roadIndex = LRS_LAYER_DEFS.findIndex((def) => def.route);
       const roadLayer = lrsLayers[roadIndex];
       view.on("click", (event) => {
+        if (pickingRef.current) {
+          originRef.current?.([event.mapPoint.longitude, event.mapPoint.latitude], "Picked on map");
+          return;
+        }
         if (!roadLayer?.visible) return;
         view.hitTest(event, { include: [roadLayer] }).then((response) => {
           const hit = response.results.find((result) => result.graphic?.layer === roadLayer);
@@ -187,7 +216,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           styleLayer(source, lrsLayers[index], activeRoute);
         });
       };
-      api.current = { view, map, overlay, projectLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       setReady(true);
     });
     return () => {
@@ -230,6 +259,43 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       })
       .finally(() => focusRef.current?.(null));
   }, [route, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.analysisLayer) return;
+    const { view, analysisLayer, Graphic, Point, Polyline, geometryEngine, SimpleFillSymbol, SimpleLineSymbol, SimpleMarkerSymbol } = bag;
+    analysisLayer.removeAll();
+    if (!analysis?.origin) return;
+    const origin = new Point({ longitude: analysis.origin[0], latitude: analysis.origin[1] });
+    const circle = geometryEngine.geodesicBuffer(origin, analysis.radiusM, "meters");
+    analysisLayer.add(new Graphic({
+      geometry: circle,
+      symbol: new SimpleFillSymbol({ color: [56, 189, 248, 0.12], outline: { color: [14, 165, 233, 0.95], width: 1.5, style: "dash" } }),
+    }));
+    (analysis.results || []).forEach((item, index) => {
+      const nearest = new Point({ longitude: item.point[0], latitude: item.point[1] });
+      const first = index === 0;
+      analysisLayer.add(new Graphic({
+        geometry: new Polyline({ paths: [[analysis.origin, item.point]], spatialReference: { wkid: 4326 } }),
+        symbol: new SimpleLineSymbol({ color: first ? [250, 204, 21, 1] : [255, 255, 255, 0.8], width: first ? 2 : 1, style: "short-dash" }),
+      }));
+      analysisLayer.add(new Graphic({
+        geometry: nearest,
+        symbol: new SimpleMarkerSymbol({ style: "circle", size: first ? 8 : 6, color: first ? [250, 204, 21, 1] : [255, 255, 255, 0.95], outline: { color: [15, 23, 42], width: 1 } }),
+      }));
+    });
+    analysisLayer.add(new Graphic({
+      geometry: origin,
+      symbol: new SimpleMarkerSymbol({ style: "circle", size: 10, color: [14, 165, 233, 1], outline: { color: [255, 255, 255], width: 2 } }),
+    }));
+    if (analysis.zoom) view.goTo({ target: circle, padding: 40 }, { duration: 500 }).catch(() => {});
+  }, [analysis, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.view?.container) return;
+    bag.view.container.style.cursor = pickingOrigin ? "crosshair" : "";
+  }, [pickingOrigin, ready]);
 
   useEffect(() => {
     const bag = api.current;
