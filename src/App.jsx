@@ -96,7 +96,6 @@ export default function App() {
   const focusEvent = (item) => {
     setActiveEvent(item);
     setCursor({ measure: item.measure, source: "chart" });
-    setFollow(false);
     const span = windowKm[1] - windowKm[0];
     const start = Math.max(0, item.measure - span / 2);
     setWindowKm([start, start + span]);
@@ -107,13 +106,13 @@ export default function App() {
     const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.25);
     if (!hit) return;
     setCursor((current) => {
-      if (current && Math.abs(current.measure - hit.measure) < 0.05) return current;
+      if (current && Math.abs(current.measure - hit.measure) < 0.01) return current;
       return { measure: hit.measure, source: "map" };
     });
     if (follow) {
       setWindowKm((prev) => {
         const span = prev[1] - prev[0];
-        if (hit.measure >= prev[0] + span * 0.15 && hit.measure <= prev[1] - span * 0.15) return prev;
+        if (hit.measure >= prev[0] + span * 0.2 && hit.measure <= prev[1] - span * 0.2) return prev;
         const start = Math.max(0, Math.min(route.lengthKm - span, hit.measure - span / 2));
         return [start, start + span];
       });
@@ -222,7 +221,7 @@ export default function App() {
                     >
                       <input type="checkbox" readOnly checked={!hidden} />
                       <svg className="legend-symbol" width="14" height="14" viewBox="0 0 14 14">
-                        <ChartSymbol shape={layer.kind === "point" ? layer.shape : "bar"} color={layer.swatch} x={7} y={7} size={0.9} />
+                        <ChartSymbol shape={layer.kind === "point" ? layer.shape : "bar"} color={layer.swatch} x={7} y={7} size={0.7} />
                       </svg>
                       {layer.title}
                     </button>
@@ -238,9 +237,27 @@ export default function App() {
                 <div key={group}>
                   <b>{group}</b>
                   <ul>
-                    {items.slice(0, 6).map((item) => (
-                      <li key={item.id}>{item.title}: {item.name}{item.kind === "point" ? ` · ${item.measure.toFixed(2)} km` : ""}</li>
+                    {items.slice(0, group === "POI" ? 4 : 6).map((item) => (
+                      <li key={item.id} className="hover-item">
+                        <div className="hover-title">
+                          <svg width="12" height="12" viewBox="0 0 12 12">
+                            <ChartSymbol shape={item.kind === "span" ? "bar" : item.shape} color={item.color} x={6} y={6} size={0.65} />
+                          </svg>
+                          <span>{item.title}: <strong>{item.name}</strong></span>
+                        </div>
+                        <div className="hover-km">
+                          {item.kind === "span" ? `${item.from.toFixed(2)} – ${item.to.toFixed(2)} km` : `${item.measure.toFixed(3)} km`}
+                        </div>
+                        {item.kind !== "span" && item.details?.length > 0 && (
+                          <dl className="hover-details">
+                            {item.details.filter(([label]) => !/^measure$/i.test(label)).slice(0, 5).map(([label, value]) => (
+                              <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+                            ))}
+                          </dl>
+                        )}
+                      </li>
                     ))}
+                    {items.length > (group === "POI" ? 4 : 6) && <li className="hover-more">+{items.length - (group === "POI" ? 4 : 6)} more in the chart</li>}
                   </ul>
                 </div>
               ))}

@@ -101,8 +101,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         if (!graphicsLayer) return;
         const symbol = layer.def.kind === "point"
           ? new SimpleMarkerSymbol(layer.def.shape === "x"
-            ? { style: "x", color: layer.def.color, size: 9, outline: { color: layer.def.color, width: 2.5 } }
-            : { style: layer.def.shape || "circle", color: layer.def.color, size: layer.def.shape === "triangle" ? 10 : 8, outline: { color: [255, 255, 255, 0.95], width: 1 } })
+            ? { style: "x", color: layer.def.color, size: 6, outline: { color: layer.def.color, width: 1.6 } }
+            : { style: layer.def.shape || "circle", color: layer.def.color, size: layer.def.shape === "triangle" ? 7 : 5.5, outline: { color: [255, 255, 255, 0.9], width: 0.6 } })
           : new SimpleLineSymbol({ color: layer.def.color, width: layer.def.width || 2.5, cap: "round", join: "round" });
         const graphics = [];
         layer.features.forEach((feature) => {
@@ -251,7 +251,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       if (!item.point) return;
       projectLayer.add(new Graphic({
         geometry: new Point({ longitude: item.point[0], latitude: item.point[1] }),
-        symbol: new SimpleMarkerSymbol({ style: "circle", color: [255, 255, 255, 0], size: 16, outline: { color: [190, 24, 93], width: 3 } }),
+        symbol: new SimpleMarkerSymbol({ style: "circle", color: [255, 255, 255, 0], size: 11, outline: { color: [190, 24, 93], width: 2 } }),
       }));
     });
   }, [route, project, ready]);
@@ -268,8 +268,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       symbol: new bag.SimpleMarkerSymbol({
         style: "circle",
         color: [255, 247, 237, 0.98],
-        size: 16,
-        outline: { color: [120, 53, 15], width: 4 },
+        size: 11,
+        outline: { color: [120, 53, 15], width: 2.5 },
       }),
     }));
     if (activeEvent?.point) {
@@ -278,8 +278,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         symbol: new bag.SimpleMarkerSymbol({
           style: "circle",
           color: [250, 204, 21, 0.95],
-          size: 18,
-          outline: { color: [255, 255, 255], width: 3 },
+          size: 12,
+          outline: { color: [255, 255, 255], width: 2 },
         }),
       }));
     }

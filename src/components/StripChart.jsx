@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { GROUPS, LRS_LAYER_DEFS } from "../config";
 
-const ROW_H = 24;
-const AXIS_H = 28;
-const CHAR_W = 5.4;
+const ROW_H = 20;
+const AXIS_H = 24;
+const CHAR_W = 4.4;
 
 function rowsFor() {
   const rows = [];
@@ -33,10 +33,14 @@ export function ChartSymbol({ shape, color, x, y, size = 1 }) {
   );
 }
 
+const MIN_CHARS = 6;
+
+/** Returns the label that fits in maxPx, or "" when it would be squeezed below a readable length. */
 function fitText(text, maxPx) {
   const max = Math.floor(maxPx / CHAR_W);
-  if (max < 3) return "";
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  if (text.length <= max) return text;
+  if (max < MIN_CHARS) return "";
+  return `${text.slice(0, max - 1)}…`;
 }
 
 /** Joins touching spans that carry the same label so one name is drawn per run. */
@@ -55,7 +59,59 @@ function mergeRuns(items) {
   return runs;
 }
 
-export default function StripChart({ events, projects, windowKm, cursor, activeEventId, attachedIds, onWindow, onHoverMeasure, onPickProject, onSelectEvent }) {
+/** Whole-road overview: the thumb is the station window, the orange tick is the cursor. Drag or click to move along the road. */
+function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
+  const trackRef = useRef(null);
+  const dragRef = useRef(null);
+  const span = to - from;
+  const pct = (measure) => `${Math.max(0, Math.min(100, (measure / lengthKm) * 100))}%`;
+  const measureAt = (clientX) => {
+    const rect = trackRef.current.getBoundingClientRect();
+    return ((clientX - rect.left) / rect.width) * lengthKm;
+  };
+  const centreOn = (measure) => onWindow(measure - span / 2, measure + span / 2);
+
+  const onPointerDown = (event) => {
+    event.preventDefault();
+    const measure = measureAt(event.clientX);
+    const onThumb = measure >= from && measure <= to;
+    dragRef.current = { offset: onThumb ? measure - from : span / 2 };
+    if (!onThumb) centreOn(measure);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onPointerMove = (event) => {
+    if (!dragRef.current) return;
+    const start = measureAt(event.clientX) - dragRef.current.offset;
+    onWindow(start, start + span);
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  const poiTicks = useMemo(() => events
+    .filter((item) => item.kind !== "span")
+    .map((item) => (
+      <i key={item.id} className="road-slider-poi" style={{ left: `${(item.measure / lengthKm) * 100}%`, background: item.color }} />
+    )), [events, lengthKm]);
+  return (
+    <div className="road-slider">
+      <span className="road-slider-end">0</span>
+      <div
+        ref={trackRef}
+        className="road-slider-track"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {poiTicks}
+        <div className="road-slider-thumb" style={{ left: pct(from), width: `${Math.max(0.6, (span / lengthKm) * 100)}%` }} />
+        {cursor && <div className="road-slider-cursor" style={{ left: pct(cursor.measure) }} />}
+      </div>
+      <span className="road-slider-end">{lengthKm.toFixed(1)} km</span>
+    </div>
+  );
+}
+
+export default function StripChart({ events, projects, route, windowKm, cursor, activeEventId, attachedIds, onWindow, onHoverMeasure, onPickProject, onSelectEvent }) {
   const rows = rowsFor();
   const labelW = 150;
   const width = 1100;
@@ -122,7 +178,7 @@ export default function StripChart({ events, projects, windowKm, cursor, activeE
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={xOf(tick)} x2={xOf(tick)} y1={AXIS_H - 4} y2={height - 4} stroke="#e2e8f0" />
-            <text x={xOf(tick)} y="16" textAnchor="middle" fontSize="10" fill="#475569">{step < 1 ? tick.toFixed(1) : tick.toFixed(0)}</text>
+            <text x={xOf(tick)} y="16" textAnchor="middle" fontSize="9" fill="#64748b">{step < 1 ? tick.toFixed(1) : tick.toFixed(0)}</text>
           </g>
         ))}
         {rows.map((row, index) => {
@@ -131,8 +187,8 @@ export default function StripChart({ events, projects, windowKm, cursor, activeE
             return (
               <g key={`${row.id}-g`}>
                 <rect x="0" y={y + 2} width={labelW - 8} height={ROW_H - 4} rx="3" fill={row.color} />
-                <text x="8" y={y + 16} fill="#fff" fontSize="11" fontWeight="700">{row.label}</text>
-                <text x={labelW + 6} y={y + 16} fill="#64748b" fontSize="10">{row.hint}</text>
+                <text x="8" y={y + 13.5} fill="#fff" fontSize="9.5" fontWeight="700">{row.label}</text>
+                <text x={labelW + 6} y={y + 13.5} fill="#94a3b8" fontSize="8.5">{row.hint}</text>
               </g>
             );
           }
@@ -154,17 +210,17 @@ export default function StripChart({ events, projects, windowKm, cursor, activeE
           let labelEnd = -Infinity;
           return (
             <g key={`${row.group}-${row.title}`}>
-              <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} />
-              <text x="26" y={yMid + 4} fill="#334155" fontSize="11">{row.title}</text>
+              <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />
+              <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
               <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
               <g clipPath="url(#plot-clip)">
                 {spans.map((item) => {
                   const x1 = clampX(xOf(item.from));
                   const x2 = clampX(xOf(item.to));
                   return (
-                    <rect key={item.id} x={x1} y={yMid - 5} width={Math.max(3, x2 - x1)} height="10" rx="2" fill={item.color} opacity="0.85"
+                    <rect key={item.id} x={x1} y={yMid - 4} width={Math.max(2, x2 - x1)} height="8" rx="2" fill={item.color} opacity="0.85"
                       stroke="#fff" strokeWidth="0.6" style={{ cursor: "pointer" }} onClick={pick(item)}>
-                      <title>{`${item.name} · ${item.from.toFixed(2)}–${item.to.toFixed(2)} km`}</title>
+                      <title>{[`${item.name}`, `${item.from.toFixed(3)} – ${item.to.toFixed(3)} km`, ...(item.details || []).map(([label, value]) => `${label}: ${value}`)].join("\n")}</title>
                     </rect>
                   );
                 })}
@@ -176,29 +232,31 @@ export default function StripChart({ events, projects, windowKm, cursor, activeE
                   if (!text) return null;
                   labelEnd = start + text.length * CHAR_W;
                   return (
-                    <text key={`run-${runIndex}`} x={start} y={yMid + 3} fontSize="9" fontWeight="600" fill="#0f172a" pointerEvents="none"
-                      stroke="rgba(255,255,255,0.85)" strokeWidth="2.5" paintOrder="stroke">{text}</text>
+                    <text key={`run-${runIndex}`} x={start} y={yMid + 2.5} fontSize="7.5" fontWeight="600" fill="#0f172a" pointerEvents="none"
+                      stroke="rgba(255,255,255,0.85)" strokeWidth="2" paintOrder="stroke">{text}</text>
                   );
                 })}
-                {points.map((item) => {
+                {points.map((item, pointIndex) => {
                   const x = xOf(item.measure);
                   const active = item.id === activeEventId;
                   const isAttached = attached.has(item.id);
+                  const next = points[pointIndex + 1];
+                  const room = Math.min(90, (next ? xOf(next.measure) : right) - x - 12);
                   let label = null;
-                  if (x > labelEnd + 4) {
-                    const text = fitText(item.name, 110);
+                  if (x > labelEnd + 10 && room > 0) {
+                    const text = fitText(item.name, room);
                     if (text) {
-                      label = <text x={x + 8} y={yMid + 3} fontSize="9" fill="#1e293b" pointerEvents="none"
-                        stroke="rgba(248,250,252,0.9)" strokeWidth="2.5" paintOrder="stroke">{text}</text>;
-                      labelEnd = x + 8 + text.length * CHAR_W;
+                      label = <text x={x + 6} y={yMid + 2.5} fontSize="7.5" fill="#334155" pointerEvents="none"
+                        stroke="rgba(248,250,252,0.9)" strokeWidth="2" paintOrder="stroke">{text}</text>;
+                      labelEnd = x + 6 + text.length * CHAR_W;
                     }
                   }
                   return (
                     <g key={item.id} style={{ cursor: "pointer" }} onClick={pick(item)}>
-                      <title>{`${item.title}: ${item.name} · ${item.measure.toFixed(2)} km`}</title>
-                      {isAttached && <circle cx={x} cy={yMid} r="9" fill="none" stroke="#be185d" strokeWidth="2" />}
-                      {active && <circle cx={x} cy={yMid} r="8" fill="none" stroke="#facc15" strokeWidth="2.5" />}
-                      <ChartSymbol shape={item.shape} color={item.color} x={x} y={yMid} />
+                      <title>{[`${item.title}: ${item.name}`, `${item.measure.toFixed(3)} km`, ...(item.details || []).map(([label, value]) => `${label}: ${value}`)].join("\n")}</title>
+                      {isAttached && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#be185d" strokeWidth="1.5" />}
+                      {active && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#facc15" strokeWidth="2" />}
+                      <ChartSymbol shape={item.shape} color={item.color} x={x} y={yMid} size={0.6} />
                       {label}
                     </g>
                   );
@@ -215,6 +273,9 @@ export default function StripChart({ events, projects, windowKm, cursor, activeE
           </g>
         )}
       </svg>
+      {route?.lengthKm > 0 && (
+        <RoadSlider lengthKm={route.lengthKm} from={from} to={to} cursor={cursor} events={events} onWindow={onWindow} />
+      )}
       <div className="chart-help">Scroll to zoom the station window. Click a symbol to show it on the map. Measures are kilometres from the route origin.</div>
     </div>
   );

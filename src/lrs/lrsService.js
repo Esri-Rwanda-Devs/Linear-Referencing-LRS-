@@ -45,7 +45,7 @@ async function getJson(url) {
   return data;
 }
 
-function pickField(fields, candidates) {
+function pickField(fields, candidates, fallback = null) {
   const usable = fields.filter((field) => !/globalid|objectid/i.test(field.name));
   const names = usable.map((field) => field.name);
   const lower = names.map((name) => name.toLowerCase());
@@ -53,7 +53,7 @@ function pickField(fields, candidates) {
     const index = lower.indexOf(candidate);
     if (index >= 0) return names[index];
   }
-  return names.find((name) => /routeid/i.test(name)) || null;
+  return fallback ? names.find((name) => fallback.test(name)) || null : null;
 }
 
 function usableLabel(value) {
@@ -107,7 +107,7 @@ async function fetchLayerOnce(def) {
     fields,
     oidField,
     geometryType: def.kind === "point" ? "point" : "polyline",
-    routeField: pickField(fields, ROUTE_FIELDS),
+    routeField: pickField(fields, ROUTE_FIELDS, /routeid/i),
     fromField: pickField(fields, FROM_FIELDS),
     toField: pickField(fields, TO_FIELDS),
     def,
@@ -261,7 +261,8 @@ export async function loadEvents(route) {
     features.forEach((feature, index) => {
       const name = titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
-      const toValue = layer.toField ? Number(feature.attributes[layer.toField]) : fromValue;
+      const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
+      const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
       const hasMeasure = Number.isFinite(fromValue);
       if (hasMeasure) {
         const from = Math.min(fromValue, toValue);
@@ -292,6 +293,29 @@ function featurePoint(feature) {
   return null;
 }
 
+const DETAIL_SKIP = /globalid|objectid|^fid$|shape|guid|eventid|routeid|route_id|routename|route_name|fromdate|todate|locerror|created|edited|^gdb_|^st_/i;
+
+function prettyField(name) {
+  return name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim().replace(/^./, (char) => char.toUpperCase());
+}
+
+function prettyValue(name, value) {
+  if (typeof value === "number") {
+    if (/date/i.test(name) && value > 1e11) return new Date(value).toLocaleDateString();
+    if (/measure/i.test(name)) return `${value.toFixed(3)} km`;
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
+  }
+  return String(value).trim();
+}
+
+/** Readable attribute pairs for tooltips and the hover card; ids and system fields are left out. */
+function detailsOf(attributes, name) {
+  return Object.entries(attributes)
+    .filter(([field, value]) => !DETAIL_SKIP.test(field) && value !== null && value !== undefined && String(value).trim() !== "" && String(value).trim() !== name && !GUID.test(String(value).trim()))
+    .map(([field, value]) => [prettyField(field), prettyValue(field, value)])
+    .slice(0, 8);
+}
+
 function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0) {
   return {
     id: `${layer.id}-${feature.attributes.OBJECTID || feature.attributes.objectid || index}`,
@@ -307,6 +331,7 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     measure: (from + to) / 2,
     point,
     distanceM,
+    details: detailsOf(feature.attributes || {}, name),
   };
 }
 
