@@ -26,12 +26,7 @@ button { cursor: pointer; }
 h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
 .source { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.4; }
 
-.workspace { 
-  /* flex: 1; 
-  min-height: 0;
-   display: grid; 
-   grid-template-columns: 280px 1fr; */
-   }
+.workspace { flex: 1; min-height: 0; display: flex; }
 .planner {
   background: #fff;
   border-right: 1px solid #e7e5e4;
@@ -70,8 +65,39 @@ h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
 .projects button.active { border-color: #c2410c; background: #fff7ed; }
 .projects span, .empty { display: block; color: #78716c; font-size: 12px; }
 
-main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(240px, 1fr) minmax(300px, 1.1fr); }
-.map-pane { position: relative; min-height: 520px; overflow: hidden; }
+main { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(120px, 1fr) 10px 340px; }
+.map-pane { position: relative; min-height: 0; overflow: hidden; }
+.chart-splitter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e7e5e4;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  z-index: 3;
+}
+.chart-splitter:hover, .chart-splitter:focus-visible, body.resizing-chart .chart-splitter { background: #7dd3fc; outline: none; }
+.chart-splitter .grip { width: 44px; height: 4px; border-radius: 2px; background: #a8a29e; }
+.chart-splitter:hover .grip, body.resizing-chart .chart-splitter .grip { background: #0369a1; }
+.splitter-buttons { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: flex; gap: 3px; }
+.splitter-buttons button {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+.splitter-buttons button:hover { background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; }
+body.resizing-chart { cursor: row-resize; user-select: none; }
+body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none; }
 .map { position: absolute; inset: 0; }
 .legend-box {
   position: absolute;
@@ -320,7 +346,7 @@ main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(24
 .road-slider-track:active .road-slider-thumb { cursor: grabbing; transition: none; }
 .road-slider-cursor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #ea580c; pointer-events: none; }
 
-.chart-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; border-top: 1px solid #e7e5e4; }
+.chart-pane { min-height: 0; display: flex; flex-direction: column; background: #fff; overflow: auto; }
 .station-bar {
   display: flex;
   gap: 8px;

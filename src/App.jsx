@@ -10,6 +10,10 @@ import { locateOnRoute } from "./lrs/geometry";
 import { useRoadMap } from "./map/useRoadMap";
 
 const STORE = "rwanda-lrs-projects";
+const CHART_STORE = "rwanda-lrs-chart-height";
+const CHART_DEFAULT = 340;
+const CHART_MIN = 40;
+const MAP_MIN = 120;
 const NO_PROJECTS = [];
 const noop = () => {};
 
@@ -43,6 +47,50 @@ export default function App() {
   const [panelHost] = useState(() => document.createElement("div"));
   const [panelTab, setPanelTab] = useState("nearest");
   const [legendOpen, setLegendOpen] = useState(true);
+  const mainRef = useRef(null);
+  const [chartH, setChartH] = useState(() => Number(localStorage.getItem(CHART_STORE)) || CHART_DEFAULT);
+  useEffect(() => {
+    localStorage.setItem(CHART_STORE, String(Math.round(chartH)));
+  }, [chartH]);
+  const clampChart = useCallback((height) => {
+    const total = mainRef.current?.clientHeight || window.innerHeight;
+    return Math.round(Math.max(CHART_MIN, Math.min(total - MAP_MIN, height)));
+  }, []);
+  const rowsFor = (height) => `minmax(${MAP_MIN}px, 1fr) 10px ${height}px`;
+  const startResize = (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startH = chartH;
+    let next = startH;
+    let frame = 0;
+    const move = (moveEvent) => {
+      next = clampChart(startH + (startY - moveEvent.clientY));
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (mainRef.current) mainRef.current.style.gridTemplateRows = rowsFor(next);
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.classList.remove("resizing-chart");
+      if (frame) cancelAnimationFrame(frame);
+      setChartH(next);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    document.body.classList.add("resizing-chart");
+  };
+  const nudgeChart = (direction) => {
+    const total = mainRef.current?.clientHeight || window.innerHeight;
+    setChartH((height) => clampChart(height + direction * total * 0.2));
+  };
+  useEffect(() => {
+    const onResize = () => setChartH((height) => clampChart(height));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampChart]);
   const [compare, setCompare] = useState(null);
   const [compareWindow, setCompareWindow] = useState([0, WINDOW_KM]);
   const [compareCursor, setCompareCursor] = useState(null);
@@ -311,7 +359,7 @@ export default function App() {
             setActiveId(project.id);
           }}
         /> */}
-        <main>
+        <main ref={mainRef} style={{ gridTemplateRows: rowsFor(chartH) }}>
           <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
             {(focusing || (routeId && !route && status.startsWith("Signing in"))) && (
@@ -472,6 +520,28 @@ export default function App() {
               ))}
             </div>
           </section>
+          <div
+            className="chart-splitter"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize chart"
+            tabIndex={0}
+            onPointerDown={startResize}
+            onDoubleClick={() => setChartH(clampChart(CHART_DEFAULT))}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowUp") { event.preventDefault(); setChartH((height) => clampChart(height + 24)); }
+              if (event.key === "ArrowDown") { event.preventDefault(); setChartH((height) => clampChart(height - 24)); }
+            }}
+            title="Drag to resize the chart · double-click to reset"
+          >
+            <span className="grip" />
+            <div className="splitter-buttons" onPointerDown={(event) => event.stopPropagation()}>
+              <button type="button" onClick={() => nudgeChart(1)} aria-label="Move chart up" title="Move chart up (taller)">▲</button>
+              <button type="button" onClick={() => nudgeChart(-1)} aria-label="Move chart down" title="Move chart down (shorter)">▼</button>
+              <button type="button" onClick={() => setChartH(clampChart(Infinity))} aria-label="Maximise chart" title="Chart to full height">⤒</button>
+              <button type="button" onClick={() => setChartH(CHART_MIN)} aria-label="Minimise chart" title="Collapse chart">⤓</button>
+            </div>
+          </div>
           <section className="chart-pane">
             <div className="station-bar">
               <button type="button" onClick={() => stepRoute(-1)} aria-label="Previous route">Prev route</button>
