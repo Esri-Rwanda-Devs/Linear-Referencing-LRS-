@@ -27,7 +27,7 @@ export default function App() {
   const [route, setRoute] = useState(null);
   const [events, setEvents] = useState([]);
   const [routeQuery, setRouteQuery] = useState("");
-  const [status, setStatus] = useState("Sign in to Road_Asset_LRS_Map. All layers draw first.");
+  const [status, setStatus] = useState("");
   const [windowKm, setWindowKm] = useState([0, WINDOW_KM]);
   const [cursor, setCursor] = useState(null);
   const [follow, setFollow] = useState(true);

@@ -81,13 +81,13 @@ export default function SegmentAnalysis({ route, events, segment, selecting, win
               </div>
               <div className="segment-bar">
                 {layer.values.map((value, index) => (
-                  <i key={value.name} style={{ width: `${value.share * 100}%`, background: layer.color, opacity: 1 - Math.min(0.7, index * 0.18) }} title={`${value.name}: ${km(value.km)}`} />
+                  <i key={value.name} style={{ width: `${value.share * 100}%`, background: value.color, opacity: value.color === layer.color ? 1 - Math.min(0.7, index * 0.18) : 1 }} title={`${value.name}: ${km(value.km)}`} />
                 ))}
               </div>
               <ul className="segment-values">
                 {layer.values.map((value) => (
                   <li key={value.name}>
-                    <span>{value.name}</span>
+                    <span><i className="value-dot" style={{ background: value.color }} />{value.name}</span>
                     <em>{km(value.km)} · {Math.round(value.share * 100)}%</em>
                   </li>
                 ))}

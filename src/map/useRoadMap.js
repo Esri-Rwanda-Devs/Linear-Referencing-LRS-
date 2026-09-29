@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { LRS_LAYER_DEFS, RWANDA_EXTENT } from "../config";
-import { pointAtMeasure, sliceVertices } from "../lrs/geometry";
+import { flattenPaths, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
 import { loadLayerCache, subscribeLayers } from "../lrs/lrsService";
 
 const MODULES = [
@@ -48,6 +48,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   originRef.current = onOrigin;
   const pickingRef = useRef(pickingOrigin);
   pickingRef.current = pickingOrigin;
+  const hiddenRef = useRef(hiddenLayerIds);
+  hiddenRef.current = hiddenLayerIds;
   const ref = useRef(null);
   const api = useRef(null);
   const hoverRef = useRef(onHoverMeasure);
@@ -103,63 +105,73 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         view.watch("height", (height) => { uiPanel.style.maxHeight = `${Math.max(140, height - 120)}px`; });
         uiPanel.style.maxHeight = `${Math.max(140, (view.height || 500) - 120)}px`;
       }
-      const lrsLayers = LRS_LAYER_DEFS.map((def) => new GraphicsLayer({ id: `lrs-${def.id}`, title: def.title, listMode: "hide" }));
-      map.addMany(lrsLayers, 0);
-      const drawn = new Set();
+      const lrsLayers = LRS_LAYER_DEFS.map(() => null);
       const sources = [];
-      const baseSymbols = new WeakMap();
-      const fadedSymbols = new window.Map();
-      let framed = false;
-      let styleLayer = () => {};
-      const paint = (symbol, alpha, scale) => {
-        const next = symbol.clone();
-        const color = next.color;
-        if (color) next.color = [color.r, color.g, color.b, alpha];
-        if (next.outline?.color) {
-          const outline = next.outline.clone();
-          const ink = outline.color;
-          outline.color = [ink.r, ink.g, ink.b, Math.min(1, alpha + 0.2)];
-          next.outline = outline;
-        }
-        if (next.width) next.width = Math.max(1, next.width * scale);
-        return next;
-      };
-      let applyRouteEffect = () => {};
-      const drawLayer = (layer) => {
-        if (cancelled || drawn.has(layer.id)) return;
-        drawn.add(layer.id);
-        sources.push(layer);
+      const OVERLAY_COUNT = map.layers.length;
+      const routeWhere = { value: null };
+      const effectFor = () => (routeWhere.value
+        ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
+        : null);
+      const symbolFor = (def) => (def.kind === "point"
+        ? (def.shape === "x"
+          ? { type: "simple-marker", style: "x", color: def.color, size: 6, outline: { color: def.color, width: 1.6 } }
+          : { type: "simple-marker", style: def.shape || "circle", color: def.color, size: def.shape === "triangle" ? 7 : 5.5, outline: { color: [255, 255, 255, 0.9], width: 0.6 } })
+        : { type: "simple-line", color: def.color, width: def.width || 2.5, cap: "round", join: "round" });
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      const drawLayer = async (layer) => {
         const index = LRS_LAYER_DEFS.findIndex((def) => def.id === layer.id);
-        const graphicsLayer = lrsLayers[index];
-        if (!graphicsLayer) return;
-        const symbol = layer.def.kind === "point"
-          ? new SimpleMarkerSymbol(layer.def.shape === "x"
-            ? { style: "x", color: layer.def.color, size: 6, outline: { color: layer.def.color, width: 1.6 } }
-            : { style: layer.def.shape || "circle", color: layer.def.color, size: layer.def.shape === "triangle" ? 7 : 5.5, outline: { color: [255, 255, 255, 0.9], width: 0.6 } })
-          : new SimpleLineSymbol({ color: layer.def.color, width: layer.def.width || 2.5, cap: "round", join: "round" });
+        if (cancelled || index < 0 || lrsLayers[index]) return;
+        lrsLayers[index] = "pending";
+        sources.push(layer);
+        const started = performance.now();
+        const routeField = layer.routeField;
         const graphics = [];
-        layer.features.forEach((feature) => {
-          if (!feature.geometry) return;
-          const rawX = feature.geometry.x ?? feature.geometry.paths?.[0]?.[0]?.[0] ?? feature.geometry.curvePaths?.[0]?.[0]?.[0];
-          const spatialReference = Math.abs(rawX || 0) > 180 ? { wkid: 102100 } : { wkid: 4326 };
-          const geometry = feature.geometry.x !== undefined
-            ? new Point({ x: feature.geometry.x, y: feature.geometry.y, spatialReference })
-            : new Polyline(feature.geometry.curvePaths
-              ? { curvePaths: feature.geometry.curvePaths, spatialReference }
-              : { paths: feature.geometry.paths, spatialReference });
-          if (!geometry) return;
-          const graphic = new Graphic({ attributes: feature.attributes, geometry, symbol: symbol.clone() });
-          baseSymbols.set(graphic, graphic.symbol.clone());
-          graphics.push(graphic);
-        });
-        if (graphics.length) graphicsLayer.addMany(graphics);
-        styleLayer(layer, graphicsLayer, api.current?.route, api.current?.compareRoute);
-        if (!framed && graphicsLayer.visible && !api.current?.route && graphics.length) {
-          framed = true;
-          view.goTo(graphicsLayer.graphics).catch(() => {});
+        const CHUNK = 1500;
+        for (let i = 0; i < layer.features.length; i += 1) {
+          const feature = layer.features[i];
+          const g = feature.geometry;
+          if (g) {
+            let geometry = null;
+            if (g.x !== undefined) {
+              const at = toLonLat(g.x, g.y);
+              if (at) geometry = new Point({ longitude: at[0], latitude: at[1] });
+            } else {
+              const paths = flattenPaths(g);
+              if (paths.length) geometry = new Polyline({ paths, spatialReference: { wkid: 4326 } });
+            }
+            if (geometry) {
+              graphics.push(new Graphic({
+                geometry,
+                attributes: { oid: i + 1, route: routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "" },
+              }));
+            }
+          }
+          if (i % CHUNK === CHUNK - 1) {
+            await pause();
+            if (cancelled) return;
+          }
         }
+        const featureLayer = new FeatureLayer({
+          id: `lrs-${layer.id}`,
+          title: layer.def.title,
+          source: graphics,
+          objectIdField: "oid",
+          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }],
+          geometryType: layer.def.kind === "point" ? "point" : "polyline",
+          spatialReference: { wkid: 4326 },
+          renderer: { type: "simple", symbol: symbolFor(layer.def) },
+          outFields: ["route"],
+          popupEnabled: false,
+          listMode: "hide",
+          visible: !(hiddenRef.current || []).includes(layer.id),
+          featureEffect: effectFor(),
+        });
+        lrsLayers[index] = featureLayer;
+        map.add(featureLayer, layer.def.kind === "point" ? Math.max(0, map.layers.length - OVERLAY_COUNT) : 0);
+        console.info(`[LRS] Map layer ${layer.def.title}: ${graphics.length} features ready in ${Math.round(performance.now() - started)} ms`);
       };
-      unsubscribe = subscribeLayers(drawLayer);
+      unsubscribe = subscribeLayers((layer) => { drawLayer(layer); });
       loadLayerCache().catch((error) => console.error(error));
       let hoverFrame = 0;
       view.on("pointer-move", (event) => {
@@ -175,54 +187,27 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       });
       view.on("pointer-leave", () => leaveRef.current?.());
       const roadIndex = LRS_LAYER_DEFS.findIndex((def) => def.route);
-      const roadLayer = lrsLayers[roadIndex];
       view.on("click", (event) => {
         if (pickingRef.current) {
           originRef.current?.([event.mapPoint.longitude, event.mapPoint.latitude], "Picked on map");
           return;
         }
-        if (!roadLayer?.visible) return;
+        const roadLayer = lrsLayers[roadIndex];
+        if (!roadLayer || roadLayer === "pending" || !roadLayer.visible) return;
         view.hitTest(event, { include: [roadLayer] }).then((response) => {
           const hit = response.results.find((result) => result.graphic?.layer === roadLayer);
-          if (!hit) return;
-          const source = sources.find((item) => item.id === LRS_LAYER_DEFS[roadIndex].id);
-          const attributes = hit.graphic.attributes || {};
-          const field = source?.routeField || Object.keys(attributes).find((name) => /^route_?id$/i.test(name));
-          const id = field ? String(attributes[field] ?? "").trim() : "";
+          const id = String(hit?.graphic?.attributes?.route ?? "").trim();
           if (!id) return;
           console.info(`[LRS] Picked route ${id} from the map.`);
           pickRef.current?.(id);
         }).catch(() => {});
       });
       const layerViews = new window.Map();
-      const fadedSymbol = (source) => {
-        const cached = fadedSymbols.get(source.id);
-        if (cached) return cached;
-        const sample = lrsLayers[LRS_LAYER_DEFS.findIndex((def) => def.id === source.id)]?.graphics.getItemAt(0);
-        const base = sample ? baseSymbols.get(sample) : null;
-        const faded = base ? paint(base, 0.14, 0.6) : null;
-        if (faded) fadedSymbols.set(source.id, faded);
-        return faded;
-      };
-      styleLayer = (source, graphicsLayer, activeRoute, otherRoute) => {
-        if (!source || !graphicsLayer) return;
-        const field = activeRoute?.routeField;
-        const routeField = source.routeField || field;
-        const faded = fadedSymbol(source);
-        const keep = new Set([activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => String(id).trim()));
-        graphicsLayer.graphics.forEach((graphic) => {
-          const onRoute = !activeRoute || !routeField || keep.has(String(graphic.attributes?.[routeField] ?? "").trim());
-          graphic.visible = true;
-          const base = baseSymbols.get(graphic);
-          if (!base) return;
-          const next = onRoute ? base : faded;
-          if (next && graphic.symbol !== next) graphic.symbol = next;
-        });
-      };
-      applyRouteEffect = (activeRoute, otherRoute) => {
-        sources.forEach((source) => {
-          const index = LRS_LAYER_DEFS.findIndex((def) => def.id === source.id);
-          styleLayer(source, lrsLayers[index], activeRoute, otherRoute);
+      const applyRouteEffect = (activeRoute, otherRoute) => {
+        const ids = [activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => `'${String(id).trim().replace(/'/g, "''")}'`);
+        routeWhere.value = ids.length ? `route IN (${ids.join(",")})` : null;
+        lrsLayers.forEach((layer) => {
+          if (layer && layer !== "pending") layer.featureEffect = effectFor();
         });
       };
       api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
@@ -456,8 +441,8 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     const bag = api.current;
     if (!bag?.lrsLayers) return;
-    bag.lrsLayers.forEach((layer) => {
-      layer.visible = !(hiddenLayerIds || []).includes(LRS_LAYER_DEFS[bag.lrsLayers.indexOf(layer)].id);
+    bag.lrsLayers.forEach((layer, index) => {
+      if (layer && layer !== "pending") layer.visible = !(hiddenLayerIds || []).includes(LRS_LAYER_DEFS[index].id);
     });
   }, [hiddenLayerIds, ready]);
 

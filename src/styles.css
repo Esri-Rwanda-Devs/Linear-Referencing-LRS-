@@ -434,3 +434,4 @@ main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(24
 .compare-assets span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compare-assets em { font-style: normal; color: #94a3b8; font-variant-numeric: tabular-nums; }
 .compare-assets .more-note { font-size: 9px; color: #94a3b8; font-style: italic; }
+.value-dot { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgba(15, 23, 42, 0.2); }

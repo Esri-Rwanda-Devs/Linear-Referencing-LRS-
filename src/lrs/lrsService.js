@@ -1,4 +1,4 @@
-import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS } from "../config";
+import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../config";
 import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, projectSegment, toLonLat } from "./geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
@@ -87,9 +87,9 @@ function fieldsOf(features) {
   }));
 }
 
-const PAGE_SIZE = 2000;
+const PAGE_SIZE = 1000;
 const ROAD_ID = LRS_LAYER_DEFS.find((def) => def.route)?.id;
-const MAX_PARALLEL = 6;
+const MAX_PARALLEL = 3;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CACHE_DB = "rwanda-lrs-cache";
 const CACHE_STORE = "layers";
@@ -157,14 +157,6 @@ export async function clearLayerCache() {
   }
 }
 
-async function countFeatures(layerId) {
-  const { token } = await signInToLrs();
-  const query = new URLSearchParams({ f: "json", token, where: "1=1", returnCountOnly: "true" });
-  const response = await limited(() => fetch(`${LRS}/${layerId}/query?${query}`), layerId === ROAD_ID ? 1 : 0);
-  const data = await response.json();
-  return Number(data.count) || 0;
-}
-
 async function downloadFeatures(def) {
   const params = {
     where: "1=1",
@@ -175,25 +167,15 @@ async function downloadFeatures(def) {
     resultRecordCount: String(PAGE_SIZE),
     ...(def.kind === "point" ? {} : { returnTrueCurves: "true" }),
   };
-  const first = await queryFeatures(def.id, { ...params, resultOffset: "0" });
-  if (!first.exceeded || !first.features.length) return first.features;
-  const pageSize = first.features.length;
-  const total = await countFeatures(def.id).catch(() => 0);
-  if (!total) {
-    const features = [...first.features];
-    let offset = pageSize;
-    for (let page = 0; page < 100; page += 1) {
-      const batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset) });
-      features.push(...batch.features);
-      if (!batch.exceeded || !batch.features.length) break;
-      offset += batch.features.length;
-    }
-    return features;
+  const features = [];
+  let offset = 0;
+  for (let page = 0; page < 200; page += 1) {
+    const batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset) });
+    features.push(...batch.features);
+    if (!batch.exceeded || !batch.features.length) break;
+    offset += batch.features.length;
   }
-  const offsets = [];
-  for (let offset = pageSize; offset < total; offset += pageSize) offsets.push(offset);
-  const pages = await Promise.all(offsets.map((offset) => queryFeatures(def.id, { ...params, resultOffset: String(offset), resultRecordCount: String(pageSize) })));
-  return first.features.concat(...pages.map((page) => page.features));
+  return features;
 }
 
 async function fetchLayerOnce(def) {
@@ -279,7 +261,7 @@ async function queryFeatures(layerId, params) {
   const { token } = await signInToLrs();
   const query = new URLSearchParams({ f: "json", token, ...params });
   let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const data = await limited(async () => {
         const response = await fetch(`${LRS}/${layerId}/query?${query}`);
@@ -290,7 +272,8 @@ async function queryFeatures(layerId, params) {
       return { features: data.features || [], exceeded: Boolean(data.exceededTransferLimit) };
     } catch (error) {
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      if (attempt < 3) console.warn(`[LRS] Layer ${layerId} request failed (${error.message}); retrying…`);
+      await new Promise((resolve) => setTimeout(resolve, 600 * 2 ** attempt));
     }
   }
   throw lastError;
@@ -376,7 +359,7 @@ export async function loadEvents(route) {
   const mapLayers = [];
 
   for (const layer of layers) {
-    if (layer.def.route) continue;
+    if (layer.def.route || layer.def.chart === false) continue;
     let features = layer.features.filter((feature) => matchesRoute(layer, feature, route));
     if (!features.length && route.vertices?.length) {
       const box = routeBox(route, 0.01);
@@ -441,6 +424,21 @@ function detailsOf(attributes, name) {
     .slice(0, 8);
 }
 
+function colorKey(value) {
+  if (value === null || value === undefined) return "";
+  const number = Number(value);
+  if (typeof value === "number" || (String(value).trim() !== "" && Number.isFinite(number))) return String(number);
+  return String(value).trim().toLowerCase().replace(/[_\s]+/g, " ");
+}
+
+function valueColor(layerId, attributes) {
+  const rule = VALUE_COLORS[layerId];
+  if (!rule || !attributes) return null;
+  const key = Object.keys(attributes).find((nameOf) => nameOf.toLowerCase() === rule.field.toLowerCase());
+  if (!key) return null;
+  return rule.colors[colorKey(attributes[key])] || null;
+}
+
 function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0) {
   return {
     id: `${layer.id}-${feature.attributes.OBJECTID || feature.attributes.objectid || index}`,
@@ -449,7 +447,7 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     title: layer.def.title,
     name,
     shape: layer.def.shape,
-    color: layer.def.swatch,
+    color: valueColor(layer.id, feature.attributes) || layer.def.swatch,
     kind: layer.def.kind === "point" || to - from <= 0.02 ? "point" : "span",
     from,
     to,
@@ -484,6 +482,8 @@ export function summariseSegment(events, from, to) {
     if (overlap <= 0) return;
     const layer = spans.get(event.layerId) || { layerId: event.layerId, title: event.title, color: event.color, byName: new Map() };
     layer.byName.set(event.name, (layer.byName.get(event.name) || 0) + overlap);
+    if (!layer.colors) layer.colors = new Map();
+    layer.colors.set(event.name, event.color);
     spans.set(event.layerId, layer);
   });
   const pointLayers = [...points.values()]
@@ -492,7 +492,7 @@ export function summariseSegment(events, from, to) {
   const spanLayers = [...spans.values()].map((layer) => {
     const coveredKm = [...layer.byName.values()].reduce((sum, value) => sum + value, 0);
     const values = [...layer.byName.entries()]
-      .map(([name, value]) => ({ name, km: value, share: coveredKm ? value / coveredKm : 0 }))
+      .map(([name, value]) => ({ name, km: value, share: coveredKm ? value / coveredKm : 0, color: layer.colors?.get(name) || layer.color }))
       .sort((a, b) => b.km - a.km);
     return { layerId: layer.layerId, title: layer.title, color: layer.color, coveredKm, values };
   }).sort((a, b) => order(a.layerId) - order(b.layerId));
