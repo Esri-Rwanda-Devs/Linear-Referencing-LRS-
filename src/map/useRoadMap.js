@@ -41,7 +41,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
@@ -70,7 +70,9 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
       const analysisLayer = new GraphicsLayer({ id: "lrs-analysis", listMode: "hide" });
       const segmentLayer = new GraphicsLayer({ id: "lrs-segment", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, overlay, segmentLayer, projectLayer, cursorLayer] });
+      const compareLayer = new GraphicsLayer({ id: "lrs-compare", listMode: "hide" });
+      const compareCursorLayer = new GraphicsLayer({ id: "lrs-compare-cursor", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, compareCursorLayer, cursorLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -151,7 +153,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           graphics.push(graphic);
         });
         if (graphics.length) graphicsLayer.addMany(graphics);
-        styleLayer(layer, graphicsLayer, api.current?.route);
+        styleLayer(layer, graphicsLayer, api.current?.route, api.current?.compareRoute);
         if (!framed && graphicsLayer.visible && !api.current?.route && graphics.length) {
           framed = true;
           view.goTo(graphicsLayer.graphics).catch(() => {});
@@ -202,13 +204,14 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         if (faded) fadedSymbols.set(source.id, faded);
         return faded;
       };
-      styleLayer = (source, graphicsLayer, activeRoute) => {
+      styleLayer = (source, graphicsLayer, activeRoute, otherRoute) => {
         if (!source || !graphicsLayer) return;
         const field = activeRoute?.routeField;
         const routeField = source.routeField || field;
         const faded = fadedSymbol(source);
+        const keep = new Set([activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => String(id).trim()));
         graphicsLayer.graphics.forEach((graphic) => {
-          const onRoute = !activeRoute || !routeField || String(graphic.attributes?.[routeField] ?? "").trim() === String(activeRoute.id).trim();
+          const onRoute = !activeRoute || !routeField || keep.has(String(graphic.attributes?.[routeField] ?? "").trim());
           graphic.visible = true;
           const base = baseSymbols.get(graphic);
           if (!base) return;
@@ -216,13 +219,13 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           if (next && graphic.symbol !== next) graphic.symbol = next;
         });
       };
-      applyRouteEffect = (activeRoute) => {
+      applyRouteEffect = (activeRoute, otherRoute) => {
         sources.forEach((source) => {
           const index = LRS_LAYER_DEFS.findIndex((def) => def.id === source.id);
-          styleLayer(source, lrsLayers[index], activeRoute);
+          styleLayer(source, lrsLayers[index], activeRoute, otherRoute);
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       setReady(true);
     });
     return () => {
@@ -296,6 +299,29 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
     }));
     if (analysis.zoom) view.goTo({ target: circle, padding: 40 }, { duration: 500 }).catch(() => {});
   }, [analysis, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.compareLayer) return;
+    const { view, compareLayer, Graphic, Polyline, SimpleLineSymbol } = bag;
+    compareLayer.removeAll();
+    if (!compareRoute || compareRoute.id === route?.id) return;
+    const toLine = (geom) => {
+      const rawX = geom.curvePaths?.[0]?.[0]?.[0] ?? geom.paths?.[0]?.[0]?.[0];
+      const spatialReference = Math.abs(rawX || 0) > 180 ? { wkid: 102100 } : { wkid: 4326 };
+      return new Polyline(geom.curvePaths ? { curvePaths: geom.curvePaths, spatialReference } : { paths: geom.paths, spatialReference });
+    };
+    const lines = (compareRoute.geometries || []).map(toLine);
+    if (!lines.length && compareRoute.vertices?.length) lines.push(new Polyline({ paths: [compareRoute.vertices], spatialReference: { wkid: 4326 } }));
+    const halo = new SimpleLineSymbol({ color: [217, 70, 239, 0.3], width: 12, cap: "round", join: "round" });
+    const ink = new SimpleLineSymbol({ color: [217, 70, 239, 1], width: 4, cap: "round", join: "round" });
+    lines.forEach((geometry) => {
+      compareLayer.add(new Graphic({ geometry, symbol: halo }));
+      compareLayer.add(new Graphic({ geometry, symbol: ink }));
+    });
+    const targets = [...lines, ...bag.overlay.graphics.toArray().map((graphic) => graphic.geometry)];
+    if (targets.length) view.goTo({ target: targets, padding: 60 }, { duration: 600 }).catch(() => {});
+  }, [compareRoute, route, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -387,9 +413,45 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     const bag = api.current;
     if (!bag?.lrsLayers || !ready) return;
-    bag.applyRouteEffect?.(route);
     if (!route) bag.view.goTo(RWANDA_EXTENT, { duration: 450 }).catch(() => {});
   }, [route, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.lrsLayers || !ready) return;
+    const other = compareRoute && compareRoute.id !== route?.id ? compareRoute : null;
+    bag.route = route || null;
+    bag.compareRoute = other;
+    bag.applyRouteEffect?.(route, other);
+  }, [route, compareRoute, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.compareCursorLayer) return;
+    bag.compareCursorLayer.removeAll();
+    if (!compareRoute || compareRoute.id === route?.id) return;
+    if (compareCursor) {
+      const at = pointAtMeasure(compareRoute.vertices, compareRoute.measures, compareCursor.measure);
+      if (at) {
+        bag.compareCursorLayer.add(new bag.Graphic({
+          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+          symbol: new bag.SimpleMarkerSymbol({ style: "circle", color: [253, 244, 255, 0.98], size: 11, outline: { color: [134, 25, 143], width: 2.5 } }),
+        }));
+      }
+    }
+    if (compareEvent?.point) {
+      bag.compareCursorLayer.add(new bag.Graphic({
+        geometry: new bag.Point({ longitude: compareEvent.point[0], latitude: compareEvent.point[1] }),
+        symbol: new bag.SimpleMarkerSymbol({ style: "circle", color: [217, 70, 239, 0.95], size: 12, outline: { color: [255, 255, 255], width: 2 } }),
+      }));
+    }
+  }, [route, compareRoute, compareCursor, compareEvent, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.view || !compareEvent?.point) return;
+    bag.view.goTo({ target: new bag.Point({ longitude: compareEvent.point[0], latitude: compareEvent.point[1] }), zoom: 17 }, { duration: 650 }).catch(() => {});
+  }, [compareEvent, ready]);
 
   useEffect(() => {
     const bag = api.current;

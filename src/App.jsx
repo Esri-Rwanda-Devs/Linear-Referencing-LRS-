@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Planner from "./components/Planner";
 import SegmentAnalysis from "./components/SegmentAnalysis";
+import RouteCompare from "./components/RouteCompare";
 import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
 import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog, nearestRoads } from "./lrs/lrsService";
@@ -9,6 +10,8 @@ import { locateOnRoute } from "./lrs/geometry";
 import { useRoadMap } from "./map/useRoadMap";
 
 const STORE = "rwanda-lrs-projects";
+const NO_PROJECTS = [];
+const noop = () => {};
 
 function readProjects() {
   try {
@@ -40,6 +43,11 @@ export default function App() {
   const [panelHost] = useState(() => document.createElement("div"));
   const [panelTab, setPanelTab] = useState("nearest");
   const [legendOpen, setLegendOpen] = useState(true);
+  const [compare, setCompare] = useState(null);
+  const [compareWindow, setCompareWindow] = useState([0, WINDOW_KM]);
+  const [compareCursor, setCompareCursor] = useState(null);
+  const [compareEvent, setCompareEvent] = useState(null);
+  const compareShown = compare && compare.route.id !== routeId ? compare : null;
   const [segment, setSegment] = useState(null);
   const [selectingSegment, setSelectingSegment] = useState(false);
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() => LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id));
@@ -62,7 +70,7 @@ export default function App() {
       return undefined;
     }
     let cancel = false;
-    setStatus(`Signing in and loading ${routeId} from Road_Asset_LRS_Map…`);
+    setStatus(`Loading route ${routeId} …`);
     setRoute(null);
     setEvents([]);
     setMapLayers([]);
@@ -127,6 +135,17 @@ export default function App() {
   const onHoverLonLat = useCallback((longitude, latitude) => {
     if (!route) return;
     const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.25);
+    const other = compareShown && locateOnRoute(compareShown.route.vertices, compareShown.route.measures, [longitude, latitude], 0.25);
+    if (other && (!hit || other.distanceKm < hit.distanceKm)) {
+      setCompareCursor((current) => (current && Math.abs(current.measure - other.measure) < 0.01 ? current : { measure: other.measure, source: "map" }));
+      setCompareWindow((prev) => {
+        const span = prev[1] - prev[0];
+        if (other.measure >= prev[0] + span * 0.2 && other.measure <= prev[1] - span * 0.2) return prev;
+        const start = Math.max(0, Math.min(compareShown.route.lengthKm - span, other.measure - span / 2));
+        return [start, start + span];
+      });
+      return;
+    }
     if (!hit) return;
     setCursor((current) => {
       if (current && Math.abs(current.measure - hit.measure) < 0.01) return current;
@@ -140,7 +159,7 @@ export default function App() {
         return [start, start + span];
       });
     }
-  }, [route, follow]);
+  }, [route, follow, compareShown]);
 
   useEffect(() => {
     if (!origin) {
@@ -185,6 +204,27 @@ export default function App() {
 
   const analysis = useMemo(() => (origin ? { origin: origin.point, radiusM, results: nearest.results, zoom: !route } : null), [origin, radiusM, nearest.results, route]);
 
+  const focusCompareEvent = useCallback((item) => {
+    if (!compareShown) return;
+    setCompareEvent(item);
+    setCompareCursor({ measure: item.measure, source: "chart" });
+    setCompareWindow((prev) => {
+      const span = prev[1] - prev[0];
+      const start = Math.max(0, Math.min(compareShown.route.lengthKm - span, item.measure - span / 2));
+      return [start, start + span];
+    });
+  }, [compareShown]);
+  const onCompareWindow = useCallback((start, end) => {
+    if (!compareShown) return;
+    const span = end - start;
+    const from = Math.max(0, Math.min((compareShown.route.lengthKm || span) - span, start));
+    setCompareWindow([from, from + span]);
+  }, [compareShown]);
+  const onCompareHover = useCallback((measure) => {
+    if (!compareShown) return;
+    setCompareCursor({ measure: Math.max(0, Math.min(compareShown.route.lengthKm, measure)), source: "chart" });
+  }, [compareShown]);
+
   const onLeave = useCallback(() => {}, []);
   const [focusing, setFocusing] = useState(null);
   const mapRef = useRoadMap({
@@ -201,6 +241,9 @@ export default function App() {
     activeEvent,
     hiddenLayerIds,
     segment,
+    compareRoute: compareShown?.route || null,
+    compareCursor,
+    compareEvent,
     uiPanel: panelHost,
     analysis,
     pickingOrigin,
@@ -238,7 +281,7 @@ export default function App() {
       <header className="topbar">
         <div>
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
-          <h1>Asset Mapping System</h1>
+          <h1>Roads Asset Mapping Application</h1>
         </div>
         {/* <p className="source">
           Signin to Road_Asset_LRS_Map to view the map.
@@ -307,10 +350,35 @@ export default function App() {
             </div>
             {createPortal(<div className="analysis-panel">
               <div className="analysis-tabs" role="tablist">
-                <button type="button" role="tab" aria-selected={panelTab === "nearest"} className={panelTab === "nearest" ? "on" : ""} onClick={() => setPanelTab("nearest")}>Nearest road</button>
-                <button type="button" role="tab" aria-selected={panelTab === "segment"} className={panelTab === "segment" ? "on" : ""} onClick={() => setPanelTab("segment")}>Route segment</button>
+                <button type="button" role="tab" aria-selected={panelTab === "nearest"} className={panelTab === "nearest" ? "on" : ""} onClick={() => setPanelTab("nearest")}>Nearest</button>
+                <button type="button" role="tab" aria-selected={panelTab === "segment"} className={panelTab === "segment" ? "on" : ""} onClick={() => setPanelTab("segment")}>Segment</button>
+                <button type="button" role="tab" aria-selected={panelTab === "compare"} className={panelTab === "compare" ? "on" : ""} onClick={() => setPanelTab("compare")}>Compare</button>
               </div>
-              {panelTab === "segment" ? (
+              {panelTab === "compare" ? (
+                <RouteCompare
+                  catalog={catalog}
+                  route={route}
+                  events={events}
+                  onCompareRoute={(next) => {
+                    setCompare(next);
+                    setCompareCursor(null);
+                    setCompareEvent(null);
+                    if (!next) return;
+                    setCompareWindow([0, Math.min(WINDOW_KM, next.route.lengthKm || WINDOW_KM)]);
+                    const withAssets = new Set([...events, ...next.events].filter((item) => item.kind !== "span").map((item) => item.layerId));
+                    setHiddenLayerIds((current) => current.filter((id) => !withAssets.has(id)));
+                  }}
+                  onSelectA={focusEvent}
+                  onSelectB={focusCompareEvent}
+                  onOpenRoute={(id) => {
+                    if (id === routeId) return;
+                    setRouteId(id);
+                    setActiveId(null);
+                    setActiveEvent(null);
+                    setFollow(true);
+                  }}
+                />
+              ) : panelTab === "segment" ? (
                 <SegmentAnalysis
                   route={route}
                   events={events}
@@ -471,6 +539,29 @@ export default function App() {
                 onSelectEvent={focusEvent}
                 onPickProject={(project) => setActiveId(project.id)}
               />
+            )}
+            {route && compareShown && (
+              <div className="compare-chart">
+                <div className="compare-chart-head">
+                  <i className="swatch b" />
+                  <b>Route B · {compareShown.route.id}</b>
+                  <span>{compareShown.route.lengthKm.toFixed(1)} km · {compareShown.events.length} features</span>
+                  <button type="button" className="link" onClick={() => { setCompare(null); setCompareCursor(null); setCompareEvent(null); }}>Close</button>
+                </div>
+                <StripChart
+                  events={compareShown.events}
+                  projects={NO_PROJECTS}
+                  route={compareShown.route}
+                  windowKm={compareWindow}
+                  cursor={compareCursor}
+                  activeEventId={compareEvent?.id}
+                  attachedIds={NO_PROJECTS}
+                  onWindow={onCompareWindow}
+                  onHoverMeasure={onCompareHover}
+                  onSelectEvent={focusCompareEvent}
+                  onPickProject={noop}
+                />
+              </div>
             )}
           </section>
         </main>

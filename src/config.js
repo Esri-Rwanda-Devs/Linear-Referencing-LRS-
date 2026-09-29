@@ -22,7 +22,7 @@ export const EVENT_LAYERS = [
 
 export const GROUPS = [
   { id: "POI", label: "POI", hint: "Points of interest", color: "#e11d48" },
-  { id: "ATT", label: "ATT", hint: "Pavement, drain, speed, carriageway", color: "#7c3aed" },
+  { id: "ATT", label: "Line Events", hint: "Pavement, drain, speed, carriageway", color: "#7c3aed" },
   { id: "NET", label: "NET", hint: "Centerline, network, redline", color: "#0f766e" },
   { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];

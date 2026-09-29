@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { GROUPS, LRS_LAYER_DEFS } from "../config";
 
 const ROW_H = 20;
@@ -111,8 +111,9 @@ function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   );
 }
 
-export default function StripChart({ events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
+function StripChart({ events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
   const [drag, setDrag] = useState(null);
+  const clipId = `plot-clip-${useId().replace(/:/g, "")}`;
   const rows = rowsFor();
   const labelW = 150;
   const width = 1100;
@@ -185,7 +186,7 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
         }}
       >
         <defs>
-          <clipPath id="plot-clip">
+          <clipPath id={clipId}>
             <rect x={labelW} y="0" width={right - labelW} height={height} />
           </clipPath>
         </defs>
@@ -228,7 +229,7 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
               <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />
               <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
               <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
-              <g clipPath="url(#plot-clip)">
+              <g clipPath={`url(#${clipId})`}>
                 {spans.map((item) => {
                   const x1 = clampX(xOf(item.from));
                   const x2 = clampX(xOf(item.to));
@@ -313,4 +314,5 @@ export default function StripChart({ events, projects, route, windowKm, cursor, 
   );
 }
 
+export default memo(StripChart);
 export { rowsFor };

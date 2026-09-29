@@ -25,14 +25,20 @@ function loadModules(names) {
   });
 }
 
-export async function signInToLrs() {
-  if (session) return session;
-  const [Portal, IdentityManager] = await loadModules(["esri/portal/Portal", "esri/identity/IdentityManager"]);
-  const portal = new Portal({ url: PORTAL });
-  portal.authMode = "immediate";
-  await portal.load();
-  const credential = await IdentityManager.getCredential(`${LRS}`);
-  session = { token: credential.token, user: portal.user?.username || "" };
+export function signInToLrs() {
+  if (!session) {
+    session = (async () => {
+      const [Portal, IdentityManager] = await loadModules(["esri/portal/Portal", "esri/identity/IdentityManager"]);
+      const portal = new Portal({ url: PORTAL });
+      portal.authMode = "immediate";
+      await portal.load();
+      const credential = await IdentityManager.getCredential(`${LRS}`);
+      return { token: credential.token, user: portal.user?.username || "" };
+    })().catch((error) => {
+      session = null;
+      throw error;
+    });
+  }
   return session;
 }
 
@@ -81,23 +87,130 @@ function fieldsOf(features) {
   }));
 }
 
-async function fetchLayerOnce(def) {
-  const features = [];
-  let offset = 0;
-  for (let page = 0; page < 20; page += 1) {
-    const batch = await queryFeatures(def.id, {
-      where: "1=1",
-      outFields: "*",
-      returnGeometry: "true",
-      returnTrueCurves: "true",
-      outSR: "4326",
-      resultOffset: String(offset),
-      resultRecordCount: "500",
+const PAGE_SIZE = 2000;
+const ROAD_ID = LRS_LAYER_DEFS.find((def) => def.route)?.id;
+const MAX_PARALLEL = 6;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_DB = "rwanda-lrs-cache";
+const CACHE_STORE = "layers";
+
+let active = 0;
+const waiting = [];
+async function limited(task, priority = 0) {
+  if (active >= MAX_PARALLEL) {
+    await new Promise((resolve) => {
+      const at = waiting.findIndex((item) => item.priority < priority);
+      waiting.splice(at < 0 ? waiting.length : at, 0, { resolve, priority });
     });
-    features.push(...batch.features);
-    if (!batch.exceeded || batch.features.length === 0) break;
-    offset += batch.features.length;
   }
+  active += 1;
+  try {
+    return await task();
+  } finally {
+    active -= 1;
+    waiting.shift()?.resolve();
+  }
+}
+
+function openCache() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const request = indexedDB.open(CACHE_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(CACHE_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function cacheGet(key) {
+  try {
+    const db = await openCache();
+    return await new Promise((resolve) => {
+      const request = db.transaction(CACHE_STORE).objectStore(CACHE_STORE).get(key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function cachePut(key, value) {
+  try {
+    const db = await openCache();
+    db.transaction(CACHE_STORE, "readwrite").objectStore(CACHE_STORE).put(value, key);
+  } catch {
+    /* caching is best effort */
+  }
+}
+
+/** Drops the local layer cache so the next load reads everything from the server. */
+export async function clearLayerCache() {
+  try {
+    const db = await openCache();
+    db.transaction(CACHE_STORE, "readwrite").objectStore(CACHE_STORE).clear();
+  } catch {
+    /* nothing cached */
+  }
+}
+
+async function countFeatures(layerId) {
+  const { token } = await signInToLrs();
+  const query = new URLSearchParams({ f: "json", token, where: "1=1", returnCountOnly: "true" });
+  const response = await limited(() => fetch(`${LRS}/${layerId}/query?${query}`), layerId === ROAD_ID ? 1 : 0);
+  const data = await response.json();
+  return Number(data.count) || 0;
+}
+
+async function downloadFeatures(def) {
+  const params = {
+    where: "1=1",
+    outFields: "*",
+    returnGeometry: "true",
+    outSR: "4326",
+    geometryPrecision: "6",
+    resultRecordCount: String(PAGE_SIZE),
+    ...(def.kind === "point" ? {} : { returnTrueCurves: "true" }),
+  };
+  const first = await queryFeatures(def.id, { ...params, resultOffset: "0" });
+  if (!first.exceeded || !first.features.length) return first.features;
+  const pageSize = first.features.length;
+  const total = await countFeatures(def.id).catch(() => 0);
+  if (!total) {
+    const features = [...first.features];
+    let offset = pageSize;
+    for (let page = 0; page < 100; page += 1) {
+      const batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset) });
+      features.push(...batch.features);
+      if (!batch.exceeded || !batch.features.length) break;
+      offset += batch.features.length;
+    }
+    return features;
+  }
+  const offsets = [];
+  for (let offset = pageSize; offset < total; offset += pageSize) offsets.push(offset);
+  const pages = await Promise.all(offsets.map((offset) => queryFeatures(def.id, { ...params, resultOffset: String(offset), resultRecordCount: String(pageSize) })));
+  return first.features.concat(...pages.map((page) => page.features));
+}
+
+async function fetchLayerOnce(def) {
+  const started = performance.now();
+  const { user } = await signInToLrs();
+  const key = `${LRS}/${def.id}|${user}`;
+  const cached = await cacheGet(key);
+  let features;
+  let source = "server";
+  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS && Array.isArray(cached.features)) {
+    features = cached.features;
+    source = "local cache";
+  } else {
+    features = await downloadFeatures(def);
+    cachePut(key, { savedAt: Date.now(), features });
+  }
+  console.info(`[LRS] ${def.title}: ${features.length} features from ${source} in ${Math.round(performance.now() - started)} ms`);
   const fields = fieldsOf(features);
   const oidField = Object.keys(features[0]?.attributes || {}).find((name) => /objectid/i.test(name)) || "OBJECTID";
   return {
@@ -128,28 +241,37 @@ function publishLayer(layer) {
   layerListeners.forEach((listener) => listener(layer));
 }
 
-async function describeService() {
-  const layers = [];
-  const pointFirst = [...LRS_LAYER_DEFS].sort((a, b) => Number(b.kind === "point") - Number(a.kind === "point"));
-  for (const def of pointFirst) {
-    let layer;
-    try {
-      layer = await fetchLayerOnce(def);
-    } catch (error) {
-      console.error(def.title, error);
-      layer = { id: def.id, name: def.title, features: [], fields: [], oidField: "OBJECTID", geometryType: def.kind === "point" ? "point" : "polyline", routeField: null, fromField: null, toField: null, def };
-    }
-    layers.push(layer);
-    publishLayer(layer);
+const layerPromises = new Map();
+function layerOf(def) {
+  if (!layerPromises.has(def.id)) {
+    layerPromises.set(def.id, fetchLayerOnce(def)
+      .catch((error) => {
+        console.error(def.title, error);
+        return { id: def.id, name: def.title, features: [], fields: [], oidField: "OBJECTID", geometryType: def.kind === "point" ? "point" : "polyline", routeField: null, fromField: null, toField: null, def };
+      })
+      .then((layer) => {
+        publishLayer(layer);
+        return layer;
+      }));
   }
-  const centerline = layers.find((layer) => layer.def.route);
-  if (!centerline) throw new Error("Road Network was not loaded");
-  return { layers, centerline };
+  return layerPromises.get(def.id);
+}
+
+const ROAD_DEF = LRS_LAYER_DEFS.find((def) => def.route);
+
+/** Road Network alone: enough for the route list, route geometry and nearest-road analysis. */
+async function roadNetwork() {
+  const centerline = await layerOf(ROAD_DEF);
+  if (!centerline.features.length) throw new Error("Road Network was not loaded");
+  return centerline;
 }
 
 let described = null;
 function service() {
-  if (!described) described = describeService();
+  if (!described) {
+    const ordered = [ROAD_DEF, ...LRS_LAYER_DEFS.filter((def) => !def.route && def.kind === "point"), ...LRS_LAYER_DEFS.filter((def) => !def.route && def.kind !== "point")];
+    described = Promise.all(ordered.map(layerOf)).then(async (layers) => ({ layers, centerline: await roadNetwork() }));
+  }
   return described;
 }
 
@@ -159,9 +281,11 @@ async function queryFeatures(layerId, params) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const response = await fetch(`${LRS}/${layerId}/query?${query}`);
-      if (!response.ok) throw new Error(`Query failed ${response.status}`);
-      const data = await response.json();
+      const data = await limited(async () => {
+        const response = await fetch(`${LRS}/${layerId}/query?${query}`);
+        if (!response.ok) throw new Error(`Query failed ${response.status}`);
+        return response.json();
+      }, layerId === ROAD_ID ? 1 : 0);
       if (data.error) throw new Error(data.error.message || "Query failed");
       return { features: data.features || [], exceeded: Boolean(data.exceededTransferLimit) };
     } catch (error) {
@@ -181,7 +305,8 @@ function routeFieldOf(centerline) {
 }
 
 export async function loadRouteCatalog() {
-  const { centerline } = await service();
+  service();
+  const centerline = await roadNetwork();
   const field = routeFieldOf(centerline);
   if (!field) throw new Error("Road Network has no route id field");
   const codeField = pickField(centerline.fields, CODE_FIELDS);
@@ -197,7 +322,7 @@ export async function loadRouteCatalog() {
 }
 
 export async function loadRoute(routeId) {
-  const { centerline } = await service();
+  const centerline = await roadNetwork();
   const field = routeFieldOf(centerline);
   const wanted = String(routeId).trim();
   const features = centerline.features.filter((feature) => String(feature.attributes[field] ?? "").trim() === wanted);
@@ -383,7 +508,7 @@ const roadPaths = new WeakMap();
 
 /** Road Network routes within maxKm of [lon, lat], nearest first, one entry per route id. */
 export async function nearestRoads(point, maxKm, limit = 12) {
-  const { centerline } = await service();
+  const centerline = await roadNetwork();
   const field = routeFieldOf(centerline);
   const codeField = pickField(centerline.fields, CODE_FIELDS);
   const padLat = maxKm / 111;
