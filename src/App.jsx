@@ -106,6 +106,9 @@ export default function App() {
   const compareShown = compare && compare.route.id !== routeId ? compare : null;
   const [segment, setSegment] = useState(null);
   const [selectingSegment, setSelectingSegment] = useState(false);
+  const [segmentStart, setSegmentStart] = useState(null);
+  const segmentStartRef = useRef(null);
+  segmentStartRef.current = segmentStart;
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() => LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id));
 
   useEffect(() => {
@@ -132,6 +135,7 @@ export default function App() {
     setMapLayers([]);
     setSegment(null);
     setSelectingSegment(false);
+    setSegmentStart(null);
     setCursor(null);
     setActiveEvent(null);
     loadRoute(routeId)
@@ -288,6 +292,30 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [route, events.length, fitChart]);
 
+  const commitSegment = useCallback((a, b) => {
+    if (!route) return;
+    const next = { from: Math.max(0, Math.min(a, b)), to: Math.min(route.lengthKm, Math.max(a, b)) };
+    if (next.to - next.from < 0.005) return;
+    setSegment(next);
+    setSegmentStart(null);
+    setSelectingSegment(false);
+    setPanelTab("segment");
+  }, [route]);
+  const onSegmentPoint = useCallback((measure) => {
+    if (!route) return;
+    const at = Math.max(0, Math.min(route.lengthKm, measure));
+    if (segmentStartRef.current === null) setSegmentStart(at);
+    else commitSegment(segmentStartRef.current, at);
+  }, [route, commitSegment]);
+  const onSegmentClick = useCallback((longitude, latitude) => {
+    if (!route) return;
+    const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.3);
+    if (hit) onSegmentPoint(hit.measure);
+  }, [route, onSegmentPoint]);
+  useEffect(() => {
+    if (panelTab !== "segment") setSegmentStart(null);
+  }, [panelTab]);
+
   const onLeave = useCallback(() => {}, []);
   const [focusing, setFocusing] = useState(null);
   const mapRef = useRoadMap({
@@ -304,6 +332,9 @@ export default function App() {
     activeEvent,
     hiddenLayerIds,
     segment,
+    segmentStart,
+    segmentPicking: Boolean(route) && (selectingSegment || panelTab === "segment"),
+    onSegmentClick,
     compareRoute: compareShown?.route || null,
     compareCursor,
     compareEvent,
@@ -446,10 +477,12 @@ export default function App() {
                   route={route}
                   events={events}
                   segment={segment}
+                  segmentStart={segmentStart}
                   selecting={selectingSegment}
                   windowKm={windowKm}
                   onSegment={(next) => {
                     setSegment(next);
+                    setSegmentStart(null);
                     setSelectingSegment(false);
                     if (next) {
                       const pad = Math.max(0.05, (next.to - next.from) * 0.15);
@@ -457,7 +490,10 @@ export default function App() {
                       setWindowKm([Math.max(0, next.from - pad), Math.min(route.lengthKm, next.to + pad)]);
                     }
                   }}
-                  onSelecting={setSelectingSegment}
+                  onSelecting={(value) => {
+                    setSelectingSegment(value);
+                    if (!value) setSegmentStart(null);
+                  }}
                   onSelectEvent={focusEvent}
                 />
               ) : (<>
@@ -606,12 +642,10 @@ export default function App() {
                 windowKm={windowKm}
                 cursor={cursor}
                 segment={segment}
+                segmentStart={segmentStart}
                 selectingSegment={selectingSegment}
-                onSegment={(from, to) => {
-                  setSegment({ from: Math.max(0, Math.min(from, to)), to: Math.min(route.lengthKm, Math.max(from, to)) });
-                  setSelectingSegment(false);
-                  setPanelTab("segment");
-                }}
+                onSegment={commitSegment}
+                onSegmentPoint={onSegmentPoint}
                 onWindow={(start, end) => {
                   const span = end - start;
                   const from = Math.max(0, Math.min((route.lengthKm || span) - span, start));

@@ -4,13 +4,17 @@ import { ChartSymbol } from "./StripChart";
 
 const km = (value) => `${value.toFixed(value < 10 ? 3 : 2)} km`;
 
-export default function SegmentAnalysis({ route, events, segment, selecting, windowKm, onSegment, onSelecting, onSelectEvent }) {
+export default function SegmentAnalysis({ route, events, segment, segmentStart = null, selecting, windowKm, onSegment, onSelecting, onSelectEvent }) {
   const [draft, setDraft] = useState({ from: "", to: "" });
   const [open, setOpen] = useState(null);
 
   useEffect(() => {
     setDraft(segment ? { from: segment.from.toFixed(3), to: segment.to.toFixed(3) } : { from: "", to: "" });
   }, [segment]);
+
+  useEffect(() => {
+    if (segmentStart !== null) setDraft({ from: segmentStart.toFixed(3), to: "" });
+  }, [segmentStart]);
 
   const summary = useMemo(() => (segment ? summariseSegment(events, segment.from, segment.to) : null), [events, segment]);
 
@@ -27,7 +31,7 @@ export default function SegmentAnalysis({ route, events, segment, selecting, win
     <div className="segment">
       <p className="analysis-origin">
         {route.id} · 0 – {route.lengthKm.toFixed(2)} km
-        <span>Type a start and end, use the chart window, or drag across the chart.</span>
+        <span>Click the highlighted route on the map: first click fills From, second fills To and analyses. You can also type, use the chart window, or drag across the chart.</span>
       </p>
       <form className="segment-range" onSubmit={(event) => { event.preventDefault(); apply(draft.from, draft.to); }}>
         <label>From<input type="number" step="0.01" min="0" max={route.lengthKm} value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} /></label>
@@ -37,7 +41,7 @@ export default function SegmentAnalysis({ route, events, segment, selecting, win
       <div className="segment-actions">
         <button type="button" onClick={() => apply(windowKm[0], windowKm[1])}>Use chart window</button>
         <button type="button" className={selecting ? "on" : ""} onClick={() => onSelecting(!selecting)}>
-          {selecting ? "Drag on chart… (cancel)" : "Drag on chart"}
+          {selecting ? (segmentStart !== null ? `From ${segmentStart.toFixed(2)} km… click the end (cancel)` : "Click the start on the route… (cancel)") : "Pick from / to on route"}
         </button>
         {segment && <button type="button" className="link" onClick={() => onSegment(null)}>Clear</button>}
       </div>

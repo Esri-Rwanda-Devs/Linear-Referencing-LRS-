@@ -41,13 +41,17 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
   originRef.current = onOrigin;
   const pickingRef = useRef(pickingOrigin);
   pickingRef.current = pickingOrigin;
+  const segmentPickRef = useRef(segmentPicking);
+  segmentPickRef.current = segmentPicking;
+  const segmentClickRef = useRef(onSegmentClick);
+  segmentClickRef.current = onSegmentClick;
   const hiddenRef = useRef(hiddenLayerIds);
   hiddenRef.current = hiddenLayerIds;
   const ref = useRef(null);
@@ -188,6 +192,10 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       view.on("pointer-leave", () => leaveRef.current?.());
       const roadIndex = LRS_LAYER_DEFS.findIndex((def) => def.route);
       view.on("click", (event) => {
+        if (segmentPickRef.current) {
+          segmentClickRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
+          return;
+        }
         if (pickingRef.current) {
           originRef.current?.([event.mapPoint.longitude, event.mapPoint.latitude], "Picked on map");
           return;
@@ -238,6 +246,19 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       overlay.add(new Graphic({ geometry, symbol: halo }));
       overlay.add(new Graphic({ geometry, symbol: ink }));
     });
+    if (route.vertices?.length > 1) {
+      const ends = [
+        { at: route.vertices[0], color: [22, 163, 74], label: "Start" },
+        { at: route.vertices[route.vertices.length - 1], color: [220, 38, 38], label: "End" },
+      ];
+      ends.forEach(({ at, color, label }) => {
+        overlay.add(new Graphic({
+          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+          attributes: { end: label },
+          symbol: new bag.SimpleMarkerSymbol({ style: "circle", color, size: 13, outline: { color: [255, 255, 255], width: 2.5 } }),
+        }));
+      });
+    }
 
     const target = curved.length ? curved : line;
     const label = `${route.id}${route.trajectory && route.trajectory !== route.id ? ` · ${route.trajectory}` : ""}`;
@@ -331,8 +352,22 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     const bag = api.current;
     if (!bag?.view?.container) return;
-    bag.view.container.style.cursor = pickingOrigin ? "crosshair" : "";
-  }, [pickingOrigin, ready]);
+    bag.view.container.style.cursor = pickingOrigin || segmentPicking ? "crosshair" : "";
+  }, [pickingOrigin, segmentPicking, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.cursorLayer || !bag.segmentLayer) return undefined;
+    if (!route || segmentStart === null || segmentStart === undefined) return undefined;
+    const at = pointAtMeasure(route.vertices, route.measures, segmentStart);
+    if (!at) return undefined;
+    const marker = new bag.Graphic({
+      geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+      symbol: new bag.SimpleMarkerSymbol({ style: "square", size: 10, color: [22, 163, 74, 1], outline: { color: [255, 255, 255], width: 2 } }),
+    });
+    bag.segmentLayer.add(marker);
+    return () => bag.segmentLayer.remove(marker);
+  }, [route, segmentStart, ready]);
 
   useEffect(() => {
     const bag = api.current;

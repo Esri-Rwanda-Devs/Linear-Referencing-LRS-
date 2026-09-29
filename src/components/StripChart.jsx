@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
-import { GROUPS, LRS_LAYER_DEFS } from "../config";
+import { GROUPS, LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
 
 const ROW_H = 20;
 const AXIS_H = 24;
@@ -85,6 +85,26 @@ function valueColorsOf(bucket) {
   return bucket.values;
 }
 
+const legendLabel = (key) => (/^\d+$/.test(key) ? `${key} km/h` : key.replace(/\b\w/g, (char) => char.toUpperCase()));
+
+/** Colour categories configured in VALUE_COLORS, one group per layer. */
+function ValueLegend() {
+  const groups = LRS_LAYER_DEFS.filter((def) => VALUE_COLORS[def.id] && def.chart !== false);
+  if (!groups.length) return null;
+  return (
+    <div className="value-legend">
+      {groups.map((def) => (
+        <span key={def.id} className="value-legend-group">
+          <b>{def.title}</b>
+          {Object.entries(VALUE_COLORS[def.id].colors).map(([key, color]) => (
+            <span key={key} className="value-legend-chip"><i style={{ background: color }} />{legendLabel(key)}</span>
+          ))}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Whole-road overview: the thumb is the station window, the orange tick is the cursor. Drag or click to move along the road. */
 function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   const trackRef = useRef(null);
@@ -145,7 +165,7 @@ function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   );
 }
 
-function StripChart({ fill = false, events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
+function StripChart({ fill = false, events, projects, route, windowKm, cursor, segment, segmentStart = null, selectingSegment, onSegmentPoint, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
   const [drag, setDrag] = useState(null);
   const clipId = `plot-clip-${useId().replace(/:/g, "")}`;
   const rows = rowsFor();
@@ -225,6 +245,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
     return () => node.removeEventListener("wheel", onWheel);
   }, [from, to, span, onWindow]);
 
+  const selectingRef = useRef(selectingSegment);
+  selectingRef.current = selectingSegment;
   const selectRef = useRef(onSelectEvent);
   selectRef.current = onSelectEvent;
   const projectRef = useRef(onPickProject);
@@ -259,6 +281,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
     const attached = new Set(attachedKey ? attachedKey.split("|") : []);
     const pick = (item) => (event) => {
       event.stopPropagation();
+      if (selectingRef.current) return;
       if (item.group === "NET") return;
       if (item.group === "PLN") projectRef.current?.(item);
       else selectRef.current?.(item);
@@ -419,9 +442,13 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         onMouseUp={() => {
           if (!drag) return;
           if (Math.abs(drag.end - drag.start) > span * 0.005) onSegment?.(drag.start, drag.end);
+          else onSegmentPoint?.(drag.start);
           setDrag(null);
         }}
-        onMouseLeave={() => setDrag(null)}
+        onMouseLeave={() => {
+          if (drag && Math.abs(drag.end - drag.start) > span * 0.005) onSegment?.(drag.start, drag.end);
+          setDrag(null);
+        }}
         onClick={(event) => {
           if (selectingSegment) return;
           const measure = measureOf(event.clientX, event.currentTarget);
@@ -458,6 +485,26 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
             </g>
           );
         })()}
+        {segmentStart !== null && segmentStart >= from && segmentStart <= to && (
+          <g pointerEvents="none">
+            <line x1={xOf(segmentStart)} x2={xOf(segmentStart)} y1={AXIS_H - 4} y2={height - 4} stroke="#16a34a" strokeWidth="1.6" strokeDasharray="4 2" />
+            <text x={xOf(segmentStart) + 4} y={AXIS_H + 2} fontSize="8" fontWeight="700" fill="#15803d" stroke="rgba(255,255,255,0.9)" strokeWidth="2" paintOrder="stroke">
+              {`From ${segmentStart.toFixed(2)} km · click the end`}
+            </text>
+          </g>
+        )}
+        {route && (() => {
+          const roadIndex = rows.findIndex((row) => row.route);
+          if (roadIndex < 0) return null;
+          const yMid = rowY[roadIndex] + layerH / 2;
+          const r = Math.max(4, Math.min(7, barH / 2 + 1));
+          return (
+            <g pointerEvents="none">
+              {from <= 0.0001 && <circle cx={xOf(0)} cy={yMid} r={r} fill="#16a34a" stroke="#fff" strokeWidth="1.5"><title>Route start · 0 km</title></circle>}
+              {to >= route.lengthKm - 0.0001 && <circle cx={xOf(route.lengthKm)} cy={yMid} r={r} fill="#dc2626" stroke="#fff" strokeWidth="1.5"><title>{`Route end · ${route.lengthKm.toFixed(2)} km`}</title></circle>}
+            </g>
+          );
+        })()}
         {cursor && cursor.measure >= from && cursor.measure <= to && (
           <g pointerEvents="none">
             <line x1={xOf(cursor.measure)} x2={xOf(cursor.measure)} y1="20" y2={height - 2} stroke="#ea580c" strokeWidth="2" />
@@ -469,6 +516,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
       {route?.lengthKm > 0 && (
         <RoadSlider lengthKm={route.lengthKm} from={from} to={to} cursor={cursor} events={events} onWindow={onWindow} />
       )}
+      <ValueLegend />
       <div className="chart-help">Scroll to zoom the station window. Click a symbol to show it on the map. Measures are kilometres from the route origin.</div>
     </div>
   );
