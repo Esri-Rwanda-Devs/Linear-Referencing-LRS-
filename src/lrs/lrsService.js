@@ -304,6 +304,9 @@ function routeFieldOf(centerline) {
   return centerline.routeField || centerline.fields.find((item) => item.type === "esriFieldTypeString" && !/globalid|objectid/i.test(item.name))?.name || null;
 }
 
+export const routeKey = (value) => String(value ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+const hasGeometry = (feature) => flattenPaths(feature.geometry).length > 0;
+
 export async function loadRouteCatalog() {
   service();
   const centerline = await roadNetwork();
@@ -315,8 +318,12 @@ export async function loadRouteCatalog() {
   features.forEach((feature) => {
     const id = String(feature.attributes[field] ?? "").trim();
     if (!id || /[{}]/.test(id)) return;
+    const key = routeKey(id);
+    const drawn = hasGeometry(feature);
+    const known = byId.get(key);
+    if (known && (known.drawn || !drawn)) return;
     const code = codeField ? String(feature.attributes[codeField] ?? "").trim() : "";
-    if (!byId.has(id)) byId.set(id, { id, code, trajectory: code || "Road Network", roadClass: "Road Network", routeField: field });
+    byId.set(key, { id, code, trajectory: code || "Road Network", roadClass: "Road Network", routeField: field, drawn });
   });
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
@@ -324,10 +331,11 @@ export async function loadRouteCatalog() {
 export async function loadRoute(routeId) {
   const centerline = await roadNetwork();
   const field = routeFieldOf(centerline);
-  const wanted = String(routeId).trim();
-  const features = centerline.features.filter((feature) => String(feature.attributes[field] ?? "").trim() === wanted);
-  if (!features.length) throw new Error(`No Road Network geometry found for route ${wanted}`);
+  const wanted = routeKey(routeId);
+  const features = centerline.features.filter((feature) => routeKey(feature.attributes[field]) === wanted && hasGeometry(feature));
+  if (!features.length) throw new Error(`Route ${String(routeId).trim()} has no Road Network geometry to draw or measure.`);
   const route = buildRoute(features);
+  if (!(route.lengthKm > 0)) throw new Error(`Route ${String(routeId).trim()} geometry has zero length.`);
   const codeField = pickField(centerline.fields, CODE_FIELDS);
   const code = codeField ? features.map((feature) => feature.attributes[codeField]).find(Boolean) : "";
   return {
@@ -344,7 +352,7 @@ export async function loadRoute(routeId) {
 
 function matchesRoute(layer, feature, route) {
   if (!layer.routeField) return true;
-  return String(feature.attributes[layer.routeField] ?? "").trim() === String(route.id).trim();
+  return routeKey(feature.attributes[layer.routeField]) === routeKey(route.id);
 }
 
 function routeBox(route, padDeg) {

@@ -82,6 +82,29 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
 
       {a && b && (
         <div className="analysis-results">
+          <div className="compare-cards">
+            {[["a", a], ["b", b]].map(([side, item]) => {
+              const dominant = (layerId) => {
+                const span = item.summary.spans.find((layer) => layer.layerId === layerId);
+                return span?.values[0] ? `${span.values[0].name} (${Math.round(span.values[0].share * 100)}%)` : "—";
+              };
+              const count = (layerId) => item.summary.points.find((layer) => layer.layerId === layerId)?.items.length || 0;
+              return (
+                <div key={side} className={`compare-card ${side}`}>
+                  <h5><i className={`swatch ${side}`} />Route {side.toUpperCase()} · {item.route.id}</h5>
+                  <dl>
+                    <dt>Length</dt><dd>{item.route.lengthKm.toFixed(2)} km</dd>
+                    <dt>Assets</dt><dd>{item.summary.pointCount} ({perKm(item.summary.pointCount, item.route.lengthKm).toFixed(1)}/km)</dd>
+                    <dt>Pavement</dt><dd title={dominant(8)}>{dominant(8)}</dd>
+                    <dt>Drain</dt><dd title={dominant(7)}>{dominant(7)}</dd>
+                    <dt>Speed</dt><dd title={dominant(5)}>{dominant(5)}</dd>
+                    <dt>Culverts</dt><dd>{count(10)}</dd>
+                    <dt>Bridges</dt><dd>{count(13)}</dd>
+                  </dl>
+                </div>
+              );
+            })}
+          </div>
           <table className="compare-table">
             <thead>
               <tr>

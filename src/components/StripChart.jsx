@@ -177,7 +177,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
     if (!node || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(([entry]) => {
       const next = Math.round(entry.contentRect.width);
-      if (next > 0) setWidth(Math.max(640, next));
+      if (next > 0) setWidth(Math.max(380, next));
     });
     observer.observe(node);
     return () => observer.disconnect();

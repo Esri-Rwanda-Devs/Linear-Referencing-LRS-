@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LRS_LAYER_DEFS, RWANDA_EXTENT } from "../config";
 import { flattenPaths, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
-import { loadLayerCache, subscribeLayers } from "../lrs/lrsService";
+import { loadLayerCache, routeKey, subscribeLayers } from "../lrs/lrsService";
 
 const MODULES = [
   "esri/Map",
@@ -147,7 +147,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
             if (geometry) {
               graphics.push(new Graphic({
                 geometry,
-                attributes: { oid: i + 1, route: routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "" },
+                attributes: { oid: i + 1, route: routeField ? routeKey(feature.attributes?.[routeField]) : "", rid: routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "" },
               }));
             }
           }
@@ -161,11 +161,11 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           title: layer.def.title,
           source: graphics,
           objectIdField: "oid",
-          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }],
+          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }, { name: "rid", type: "string" }],
           geometryType: layer.def.kind === "point" ? "point" : "polyline",
           spatialReference: { wkid: 4326 },
           renderer: { type: "simple", symbol: symbolFor(layer.def) },
-          outFields: ["route"],
+          outFields: ["route", "rid"],
           popupEnabled: false,
           listMode: "hide",
           visible: !(hiddenRef.current || []).includes(layer.id),
@@ -204,7 +204,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         if (!roadLayer || roadLayer === "pending" || !roadLayer.visible) return;
         view.hitTest(event, { include: [roadLayer] }).then((response) => {
           const hit = response.results.find((result) => result.graphic?.layer === roadLayer);
-          const id = String(hit?.graphic?.attributes?.route ?? "").trim();
+          const id = String(hit?.graphic?.attributes?.rid ?? "").trim();
           if (!id) return;
           console.info(`[LRS] Picked route ${id} from the map.`);
           pickRef.current?.(id);
@@ -212,7 +212,7 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       });
       const layerViews = new window.Map();
       const applyRouteEffect = (activeRoute, otherRoute) => {
-        const ids = [activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => `'${String(id).trim().replace(/'/g, "''")}'`);
+        const ids = [activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => `'${routeKey(id).replace(/'/g, "''")}'`);
         routeWhere.value = ids.length ? `route IN (${ids.join(",")})` : null;
         lrsLayers.forEach((layer) => {
           if (layer && layer !== "pending") layer.featureEffect = effectFor();
@@ -325,6 +325,16 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       compareLayer.add(new Graphic({ geometry, symbol: halo }));
       compareLayer.add(new Graphic({ geometry, symbol: ink }));
     });
+    const label = (target, text, color) => {
+      const at = target?.vertices?.length ? pointAtMeasure(target.vertices, target.measures, target.lengthKm / 2) : null;
+      if (!at) return;
+      compareLayer.add(new Graphic({
+        geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+        symbol: { type: "text", text, color: [255, 255, 255], haloColor: color, haloSize: 2.5, font: { size: 11, weight: "bold", family: "sans-serif" }, yoffset: 10 },
+      }));
+    };
+    if (route) label(route, `A · ${route.id}`, [8, 145, 178]);
+    label(compareRoute, `B · ${compareRoute.id}`, [192, 38, 211]);
     const targets = [...lines, ...bag.overlay.graphics.toArray().map((graphic) => graphic.geometry)];
     if (targets.length) view.goTo({ target: targets, padding: 60 }, { duration: 600 }).catch(() => {});
   }, [compareRoute, route, ready]);

@@ -444,9 +444,14 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .compare-table tr.attr td { font-size: 9.5px; }
 .compare-note { margin: 5px 0 0; font-size: 9px; color: #94a3b8; }
 
-.chart-pane:has(.compare-chart) { overflow: auto; }
-.chart-pane:has(.compare-chart) .chart-wrap { flex: none; overflow: visible; }
-.compare-chart { border-top: 2px solid #f0abfc; background: #fdf4ff; }
+.charts-single, .charts-parallel { flex: 1; min-height: 0; display: flex; }
+.charts-parallel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+.chart-col { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.charts-parallel .chart-col + .chart-col { border-left: 2px solid #f0abfc; }
+.compare-chart { background: #fdf4ff; }
+.compare-chart-head.a { color: #0e7490; background: #ecfeff; }
+.compare-chart-head.a span { color: #0891b2; }
+.link-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #0e7490; cursor: pointer; }
 .compare-chart-head { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 11px; color: #701a75; }
 .compare-chart-head span { color: #a21caf; font-size: 10px; margin-right: auto; }
 .compare-chart-head .link { border: 0; background: none; color: #86198f; font-size: 10px; cursor: pointer; }
@@ -468,3 +473,14 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .value-legend-group b { font-weight: 700; color: #0f172a; }
 .value-legend-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .value-legend-chip i { width: 14px; height: 9px; border-radius: 2px; border: 1px solid rgba(15, 23, 42, 0.2); }
+
+.compare-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+.compare-card { border-radius: 6px; padding: 5px 7px; font-size: 10px; color: #334155; border: 1px solid; }
+.compare-card.a { background: #ecfeff; border-color: #67e8f9; }
+.compare-card.b { background: #fdf4ff; border-color: #f0abfc; }
+.compare-card h5 { margin: 0 0 3px; font-size: 11px; display: flex; align-items: center; gap: 5px; }
+.compare-card.a h5 { color: #0e7490; }
+.compare-card.b h5 { color: #a21caf; }
+.compare-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 1px 6px; }
+.compare-card dt { color: #64748b; }
+.compare-card dd { margin: 0; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

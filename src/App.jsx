@@ -104,6 +104,7 @@ export default function App() {
   const [compareCursor, setCompareCursor] = useState(null);
   const [compareEvent, setCompareEvent] = useState(null);
   const compareShown = compare && compare.route.id !== routeId ? compare : null;
+  const [linkCompare, setLinkCompare] = useState(true);
   const [segment, setSegment] = useState(null);
   const [selectingSegment, setSelectingSegment] = useState(false);
   const [segmentStart, setSegmentStart] = useState(null);
@@ -278,13 +279,31 @@ export default function App() {
   const onCompareWindow = useCallback((start, end) => {
     if (!compareShown) return;
     const span = end - start;
+    if (linkCompare && route) {
+      const from = Math.max(0, Math.min(Math.max(route.lengthKm, compareShown.route.lengthKm) - span, start));
+      setWindowKm([from, from + span]);
+      return;
+    }
     const from = Math.max(0, Math.min((compareShown.route.lengthKm || span) - span, start));
     setCompareWindow([from, from + span]);
-  }, [compareShown]);
+  }, [compareShown, linkCompare, route]);
   const onCompareHover = useCallback((measure) => {
     if (!compareShown) return;
-    setCompareCursor({ measure: Math.max(0, Math.min(compareShown.route.lengthKm, measure)), source: "chart" });
-  }, [compareShown]);
+    const clamped = Math.max(0, Math.min(compareShown.route.lengthKm, measure));
+    if (linkCompare && route && clamped <= route.lengthKm) {
+      setCursor({ measure: clamped, source: "chart" });
+      return;
+    }
+    setCompareCursor({ measure: clamped, source: "chart" });
+  }, [compareShown, linkCompare, route]);
+  useEffect(() => {
+    if (!linkCompare || !compareShown) return;
+    setCompareWindow((prev) => (prev[0] === windowKm[0] && prev[1] === windowKm[1] ? prev : [windowKm[0], windowKm[1]]));
+  }, [windowKm, linkCompare, compareShown]);
+  useEffect(() => {
+    if (!linkCompare || !compareShown || !cursor) return;
+    setCompareCursor(cursor.measure <= compareShown.route.lengthKm ? { measure: cursor.measure, source: "link" } : null);
+  }, [cursor, linkCompare, compareShown]);
 
   useEffect(() => {
     if (!route || !events.length) return undefined;
@@ -634,54 +653,70 @@ export default function App() {
               <span className="status">{status || (route ? `${route.lengthKm.toFixed(1)} km · ${events.length} located features` : "")}</span>
             </div>
             {route && (
-              <StripChart
-                fill={!compareShown}
-                events={events}
-                projects={routeProjects}
-                route={route}
-                windowKm={windowKm}
-                cursor={cursor}
-                segment={segment}
-                segmentStart={segmentStart}
-                selectingSegment={selectingSegment}
-                onSegment={commitSegment}
-                onSegmentPoint={onSegmentPoint}
-                onWindow={(start, end) => {
-                  const span = end - start;
-                  const from = Math.max(0, Math.min((route.lengthKm || span) - span, start));
-                  setWindowKm([from, from + span]);
-                }}
-                onHoverMeasure={(measure) => {
-                  const clamped = Math.max(0, Math.min(route.lengthKm, measure));
-                  setCursor({ measure: clamped, source: "chart" });
-                }}
-                activeEventId={activeEvent?.id}
-                attachedIds={(activeProject?.attached || []).map((item) => item.id)}
-                onSelectEvent={focusEvent}
-                onPickProject={(project) => setActiveId(project.id)}
-              />
-            )}
-            {route && compareShown && (
-              <div className="compare-chart">
-                <div className="compare-chart-head">
-                  <i className="swatch b" />
-                  <b>Route B · {compareShown.route.id}</b>
-                  <span>{compareShown.route.lengthKm.toFixed(1)} km · {compareShown.events.length} features</span>
-                  <button type="button" className="link" onClick={() => { setCompare(null); setCompareCursor(null); setCompareEvent(null); }}>Close</button>
+              <div className={compareShown ? "charts-parallel" : "charts-single"}>
+                <div className="chart-col">
+                  {compareShown && (
+                    <div className="compare-chart-head a">
+                      <i className="swatch a" />
+                      <b>Route A · {route.id}</b>
+                      <span>{route.lengthKm.toFixed(1)} km · {events.length} features</span>
+                      <label className="check link-toggle" title="Keep both charts on the same km window and cursor">
+                        <input type="checkbox" checked={linkCompare} onChange={(event) => setLinkCompare(event.target.checked)} />
+                        Link km
+                      </label>
+                    </div>
+                  )}
+                  <StripChart
+                    fill
+                    events={events}
+                    projects={routeProjects}
+                    route={route}
+                    windowKm={windowKm}
+                    cursor={cursor}
+                    segment={segment}
+                    segmentStart={segmentStart}
+                    selectingSegment={selectingSegment}
+                    onSegment={commitSegment}
+                    onSegmentPoint={onSegmentPoint}
+                    onWindow={(start, end) => {
+                      const span = end - start;
+                      const from = Math.max(0, Math.min((route.lengthKm || span) - span, start));
+                      setWindowKm([from, from + span]);
+                    }}
+                    onHoverMeasure={(measure) => {
+                      const clamped = Math.max(0, Math.min(route.lengthKm, measure));
+                      setCursor({ measure: clamped, source: "chart" });
+                    }}
+                    activeEventId={activeEvent?.id}
+                    attachedIds={(activeProject?.attached || []).map((item) => item.id)}
+                    onSelectEvent={focusEvent}
+                    onPickProject={(project) => setActiveId(project.id)}
+                  />
                 </div>
-                <StripChart
-                  events={compareShown.events}
-                  projects={NO_PROJECTS}
-                  route={compareShown.route}
-                  windowKm={compareWindow}
-                  cursor={compareCursor}
-                  activeEventId={compareEvent?.id}
-                  attachedIds={NO_PROJECTS}
-                  onWindow={onCompareWindow}
-                  onHoverMeasure={onCompareHover}
-                  onSelectEvent={focusCompareEvent}
-                  onPickProject={noop}
-                />
+                {compareShown && (
+                  <div className="chart-col compare-chart">
+                    <div className="compare-chart-head">
+                      <i className="swatch b" />
+                      <b>Route B · {compareShown.route.id}</b>
+                      <span>{compareShown.route.lengthKm.toFixed(1)} km · {compareShown.events.length} features</span>
+                      <button type="button" className="link" onClick={() => { setCompare(null); setCompareCursor(null); setCompareEvent(null); }}>Close</button>
+                    </div>
+                    <StripChart
+                      fill
+                      events={compareShown.events}
+                      projects={NO_PROJECTS}
+                      route={compareShown.route}
+                      windowKm={compareWindow}
+                      cursor={compareCursor}
+                      activeEventId={compareEvent?.id}
+                      attachedIds={NO_PROJECTS}
+                      onWindow={onCompareWindow}
+                      onHoverMeasure={onCompareHover}
+                      onSelectEvent={focusCompareEvent}
+                      onPickProject={noop}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </section>
