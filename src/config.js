@@ -21,19 +21,19 @@ export const EVENT_LAYERS = [
 ];
 
 export const GROUPS = [
-  { id: "POI", label: "POI", hint: "Points of interest", color: "#e11d48" },
-  { id: "ATT", label: "Line Events", hint: "Pavement, drain, speed, carriageway", color: "#7c3aed" },
   { id: "NET", label: "NET", hint: "Road network", color: "#0f766e" },
+  { id: "ATT", label: "Line Events", hint: "Pavement, drain, speed, carriageway", color: "#7c3aed" },
+  { id: "POI", label: "POI", hint: "Points of interest", color: "#e11d48" },
   { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
 
 /** Layer ids from Road_Asset_LRS_Map FeatureServer. */
 export const LRS_LAYER_DEFS = [
   { id: 3, title: "Road Network", group: "NET", kind: "line", route: true, shape: "bar", color: [56, 189, 248, 0.95], width: 4, swatch: "#38bdf8" },
-  { id: 8, title: "Pavement Type", group: "Line Events", kind: "line", shape: "bar", color: [251, 146, 60, 0.9], width: 4, swatch: "#fb923c" },
-  { id: 7, title: "Drain Type", group: "Line Events", kind: "line", shape: "bar", color: [34, 211, 238, 0.9], width: 2, swatch: "#22d3ee" },
-  { id: 5, title: "Speed Limit", group: "Line Events", kind: "line", shape: "bar", color: [74, 222, 128, 0.95], width: 2.5, swatch: "#4ade80" },
-  { id: 2, title: "Carriageway Type", group: "Line Events", kind: "line", shape: "bar", color: [196, 181, 253, 0.95], width: 2, swatch: "#c4b5fd" },
+  { id: 8, title: "Pavement Type", group: "ATT", kind: "line", shape: "bar", color: [251, 146, 60, 0.9], width: 4, swatch: "#fb923c" },
+  { id: 7, title: "Drain Type", group: "ATT", kind: "line", shape: "bar", color: [34, 211, 238, 0.9], width: 2, swatch: "#22d3ee" },
+  { id: 5, title: "Speed Limit", group: "ATT", kind: "line", shape: "bar", color: [74, 222, 128, 0.95], width: 2.5, swatch: "#4ade80" },
+  { id: 2, title: "Carriageway Type", group: "ATT", kind: "line", shape: "bar", color: [196, 181, 253, 0.95], width: 2, swatch: "#c4b5fd" },
   { id: 13, title: "Bridges", group: "POI", kind: "point", shape: "square", color: [30, 41, 59, 0.95], swatch: "#1e293b" },
   { id: 12, title: "Calibration Points", group: "POI", kind: "point", chart: false, shape: "diamond", color: [13, 148, 136, 0.95], swatch: "#0d9488" },
   { id: 11, title: "Transformers", group: "POI", kind: "point", shape: "triangle", color: [192, 38, 211, 0.95], swatch: "#c026d3" },

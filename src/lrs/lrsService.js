@@ -169,8 +169,18 @@ async function downloadFeatures(def) {
   };
   const features = [];
   let offset = 0;
-  for (let page = 0; page < 200; page += 1) {
-    const batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset) });
+  let size = PAGE_SIZE;
+  for (let page = 0; page < 400; page += 1) {
+    let batch;
+    try {
+      batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset), resultRecordCount: String(size) }, size > 125 ? 2 : 4);
+    } catch (error) {
+      if (size <= 125) throw error;
+      size = Math.floor(size / 2);
+      console.warn(`[LRS] ${def.title}: page at ${offset} failed, retrying with ${size} records per page`);
+      page -= 1;
+      continue;
+    }
     features.push(...batch.features);
     if (!batch.exceeded || !batch.features.length) break;
     offset += batch.features.length;
@@ -224,11 +234,18 @@ function publishLayer(layer) {
 }
 
 const layerPromises = new Map();
+const failedLayers = new Set();
+
+/** Titles of layers that could not be downloaded this session. */
+export function failedLayerTitles() {
+  return [...failedLayers];
+}
 function layerOf(def) {
   if (!layerPromises.has(def.id)) {
     layerPromises.set(def.id, fetchLayerOnce(def)
       .catch((error) => {
         console.error(def.title, error);
+        failedLayers.add(def.title);
         return { id: def.id, name: def.title, features: [], fields: [], oidField: "OBJECTID", geometryType: def.kind === "point" ? "point" : "polyline", routeField: null, fromField: null, toField: null, def };
       })
       .then((layer) => {
@@ -257,11 +274,11 @@ function service() {
   return described;
 }
 
-async function queryFeatures(layerId, params) {
+async function queryFeatures(layerId, params, attempts = 4) {
   const { token } = await signInToLrs();
   const query = new URLSearchParams({ f: "json", token, ...params });
   let lastError;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const data = await limited(async () => {
         const response = await fetch(`${LRS}/${layerId}/query?${query}`);
@@ -272,7 +289,7 @@ async function queryFeatures(layerId, params) {
       return { features: data.features || [], exceeded: Boolean(data.exceededTransferLimit) };
     } catch (error) {
       lastError = error;
-      if (attempt < 3) console.warn(`[LRS] Layer ${layerId} request failed (${error.message}); retrying…`);
+      if (attempt < attempts - 1) console.warn(`[LRS] Layer ${layerId} request failed (${error.message}); retrying…`);
       await new Promise((resolve) => setTimeout(resolve, 600 * 2 ** attempt));
     }
   }
@@ -424,19 +441,42 @@ function detailsOf(attributes, name) {
     .slice(0, 8);
 }
 
+const normName = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, "");
+const VALUE_PALETTE = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#2dd4bf", "#f97316", "#94a3b8", "#c084fc", "#4ade80", "#38bdf8"];
+
 function colorKey(value) {
   if (value === null || value === undefined) return "";
-  const number = Number(value);
-  if (typeof value === "number" || (String(value).trim() !== "" && Number.isFinite(number))) return String(number);
-  return String(value).trim().toLowerCase().replace(/[_\s]+/g, " ");
+  const text = String(value).trim();
+  const speed = /^(\d+(?:\.\d+)?)\s*(?:km\/?h|kph)?$/i.exec(text);
+  if (speed) return String(Number(speed[1]));
+  return text.toLowerCase().replace(/[_\s-]+/g, " ");
+}
+
+/** Stable colour per value for attribute values without a configured colour. */
+function paletteColor(seed) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return VALUE_PALETTE[hash % VALUE_PALETTE.length];
 }
 
 function valueColor(layerId, attributes) {
   const rule = VALUE_COLORS[layerId];
   if (!rule || !attributes) return null;
-  const key = Object.keys(attributes).find((nameOf) => nameOf.toLowerCase() === rule.field.toLowerCase());
-  if (!key) return null;
-  return rule.colors[colorKey(attributes[key])] || null;
+  const keys = Object.keys(attributes);
+  const wanted = normName(rule.field);
+  const field = keys.find((key) => normName(key) === wanted)
+    || keys.find((key) => normName(key).length > 4 && (normName(key).includes(wanted) || wanted.includes(normName(key))));
+  if (field) {
+    const color = rule.colors[colorKey(attributes[field])];
+    if (color) return color;
+  }
+  const numeric = Object.keys(rule.colors).every((key) => /^\d/.test(key));
+  const candidates = numeric ? keys.filter((key) => /speed/i.test(key)) : keys;
+  for (const key of candidates) {
+    const color = rule.colors[colorKey(attributes[key])];
+    if (color) return color;
+  }
+  return null;
 }
 
 function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0) {
@@ -447,7 +487,7 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     title: layer.def.title,
     name,
     shape: layer.def.shape,
-    color: valueColor(layer.id, feature.attributes) || layer.def.swatch,
+    color: valueColor(layer.id, feature.attributes) || (layer.def.kind === "point" ? layer.def.swatch : paletteColor(`${layer.id}:${name}`)),
     kind: layer.def.kind === "point" || to - from <= 0.02 ? "point" : "span",
     from,
     to,

@@ -375,8 +375,8 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 }
 .check { flex-direction: row !important; align-items: center; gap: 6px !important; padding-bottom: 6px; }
 .status { margin-left: auto; color: #78716c; font-size: 12px; padding-bottom: 6px; }
-.chart-wrap { flex: 1; min-height: 0; overflow: auto; }
-.chart { width: 100%; min-height: 280px; height: auto; display: block; }
+.chart-wrap { flex: none; min-height: 0; }
+.chart { width: 100%; height: auto; display: block; }
 .chart-help { padding: 4px 12px 8px; color: #a8a29e; font-size: 11px; }
 
 @media (max-width: 700px) {
@@ -461,3 +461,4 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .compare-assets em { font-style: normal; color: #94a3b8; font-variant-numeric: tabular-nums; }
 .compare-assets .more-note { font-size: 9px; color: #94a3b8; font-style: italic; }
 .value-dot { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgba(15, 23, 42, 0.2); }
+

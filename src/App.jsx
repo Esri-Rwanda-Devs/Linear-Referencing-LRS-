@@ -5,7 +5,7 @@ import SegmentAnalysis from "./components/SegmentAnalysis";
 import RouteCompare from "./components/RouteCompare";
 import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
-import { featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog, nearestRoads } from "./lrs/lrsService";
+import { failedLayerTitles, featuresAtMeasure, loadEvents, loadRoute, loadRouteCatalog, nearestRoads } from "./lrs/lrsService";
 import { locateOnRoute } from "./lrs/geometry";
 import { useRoadMap } from "./map/useRoadMap";
 
@@ -82,6 +82,14 @@ export default function App() {
     window.addEventListener("pointerup", up);
     document.body.classList.add("resizing-chart");
   };
+  const paneRef = useRef(null);
+  const fitChart = useCallback((maxShare = 1) => {
+    const pane = paneRef.current;
+    const total = mainRef.current?.clientHeight || window.innerHeight;
+    if (!pane) return;
+    const needed = pane.scrollHeight + 2;
+    setChartH((height) => clampChart(Math.max(maxShare < 1 ? height : 0, Math.min(needed, total * maxShare))));
+  }, [clampChart]);
   const nudgeChart = (direction) => {
     const total = mainRef.current?.clientHeight || window.innerHeight;
     setChartH((height) => clampChart(height + direction * total * 0.2));
@@ -145,7 +153,8 @@ export default function App() {
         if (cancel) return;
         setEvents(located.events);
         setMapLayers(located.mapLayers);
-        setStatus("");
+        const failed = failedLayerTitles();
+        setStatus(failed.length ? `Could not load: ${failed.join(", ")}. Reload the page to try again.` : "");
       })
       .catch((error) => {
         if (!cancel) setStatus(error.message);
@@ -272,6 +281,12 @@ export default function App() {
     if (!compareShown) return;
     setCompareCursor({ measure: Math.max(0, Math.min(compareShown.route.lengthKm, measure)), source: "chart" });
   }, [compareShown]);
+
+  useEffect(() => {
+    if (!route || !events.length) return undefined;
+    const frame = requestAnimationFrame(() => fitChart(0.62));
+    return () => cancelAnimationFrame(frame);
+  }, [route, events.length, fitChart]);
 
   const onLeave = useCallback(() => {}, []);
   const [focusing, setFocusing] = useState(null);
@@ -538,11 +553,12 @@ export default function App() {
             <div className="splitter-buttons" onPointerDown={(event) => event.stopPropagation()}>
               <button type="button" onClick={() => nudgeChart(1)} aria-label="Move chart up" title="Move chart up (taller)">▲</button>
               <button type="button" onClick={() => nudgeChart(-1)} aria-label="Move chart down" title="Move chart down (shorter)">▼</button>
+              <button type="button" onClick={() => fitChart(1)} aria-label="Fit chart to its rows" title="Fit chart to show every row">⤢</button>
               <button type="button" onClick={() => setChartH(clampChart(Infinity))} aria-label="Maximise chart" title="Chart to full height">⤒</button>
               <button type="button" onClick={() => setChartH(CHART_MIN)} aria-label="Minimise chart" title="Collapse chart">⤓</button>
             </div>
           </div>
-          <section className="chart-pane">
+          <section className="chart-pane" ref={paneRef}>
             <div className="station-bar">
               <button type="button" onClick={() => stepRoute(-1)} aria-label="Previous route">Prev route</button>
               <label>Find route id
@@ -583,6 +599,7 @@ export default function App() {
             </div>
             {route && (
               <StripChart
+                fill={!compareShown}
                 events={events}
                 projects={routeProjects}
                 route={route}

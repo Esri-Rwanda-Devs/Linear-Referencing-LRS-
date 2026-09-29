@@ -13,7 +13,7 @@ function rowsFor() {
     const layers = LRS_LAYER_DEFS.filter((layer) => layer.group === group.id && layer.chart !== false);
     if (!layers.length && group.id !== "PLN") return;
     rows.push({ type: "group", ...group });
-    layers.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.kind === "point" ? layer.shape : "bar", layerId: layer.id }));
+    layers.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.kind === "point" ? layer.shape : "bar", layerId: layer.id, route: Boolean(layer.route), kind: layer.kind }));
     if (group.id === "PLN") rows.push({ type: "layer", group: "PLN", title: "Projects", color: group.color, shape: "bar" });
   });
   ROWS.push(...rows);
@@ -48,8 +48,8 @@ function isDark(color) {
 }
 
 /** Returns the label that fits in maxPx, or "" when it would be squeezed below a readable length. */
-function fitText(text, maxPx) {
-  const max = Math.floor(maxPx / CHAR_W);
+function fitText(text, maxPx, charW = CHAR_W) {
+  const max = Math.floor(maxPx / charW);
   if (text.length <= max) return text;
   if (max < MIN_CHARS) return "";
   return `${text.slice(0, max - 1)}…`;
@@ -69,6 +69,20 @@ function mergeRuns(items) {
     }
   });
   return runs;
+}
+
+/** Distinct attribute values with their colours for one layer bucket, longest total length first. */
+function valueColorsOf(bucket) {
+  if (!bucket?.spans?.length) return [];
+  if (bucket.values) return bucket.values;
+  const byName = new Map();
+  bucket.spans.forEach((item) => {
+    const entry = byName.get(item.name) || { name: item.name, color: item.color, km: 0 };
+    entry.km += Math.max(0, item.to - item.from);
+    byName.set(item.name, entry);
+  });
+  bucket.values = [...byName.values()].sort((a, b) => b.km - a.km);
+  return bucket.values;
 }
 
 /** Whole-road overview: the thumb is the station window, the orange tick is the cursor. Drag or click to move along the road. */
@@ -131,15 +145,57 @@ function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   );
 }
 
-function StripChart({ events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
+function StripChart({ fill = false, events, projects, route, windowKm, cursor, segment, selectingSegment, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
   const [drag, setDrag] = useState(null);
   const clipId = `plot-clip-${useId().replace(/:/g, "")}`;
   const rows = rowsFor();
   const labelW = 150;
-  const width = 1100;
+  const wrapRef = useRef(null);
+  const [width, setWidth] = useState(1100);
+  useEffect(() => {
+    const node = wrapRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.round(entry.contentRect.width);
+      if (next > 0) setWidth(Math.max(640, next));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const [availH, setAvailH] = useState(0);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const pane = wrap?.parentElement;
+    if (!fill || !pane || typeof ResizeObserver === "undefined") return undefined;
+    const measure = () => {
+      const svg = wrap.querySelector("svg.chart");
+      const top = wrap.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+      const extras = wrap.offsetHeight - (svg ? svg.getBoundingClientRect().height : 0);
+      setAvailH(Math.max(0, Math.floor(pane.clientHeight - top - extras - 2)));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane);
+    measure();
+    return () => observer.disconnect();
+  }, [fill]);
   const right = width - 8;
   const plotW = right - labelW - 4;
-  const height = AXIS_H + rows.length * ROW_H + 8;
+  const groupCount = rows.filter((row) => row.type === "group").length;
+  const layerCount = Math.max(1, rows.length - groupCount);
+  const layerH = fill && availH
+    ? Math.max(ROW_H, Math.min(40, Math.floor((availH - AXIS_H - 8 - groupCount * ROW_H) / layerCount)))
+    : ROW_H;
+  const rowY = [];
+  let rowBottom = AXIS_H;
+  rows.forEach((row) => {
+    rowY.push(rowBottom);
+    rowBottom += row.type === "group" ? ROW_H : layerH;
+  });
+  const height = rowBottom + 8;
+  const barH = Math.round(Math.min(24, layerH * 0.7));
+  const symbolScale = Math.min(1.5, layerH / ROW_H);
+  const labelFont = Math.min(10, 8 + (layerH - ROW_H) * 0.12);
+  const charW = CHAR_W * (labelFont / 7.5);
   const [from, to] = windowKm;
   const span = Math.max(0.2, to - from);
   const xOf = (measure) => labelW + ((measure - from) / span) * plotW;
@@ -203,6 +259,7 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
     const attached = new Set(attachedKey ? attachedKey.split("|") : []);
     const pick = (item) => (event) => {
       event.stopPropagation();
+      if (item.group === "NET") return;
       if (item.group === "PLN") projectRef.current?.(item);
       else selectRef.current?.(item);
     };
@@ -219,7 +276,7 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
     const tooltip = (item, range) => [`${item.title ? `${item.title}: ` : ""}${item.name}`, range, ...(item.details || []).map(([label, value]) => `${label}: ${value}`)].join("\n");
 
     return rows.map((row, index) => {
-      const y = AXIS_H + index * ROW_H;
+      const y = rowY[index];
       if (row.type === "group") {
         return (
           <g key={`${row.id}-g`}>
@@ -229,7 +286,7 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
           </g>
         );
       }
-      const yMid = y + ROW_H / 2;
+      const yMid = y + layerH / 2;
       let spans;
       let points;
       if (row.group === "PLN") {
@@ -242,6 +299,18 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
           name: project.name,
           group: "PLN",
         })).filter((item) => item.to >= from && item.from <= to);
+        points = [];
+      } else if (row.route) {
+        spans = route ? [{
+          id: `route-${route.id}`,
+          kind: "span",
+          from: 0,
+          to: route.lengthKm,
+          color: row.color,
+          name: `${route.id}${route.trajectory && route.trajectory !== route.id && route.trajectory !== "Road Network" ? ` · ${route.trajectory}` : ""} · ${route.lengthKm.toFixed(2)} km`,
+          title: "Road Network",
+          group: "NET",
+        }].filter((item) => item.to >= from && item.from <= to) : [];
         points = [];
       } else {
         const bucket = byLayer.get(row.layerId) || { spans: [], points: [] };
@@ -268,7 +337,11 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
       let labelEnd = -Infinity;
       return (
         <g key={`${row.group}-${row.title}`}>
-          <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />
+          {row.kind === "line" && !row.route && valueColorsOf(byLayer.get(row.layerId)).length > 0
+            ? valueColorsOf(byLayer.get(row.layerId)).slice(0, 4).map((value, chip) => (
+              <rect key={value.name} x={7 + chip * 3.5} y={yMid - 4} width="3.5" height="8" fill={value.color} />
+            ))
+            : <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />}
           <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
           <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
           <g clipPath={`url(#${clipId})`}>
@@ -277,8 +350,8 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
               const x2 = clampX(xOf(run.to));
               const first = run.items[0];
               return (
-                <rect key={`r-${runIndex}`} x={x1} y={yMid - 4} width={Math.max(1.5, x2 - x1)} height="8" rx="2" fill={run.color} opacity="0.85"
-                  stroke="#fff" strokeWidth="0.6" style={{ cursor: "pointer" }} onClick={pick(first)}>
+                <rect key={`r-${runIndex}`} x={x1} y={yMid - barH / 2} width={Math.max(1.5, x2 - x1)} height={barH} rx="2" fill={run.color}
+                  stroke="#ffffff" strokeWidth="0.8" style={{ cursor: "pointer" }} onClick={pick(first)}>
                   <title>{tooltip({ ...first, title: "" }, `${run.from.toFixed(3)} – ${run.to.toFixed(3)} km${run.items.length > 1 ? ` · ${run.items.length} records` : ""}`)}</title>
                 </rect>
               );
@@ -287,13 +360,12 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
               const x1 = clampX(xOf(run.from));
               const x2 = clampX(xOf(run.to));
               const start = Math.max(x1 + 4, labelEnd + 6);
-              const text = fitText(run.name, x2 - start - 4);
+              const text = fitText(run.name, x2 - start - 4, charW);
               if (!text) return null;
-              labelEnd = start + text.length * CHAR_W;
+              labelEnd = start + text.length * charW;
               const dark = isDark(run.color);
               return (
-                <text key={`t-${runIndex}`} x={start} y={yMid + 2.5} fontSize="7.5" fontWeight="600" fill={dark ? "#ffffff" : "#0f172a"} pointerEvents="none"
-                  stroke={dark ? "rgba(15,23,42,0.6)" : "rgba(255,255,255,0.85)"} strokeWidth="2" paintOrder="stroke">{text}</text>
+                <text key={`t-${runIndex}`} x={start} y={yMid + labelFont * 0.36} fontSize={labelFont} fontWeight="600" fill={dark ? "#ffffff" : "#111827"} pointerEvents="none">{text}</text>
               );
             })}
             {drawn.map(({ item, x, hidden }, drawIndex) => {
@@ -303,11 +375,11 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
               const room = Math.min(90, (next ? next.x : right) - x - 12);
               let label = null;
               if (!hidden && x > labelEnd + 10 && room > 0) {
-                const text = fitText(item.name, room);
+                const text = fitText(item.name, room, charW);
                 if (text) {
-                  label = <text x={x + 6} y={yMid + 2.5} fontSize="7.5" fill="#334155" pointerEvents="none"
+                  label = <text x={x + 5 + 3 * symbolScale} y={yMid + labelFont * 0.33} fontSize={labelFont - 0.5} fill="#334155" pointerEvents="none"
                     stroke="rgba(248,250,252,0.9)" strokeWidth="2" paintOrder="stroke">{text}</text>;
-                  labelEnd = x + 6 + text.length * CHAR_W;
+                  labelEnd = x + 5 + 3 * symbolScale + text.length * charW;
                 }
               }
               return (
@@ -315,7 +387,7 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
                   <title>{tooltip(item, `${item.measure.toFixed(3)} km${hidden ? ` · +${hidden} more here, zoom in to separate` : ""}`)}</title>
                   {isAttached && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#be185d" strokeWidth="1.5" />}
                   {active && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#facc15" strokeWidth="2" />}
-                  <ChartSymbol shape={item.shape} color={item.color} x={x} y={yMid} size={hidden ? 0.72 : 0.6} />
+                  <ChartSymbol shape={item.shape} color={item.color} x={x} y={yMid} size={(hidden ? 0.72 : 0.6) * symbolScale} />
                   {label}
                 </g>
               );
@@ -325,10 +397,10 @@ function StripChart({ events, projects, route, windowKm, cursor, segment, select
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [byLayer, projects, from, to, activeEventId, attachedKey, clipId]);
+  }, [byLayer, projects, route, from, to, width, layerH, activeEventId, attachedKey, clipId]);
 
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap" ref={wrapRef}>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
