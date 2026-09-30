@@ -420,8 +420,9 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .analysis-panel:has(.compare) { width: 290px; }
 .analysis-tabs { grid-template-columns: repeat(3, 1fr); }
 .compare-pick { display: grid; gap: 4px; }
-.compare-pick label { display: grid; grid-template-columns: 10px 48px 1fr; align-items: center; gap: 5px; font-size: 10px; color: #475569; }
-.compare-pick select { min-width: 0; padding: 2px 3px; font-size: 10.5px; border: 1px solid #cbd5e1; border-radius: 4px; }
+.compare-pick label { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 5px; font-size: 10px; color: #475569; }
+.compare-pick .route-picker { min-width: 0; }
+.compare-pick .route-picker input { padding: 3px 20px 3px 5px; font-size: 10.5px; border: 1px solid #cbd5e1; border-radius: 4px; }
 .swatch { width: 10px; height: 4px; border-radius: 2px; display: inline-block; }
 .swatch.a { background: #00e5ff; }
 .swatch.b { background: #d946ef; }
@@ -484,3 +485,17 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .compare-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 1px 6px; }
 .compare-card dt { color: #64748b; }
 .compare-card dd { margin: 0; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.route-picker { position: relative; min-width: 150px; }
+.route-picker input { width: 100%; box-sizing: border-box; padding-right: 20px; cursor: pointer; }
+.route-picker.open input { cursor: text; }
+.route-picker-caret { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); font-size: 9px; color: #64748b; pointer-events: none; }
+.route-picker-list {
+  position: fixed; z-index: 1000; width: max-content; max-width: 280px; overflow-y: auto; margin: 0; padding: 3px 0; list-style: none;
+  background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+}
+.route-picker-list li { padding: 4px 10px; font-size: 11px; color: #0f172a; cursor: pointer; white-space: nowrap; }
+.route-picker-list li.active { background: #e0f2fe; }
+.route-picker-list li.selected { font-weight: 700; color: #0e7490; }
+.route-picker-list li.route-picker-none { color: #94a3b8; font-style: italic; cursor: default; background: none; }
+.compare-pick label > span { display: inline-flex; align-items: center; gap: 4px; }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LRS_LAYER_DEFS } from "../config";
 import { loadEvents, loadRoute, summariseSegment } from "../lrs/lrsService";
+import RoutePicker from "./RoutePicker";
 import { ChartSymbol } from "./StripChart";
 
 const loaded = new Map();
@@ -59,10 +60,6 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
     onCompareRoute?.(null);
   };
 
-  const options = catalog.map((item) => (
-    <option key={item.id} value={item.id}>{item.code && item.code !== item.id ? `${item.id} · ${item.code}` : item.id}</option>
-  ));
-
   const { a, b } = state;
   const layerIds = a && b
     ? LRS_LAYER_DEFS.map((def) => def.id).filter((id) => [a, b].some((side) => side.summary.points.some((layer) => layer.layerId === id) || side.summary.spans.some((layer) => layer.layerId === id)))
@@ -71,8 +68,8 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
   return (
     <div className="compare">
       <div className="compare-pick">
-        <label><i className="swatch a" />Route A<select value={aId} onChange={(event) => setAId(event.target.value)}><option value="">Choose…</option>{options}</select></label>
-        <label><i className="swatch b" />Route B<select value={bId} onChange={(event) => setBId(event.target.value)}><option value="">Choose…</option>{options}</select></label>
+        <label><span><i className="swatch a" />Route A</span><RoutePicker catalog={catalog} value={aId} onChange={setAId} placeholder="Search route A…" /></label>
+        <label><span><i className="swatch b" />Route B</span><RoutePicker catalog={catalog} value={bId} onChange={setBId} placeholder="Search route B…" /></label>
       </div>
       <div className="segment-actions">
         <button type="button" className="primary" onClick={compare} disabled={state.loading}>{state.loading ? "Loading routes…" : "Compare"}</button>

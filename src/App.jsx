@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Planner from "./components/Planner";
 import SegmentAnalysis from "./components/SegmentAnalysis";
+import RoutePicker from "./components/RoutePicker";
 import RouteCompare from "./components/RouteCompare";
 import StripChart, { ChartSymbol } from "./components/StripChart";
 import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
@@ -30,7 +31,6 @@ export default function App() {
   const [routeId, setRouteId] = useState("");
   const [route, setRoute] = useState(null);
   const [events, setEvents] = useState([]);
-  const [routeQuery, setRouteQuery] = useState("");
   const [status, setStatus] = useState("");
   const [windowKm, setWindowKm] = useState([0, WINDOW_KM]);
   const [cursor, setCursor] = useState(null);
@@ -616,16 +616,14 @@ export default function App() {
           <section className="chart-pane" ref={paneRef}>
             <div className="station-bar">
               <button type="button" onClick={() => stepRoute(-1)} aria-label="Previous route">Prev route</button>
-              <label>Find route id
-                <input value={routeQuery} onChange={(event) => setRouteQuery(event.target.value)} placeholder="Type a route id" />
-              </label>
               <label>Route
-                <select value={routeId} onChange={(event) => { setRouteId(event.target.value); setActiveId(null); setActiveEvent(null); setFollow(true); }}>
-                  <option value="">All routes</option>
-                  {catalog.filter((item) => item.id.toLowerCase().includes(routeQuery.trim().toLowerCase())).map((item) => (
-                    <option key={item.id} value={item.id}>{item.code && item.code !== item.id ? `${item.id} · ${item.code}` : item.id}</option>
-                  ))}
-                </select>
+                <RoutePicker
+                  catalog={catalog}
+                  value={routeId}
+                  emptyLabel="All routes"
+                  placeholder="Search route id…"
+                  onChange={(id) => { setRouteId(id); setActiveId(null); setActiveEvent(null); setFollow(true); }}
+                />
               </label>
               <button type="button" onClick={() => stepRoute(1)} aria-label="Next route">Next route</button>
               <button type="button" onClick={() => shiftWindow(-1)} aria-label="Pan station window back">‹</button>
