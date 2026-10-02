@@ -25,6 +25,38 @@ function loadModules(names) {
   });
 }
 
+const REMOTE = "https://gh.space.gov.rw";
+
+function devUrl(url) {
+  if (!import.meta.env.DEV || typeof url !== "string") return url;
+  let next = url.startsWith(REMOTE) ? `${window.location.origin}${url.slice(REMOTE.length)}` : url;
+  const httpsLocal = `https://${window.location.host}`;
+  if (window.location.protocol === "http:" && next.startsWith(httpsLocal)) {
+    next = `${window.location.origin}${next.slice(httpsLocal.length)}`;
+  }
+  return next;
+}
+
+function installDevProxyRewrite() {
+  if (!import.meta.env.DEV || window.__lrsFetchPatched) return;
+  window.__lrsFetchPatched = true;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (typeof input === "string") return nativeFetch(devUrl(input), init);
+    if (input instanceof Request) {
+      const url = devUrl(input.url);
+      if (url !== input.url) return nativeFetch(new Request(url, input), init);
+    }
+    return nativeFetch(input, init);
+  };
+  const open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    return open.call(this, method, typeof url === "string" ? devUrl(url) : url, ...rest);
+  };
+}
+
+installDevProxyRewrite();
+
 export function signInToLrs() {
   if (!session) {
     session = (async () => {
@@ -32,8 +64,8 @@ export function signInToLrs() {
       const portal = new Portal({ url: PORTAL });
       portal.authMode = "immediate";
       await portal.load();
-      const credential = await IdentityManager.getCredential(`${LRS}`);
-      return { token: credential.token, user: portal.user?.username || "" };
+      const credential = await IdentityManager.getCredential(LRS);
+      return { token: credential.token, user: portal.user?.username || credential.userId || "" };
     })().catch((error) => {
       session = null;
       throw error;
@@ -45,7 +77,7 @@ export function signInToLrs() {
 async function getJson(url) {
   const { token } = await signInToLrs();
   const join = url.includes("?") ? "&" : "?";
-  const response = await fetch(`${url}${join}f=json&token=${encodeURIComponent(token)}`);
+  const response = await fetch(`${devUrl(url)}${join}f=json&token=${encodeURIComponent(token)}`);
   const data = await response.json();
   if (data.error) throw new Error(data.error.message || "The LRS service refused the request");
   return data;
@@ -281,7 +313,7 @@ async function queryFeatures(layerId, params, attempts = 4) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const data = await limited(async () => {
-        const response = await fetch(`${LRS}/${layerId}/query?${query}`);
+        const response = await fetch(`${devUrl(LRS)}/${layerId}/query?${query}`);
         if (!response.ok) throw new Error(`Query failed ${response.status}`);
         return response.json();
       }, layerId === ROAD_ID ? 1 : 0);
