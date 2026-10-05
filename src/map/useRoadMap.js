@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { LRS_LAYER_DEFS, RWANDA_EXTENT } from "../config";
+import { LRS_LAYER_DEFS } from "../config";
 import { flattenPaths, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
-import { loadLayerCache, routeKey, subscribeLayers } from "../lrs/lrsService";
+import { loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey } from "../lrs/lrsService";
 
 const MODULES = [
   "esri/Map",
@@ -19,7 +19,22 @@ const MODULES = [
   "esri/layers/support/FeatureFilter",
   "esri/widgets/Search",
   "esri/widgets/Locate",
+  "esri/geometry/support/webMercatorUtils",
 ];
+
+const OPEN_AT = { center: [30.0619, -1.9441], scale: 32000 };
+const HERE_ZOOM = 18;
+
+function thinPath(path, max = 70) {
+  if (path.length <= max) return path;
+  const step = Math.ceil(path.length / max);
+  const next = [];
+  for (let i = 0; i < path.length; i += step) next.push(path[i]);
+  const last = path[path.length - 1];
+  const end = next[next.length - 1];
+  if (end[0] !== last[0] || end[1] !== last[1]) next.push(last);
+  return next;
+}
 
 function loadModules(names) {
   const withRequire = () => new Promise((resolve, reject) => {
@@ -67,10 +82,37 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     let view;
     let cancelled = false;
-    let unsubscribe = () => {};
+    prepareRoads();
+    let pendingFix;
+    let takeFix = null;
+    let fixesLeft = navigator.geolocation ? 2 : 0;
+    const giveFix = (coords) => {
+      if (cancelled) return;
+      if (coords) {
+        if (takeFix) takeFix(coords);
+        else pendingFix = coords;
+        return;
+      }
+      fixesLeft -= 1;
+      if (pendingFix || fixesLeft > 0) return;
+      if (takeFix) takeFix(null);
+      else pendingFix = null;
+    };
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => giveFix(pos.coords),
+        () => giveFix(null),
+        { enableHighAccuracy: false, maximumAge: 180000, timeout: 4000 },
+      );
+      navigator.geolocation.getCurrentPosition(
+        (pos) => giveFix(pos.coords),
+        () => giveFix(null),
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 12000 },
+      );
+    }
     loadModules(MODULES).then(async (mods) => {
       if (cancelled || !ref.current) return;
-      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate] = mods;
+      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils] = mods;
       const overlay = new GraphicsLayer({ id: "lrs-overlay", listMode: "hide" });
       const cursorLayer = new GraphicsLayer({ id: "lrs-cursor", listMode: "hide" });
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
@@ -78,11 +120,13 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       const segmentLayer = new GraphicsLayer({ id: "lrs-segment", listMode: "hide" });
       const compareLayer = new GraphicsLayer({ id: "lrs-compare", listMode: "hide" });
       const compareCursorLayer = new GraphicsLayer({ id: "lrs-compare-cursor", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, compareCursorLayer, cursorLayer] });
+      const hereLayer = new GraphicsLayer({ id: "lrs-here", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, compareCursorLayer, cursorLayer, hereLayer] });
       view = new MapView({
         container: ref.current,
         map,
-        extent: RWANDA_EXTENT,
+        center: OPEN_AT.center,
+        scale: OPEN_AT.scale,
         highlightOptions: { color: [232, 122, 46], haloOpacity: 0 },
       });
       view.ui.remove("attribution");
@@ -95,10 +139,43 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         const point = geometry?.type === "point" ? geometry : geometry?.extent?.center;
         if (point) originRef.current?.([point.longitude, point.latitude], event.result.name || "Search result");
       });
-      const locate = new Locate({ view, popupEnabled: false, scale: 12000 });
+      const hereMarks = [];
+      const showHere = (longitude, latitude) => {
+        if (hereMarks.length) view.graphics.removeMany(hereMarks);
+        hereMarks.length = 0;
+        const point = new Point({ longitude, latitude });
+        const halo = new Graphic({
+          geometry: point,
+          attributes: { here: true },
+          symbol: new SimpleMarkerSymbol({ style: "circle", color: [37, 99, 235, 0.3], size: 36, outline: { color: [255, 255, 255, 0.95], width: 2 } }),
+        });
+        const dot = new Graphic({
+          geometry: point,
+          attributes: { here: true },
+          symbol: new SimpleMarkerSymbol({ style: "circle", color: [37, 99, 235, 1], size: 14, outline: { color: [255, 255, 255], width: 3 } }),
+        });
+        hereMarks.push(halo, dot);
+        view.graphics.addMany(hereMarks);
+        return point;
+      };
+      let locationPending = Boolean(navigator.geolocation);
+      let drawNearbyRoads = () => {};
+      const zoomToHere = (longitude, latitude) => {
+        const point = showHere(longitude, latitude);
+        const zoom = Math.min(view.constraints?.effectiveMaxZoom ?? HERE_ZOOM, HERE_ZOOM);
+        drawNearbyRoads(longitude, latitude);
+        view.goTo({ target: point, zoom }, { duration: 450 }).catch(() => {}).finally(() => {
+          locationPending = false;
+          if (!cancelled) refreshExtent();
+        });
+        originRef.current?.([longitude, latitude], "My location", { wide: true });
+        console.info(`[LRS] Current location ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+      };
+      const locate = new Locate({ view, popupEnabled: false, scale: 1128 });
       locate.on("locate", (event) => {
         const coords = event.position?.coords;
-        if (coords) originRef.current?.([coords.longitude, coords.latitude], "My location");
+        if (!coords) return;
+        zoomToHere(coords.longitude, coords.latitude);
       });
       locate.on("locate-error", (event) => console.warn("[LRS] Could not get current location", event.error));
       view.ui.add(search, { position: "top-right", index: 0 });
@@ -110,7 +187,14 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         uiPanel.style.maxHeight = `${Math.max(140, (view.height || 500) - 120)}px`;
       }
       const lrsLayers = LRS_LAYER_DEFS.map(() => null);
-      const sources = [];
+      const roadIndex = LRS_LAYER_DEFS.findIndex((def) => def.route);
+      const roadDef = LRS_LAYER_DEFS[roadIndex];
+      const roadLayer = new GraphicsLayer({ id: `lrs-${roadDef.id}`, title: roadDef.title, listMode: "hide" });
+      lrsLayers[roadIndex] = roadLayer;
+      map.add(roadLayer, 0);
+      const roadInk = new SimpleLineSymbol({ color: roadDef.color, width: roadDef.width || 3, cap: "round", join: "round" });
+      const roadDim = new SimpleLineSymbol({ color: [roadDef.color[0], roadDef.color[1], roadDef.color[2], 0.22], width: roadDef.width || 3, cap: "round", join: "round" });
+      const drawnRoads = new globalThis.Map();
       const OVERLAY_COUNT = map.layers.length;
       const routeWhere = { value: null };
       const effectFor = () => (routeWhere.value
@@ -122,61 +206,221 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
           : { type: "simple-marker", style: def.shape || "circle", color: def.color, size: def.shape === "triangle" ? 7 : 5.5, outline: { color: [255, 255, 255, 0.9], width: 0.6 } })
         : { type: "simple-line", color: def.color, width: def.width || 2.5, cap: "round", join: "round" });
       const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-      const drawLayer = async (layer) => {
-        const index = LRS_LAYER_DEFS.findIndex((def) => def.id === layer.id);
-        if (cancelled || index < 0 || lrsLayers[index]) return;
-        lrsLayers[index] = "pending";
-        sources.push(layer);
-        const started = performance.now();
-        const routeField = layer.routeField;
-        const graphics = [];
-        const CHUNK = 1500;
-        for (let i = 0; i < layer.features.length; i += 1) {
-          const feature = layer.features[i];
-          const g = feature.geometry;
-          if (g) {
-            let geometry = null;
-            if (g.x !== undefined) {
-              const at = toLonLat(g.x, g.y);
-              if (at) geometry = new Point({ longitude: at[0], latitude: at[1] });
-            } else {
-              const paths = flattenPaths(g);
-              if (paths.length) geometry = new Polyline({ paths, spatialReference: { wkid: 4326 } });
-            }
-            if (geometry) {
-              graphics.push(new Graphic({
-                geometry,
-                attributes: { oid: i + 1, route: routeField ? routeKey(feature.attributes?.[routeField]) : "", rid: routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "" },
-              }));
-            }
-          }
-          if (i % CHUNK === CHUNK - 1) {
-            await pause();
-            if (cancelled) return;
-          }
+      const seen = LRS_LAYER_DEFS.map(() => new globalThis.Map());
+      const covered = LRS_LAYER_DEFS.map(() => []);
+      const chains = LRS_LAYER_DEFS.map(() => Promise.resolve());
+      const covers = (index, box, faithful) => covered[index].some((item) => (
+        item.xmin <= box.xmin && item.ymin <= box.ymin && item.xmax >= box.xmax && item.ymax >= box.ymax
+        && (!faithful || item.faithful)
+      ));
+      const geographicExtent = () => {
+        const extent = view.extent;
+        if (!extent) return null;
+        const geo = extent.spatialReference?.isGeographic ? extent : webMercatorUtils.webMercatorToGeographic(extent);
+        if (!geo || !Number.isFinite(geo.xmin)) return null;
+        return { xmin: geo.xmin, ymin: geo.ymin, xmax: geo.xmax, ymax: geo.ymax };
+      };
+      const roadShape = (geometry) => {
+        if (geometry?.curvePaths?.length) return new Polyline({ curvePaths: geometry.curvePaths, spatialReference: { wkid: 4326 } });
+        if (geometry?.paths?.length) return new Polyline({ paths: geometry.paths, spatialReference: { wkid: 4326 } });
+        return null;
+      };
+      const roadDetail = (geometry) => (geometry?.curvePaths?.length ? 100000 : (geometry?.paths || []).reduce((sum, path) => sum + path.length, 0));
+      const paintRoads = (features, routeFieldName) => {
+        const fresh = [];
+        features.forEach((feature) => {
+          const oid = Number(feature.attributes?.OBJECTID ?? feature.attributes?.objectid);
+          const shape = feature.geometry ? roadShape(feature.geometry) : null;
+          if (!oid || !shape) return;
+          const detail = roadDetail(feature.geometry);
+          const previous = drawnRoads.get(oid);
+          if (previous && (previous.attributes.detail || 0) >= detail) return;
+          if (previous) roadLayer.remove(previous);
+          const rid = routeFieldName ? String(feature.attributes?.[routeFieldName] ?? "").trim() : "";
+          const graphic = new Graphic({
+            geometry: shape,
+            symbol: roadInk,
+            attributes: { oid, detail, rid, route: rid ? routeKey(rid) : "" },
+          });
+          drawnRoads.set(oid, graphic);
+          fresh.push(graphic);
+        });
+        if (fresh.length) {
+          roadLayer.addMany(fresh);
+          console.info(`[LRS] Roads drawn: ${fresh.length} (${drawnRoads.size} on the map)`);
         }
+      };
+      drawNearbyRoads = (longitude, latitude) => {
+        if ((hiddenRef.current || []).includes(roadDef.id)) return;
+        const km = 1.2;
+        const dLat = km / 111;
+        const dLon = km / (111 * Math.max(0.2, Math.cos((latitude * Math.PI) / 180)));
+        const box = { xmin: longitude - dLon, ymin: latitude - dLat, xmax: longitude + dLon, ymax: latitude + dLat };
+        if (covers(roadIndex, box, true)) return;
+        const record = { ...box, faithful: true };
+        covered[roadIndex].push(record);
+        const started = performance.now();
+        loadRoadsInExtent(box).then((result) => {
+          if (cancelled) return;
+          paintRoads(result.features, result.routeField);
+          console.info(`[LRS] Nearby roads in ${Math.round(performance.now() - started)} ms`);
+        }).catch((error) => {
+          const at = covered[roadIndex].indexOf(record);
+          if (at >= 0) covered[roadIndex].splice(at, 1);
+          console.warn("[LRS] Nearby roads failed", error);
+        });
+      };
+      const ensureLayer = (def) => {
+        const index = LRS_LAYER_DEFS.findIndex((item) => item.id === def.id);
+        if (lrsLayers[index] && lrsLayers[index] !== "pending") return lrsLayers[index];
         const featureLayer = new FeatureLayer({
-          id: `lrs-${layer.id}`,
-          title: layer.def.title,
-          source: graphics,
+          id: `lrs-${def.id}`,
+          title: def.title,
+          source: [],
           objectIdField: "oid",
           fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }, { name: "rid", type: "string" }],
-          geometryType: layer.def.kind === "point" ? "point" : "polyline",
+          geometryType: def.kind === "point" ? "point" : "polyline",
           spatialReference: { wkid: 4326 },
-          renderer: { type: "simple", symbol: symbolFor(layer.def) },
+          renderer: { type: "simple", symbol: symbolFor(def) },
           outFields: ["route", "rid"],
           popupEnabled: false,
           listMode: "hide",
-          visible: !(hiddenRef.current || []).includes(layer.id),
+          visible: !(hiddenRef.current || []).includes(def.id),
           featureEffect: effectFor(),
         });
         lrsLayers[index] = featureLayer;
-        map.add(featureLayer, layer.def.kind === "point" ? Math.max(0, map.layers.length - OVERLAY_COUNT) : 0);
-        console.info(`[LRS] Map layer ${layer.def.title}: ${graphics.length} features ready in ${Math.round(performance.now() - started)} ms`);
+        map.add(featureLayer, def.kind === "point" ? Math.max(0, map.layers.length - OVERLAY_COUNT) : 0);
+        return featureLayer;
       };
-      unsubscribe = subscribeLayers((layer) => { drawLayer(layer); });
-      loadLayerCache().catch((error) => console.error(error));
+      const graphicsFor = (features, routeField, index, keepCurves) => {
+        const add = [];
+        const update = [];
+        features.forEach((feature) => {
+          const oid = Number(feature.attributes?.OBJECTID ?? feature.attributes?.objectid);
+          if (!oid) return;
+          const g = feature.geometry;
+          if (!g) return;
+          let geometry = null;
+          let detail = 1;
+          if (g.x !== undefined) {
+            const at = toLonLat(g.x, g.y);
+            if (at) geometry = new Point({ longitude: at[0], latitude: at[1] });
+          } else {
+            const paths = flattenPaths(g)
+              .map((path) => (keepCurves ? path : thinPath(path)))
+              .filter((path) => path.length > 1);
+            if (paths.length) {
+              geometry = new Polyline({ paths, spatialReference: { wkid: 4326 } });
+              detail = paths.reduce((count, path) => count + path.length, 0);
+            }
+          }
+          if (!geometry) return;
+          const previous = seen[index].get(oid);
+          if (previous !== undefined && previous >= detail) return;
+          seen[index].set(oid, detail);
+          const rid = routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "";
+          const graphic = new Graphic({
+            geometry,
+            attributes: { oid, route: rid ? routeKey(rid) : "", rid },
+          });
+          if (previous === undefined) add.push(graphic);
+          else update.push(graphic);
+        });
+        return { add, update };
+      };
+      const addFeatures = (def, features, routeField) => {
+        const index = LRS_LAYER_DEFS.findIndex((item) => item.id === def.id);
+        if (index < 0 || !features?.length) return Promise.resolve();
+        chains[index] = chains[index].then(async () => {
+          if (cancelled) return;
+          const layer = ensureLayer(def);
+          if (!layer.loaded) await layer.load();
+          const { add, update } = graphicsFor(features, routeField, index, Boolean(def.route));
+          for (let i = 0; i < add.length; i += 40) {
+            if (cancelled) return;
+            await layer.applyEdits({ addFeatures: add.slice(i, i + 40) });
+            await pause();
+          }
+          for (let i = 0; i < update.length; i += 40) {
+            if (cancelled) return;
+            await layer.applyEdits({ updateFeatures: update.slice(i, i + 40) });
+            await pause();
+          }
+          if (add.length || update.length) console.info(`[LRS] ${def.title}: added ${add.length}, updated ${update.length} (${seen[index].size} total)`);
+        }).catch((error) => console.warn(`[LRS] Could not draw ${def.title}`, error));
+        return chains[index];
+      };
+      const refreshExtent = () => {
+        const box = geographicExtent();
+        if (!box) return Promise.resolve();
+        const hidden = new Set(hiddenRef.current || []);
+        const faithful = Math.abs(box.xmax - box.xmin) < 0.05;
+        const jobs = [];
+        LRS_LAYER_DEFS.forEach((def, index) => {
+          if (def.route) {
+            if (hidden.has(def.id) || covers(index, box, faithful)) return;
+            const record = { ...box, faithful };
+            covered[index].push(record);
+            jobs.push(loadRoadsInExtent(box).then((result) => {
+              if (!cancelled) paintRoads(result.features, result.routeField);
+            }).catch((error) => {
+              const at = covered[index].indexOf(record);
+              if (at >= 0) covered[index].splice(at, 1);
+              console.warn("[LRS] Road Network view query failed", error);
+            }));
+            return;
+          }
+          const detailed = def.kind !== "point" && faithful;
+          if (hidden.has(def.id) || covers(index, box, detailed)) return;
+          const record = { ...box, faithful: detailed };
+          covered[index].push(record);
+          const load = loadLayerInExtent(def, box);
+          jobs.push(load.then((result) => {
+            if (cancelled) return null;
+            return addFeatures(def, result.features, result.routeField);
+          }).catch((error) => {
+            const boxes = covered[index];
+            const at = boxes.indexOf(record);
+            if (at >= 0) boxes.splice(at, 1);
+            console.warn(`[LRS] ${def.title} view query failed`, error);
+          }));
+        });
+        return Promise.all(jobs);
+      };
+      view.watch("stationary", (isStationary) => {
+        if (isStationary && !locationPending) refreshExtent();
+      });
+      const whenReady = (tries = 0) => {
+        if (cancelled || tries > 40) return;
+        if (!geographicExtent()) {
+          setTimeout(() => whenReady(tries + 1), 150);
+          return;
+        }
+        refreshExtent();
+      };
+      let placed = false;
+      let placedAt = null;
+      takeFix = (coords) => {
+        if (cancelled) return;
+        if (!coords) {
+          if (!placed) {
+            locationPending = false;
+            whenReady();
+          }
+          return;
+        }
+        const shifted = placedAt && Math.hypot(coords.longitude - placedAt[0], coords.latitude - placedAt[1]) > 0.004;
+        placedAt = [coords.longitude, coords.latitude];
+        if (!placed || shifted) {
+          placed = true;
+          zoomToHere(coords.longitude, coords.latitude);
+          return;
+        }
+        showHere(coords.longitude, coords.latitude);
+        drawNearbyRoads(coords.longitude, coords.latitude);
+      };
+      if (!navigator.geolocation) takeFix(null);
+      else if (pendingFix !== undefined) takeFix(pendingFix);
       let hoverFrame = 0;
       view.on("pointer-move", (event) => {
         if (hoverFrame) return;
@@ -190,7 +434,6 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         });
       });
       view.on("pointer-leave", () => leaveRef.current?.());
-      const roadIndex = LRS_LAYER_DEFS.findIndex((def) => def.route);
       view.on("click", (event) => {
         if (segmentPickRef.current) {
           segmentClickRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
@@ -212,18 +455,25 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       });
       const layerViews = new window.Map();
       const applyRouteEffect = (activeRoute, otherRoute) => {
-        const ids = [activeRoute?.id, otherRoute?.id].filter(Boolean).map((id) => `'${routeKey(id).replace(/'/g, "''")}'`);
-        routeWhere.value = ids.length ? `route IN (${ids.join(",")})` : null;
-        lrsLayers.forEach((layer) => {
-          if (layer && layer !== "pending") layer.featureEffect = effectFor();
+        const ids = [activeRoute?.id, otherRoute?.id].filter(Boolean);
+        const keyed = ids.map((id) => `'${routeKey(id).replace(/'/g, "''")}'`);
+        const keys = new Set(ids.map((id) => routeKey(id)));
+        routeWhere.value = keyed.length ? `route IN (${keyed.join(",")})` : null;
+        roadLayer.graphics.forEach((graphic) => {
+          graphic.symbol = !keys.size || keys.has(graphic.attributes?.route) ? roadInk : roadDim;
+        });
+        lrsLayers.forEach((layer, index) => {
+          if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
+          layer.featureEffect = routeWhere.value
+            ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
+            : null;
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, lrsLayers, layerViews, applyRouteEffect, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       setReady(true);
     });
     return () => {
       cancelled = true;
-      unsubscribe?.();
       view?.destroy();
     };
   }, []);
@@ -303,7 +553,14 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
       geometry: origin,
       symbol: new SimpleMarkerSymbol({ style: "circle", size: 10, color: [14, 165, 233, 1], outline: { color: [255, 255, 255], width: 2 } }),
     }));
-    if (analysis.zoom) view.goTo({ target: circle, padding: 40 }, { duration: 500 }).catch(() => {});
+    const zoomKey = `${analysis.origin[0]},${analysis.origin[1]}|${analysis.radiusM}|${analysis.wide}|${analysis.zoom}`;
+    if (analysis.zoom && zoomKey !== bag.zoomKey) {
+      bag.zoomKey = zoomKey;
+      const target = analysis.wide
+        ? { target: new Point({ longitude: analysis.origin[0], latitude: analysis.origin[1] }), zoom: HERE_ZOOM }
+        : { target: circle, padding: 48 };
+      view.goTo(target, { duration: 500 }).catch(() => {});
+    }
   }, [analysis, ready]);
 
   useEffect(() => {
@@ -443,12 +700,6 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     const bag = api.current;
     if (!bag?.lrsLayers || !ready) return;
-    if (!route) bag.view.goTo(RWANDA_EXTENT, { duration: 450 }).catch(() => {});
-  }, [route, ready]);
-
-  useEffect(() => {
-    const bag = api.current;
-    if (!bag?.lrsLayers || !ready) return;
     const other = compareRoute && compareRoute.id !== route?.id ? compareRoute : null;
     bag.route = route || null;
     bag.compareRoute = other;
@@ -486,9 +737,11 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
   useEffect(() => {
     const bag = api.current;
     if (!bag?.lrsLayers) return;
+    const hidden = new Set(hiddenLayerIds || []);
     bag.lrsLayers.forEach((layer, index) => {
-      if (layer && layer !== "pending") layer.visible = !(hiddenLayerIds || []).includes(LRS_LAYER_DEFS[index].id);
+      if (layer && layer !== "pending") layer.visible = !hidden.has(LRS_LAYER_DEFS[index].id);
     });
+    bag.refreshExtent?.();
   }, [hiddenLayerIds, ready]);
 
   return ref;

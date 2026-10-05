@@ -111,18 +111,8 @@ function titleOf(attributes, routeField, fallbackTitle = "Event") {
   return fallback ? usableLabel(attributes[fallback]) : fallbackTitle;
 }
 
-function fieldsOf(features) {
-  const sample = features[0]?.attributes || {};
-  return Object.keys(sample).map((name) => ({
-    name,
-    type: typeof sample[name] === "number" ? "esriFieldTypeDouble" : "esriFieldTypeString",
-  }));
-}
-
-const PAGE_SIZE = 1000;
 const ROAD_ID = LRS_LAYER_DEFS.find((def) => def.route)?.id;
 const MAX_PARALLEL = 3;
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CACHE_DB = "rwanda-lrs-cache";
 const CACHE_STORE = "layers";
 
@@ -157,28 +147,6 @@ function openCache() {
   });
 }
 
-async function cacheGet(key) {
-  try {
-    const db = await openCache();
-    return await new Promise((resolve) => {
-      const request = db.transaction(CACHE_STORE).objectStore(CACHE_STORE).get(key);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function cachePut(key, value) {
-  try {
-    const db = await openCache();
-    db.transaction(CACHE_STORE, "readwrite").objectStore(CACHE_STORE).put(value, key);
-  } catch {
-    /* caching is best effort */
-  }
-}
-
 /** Drops the local layer cache so the next load reads everything from the server. */
 export async function clearLayerCache() {
   try {
@@ -189,83 +157,6 @@ export async function clearLayerCache() {
   }
 }
 
-async function downloadFeatures(def) {
-  const params = {
-    where: "1=1",
-    outFields: "*",
-    returnGeometry: "true",
-    outSR: "4326",
-    geometryPrecision: "6",
-    resultRecordCount: String(PAGE_SIZE),
-    ...(def.kind === "point" ? {} : { returnTrueCurves: "true" }),
-  };
-  const features = [];
-  let offset = 0;
-  let size = PAGE_SIZE;
-  for (let page = 0; page < 400; page += 1) {
-    let batch;
-    try {
-      batch = await queryFeatures(def.id, { ...params, resultOffset: String(offset), resultRecordCount: String(size) }, size > 125 ? 2 : 4);
-    } catch (error) {
-      if (size <= 125) throw error;
-      size = Math.floor(size / 2);
-      console.warn(`[LRS] ${def.title}: page at ${offset} failed, retrying with ${size} records per page`);
-      page -= 1;
-      continue;
-    }
-    features.push(...batch.features);
-    if (!batch.exceeded || !batch.features.length) break;
-    offset += batch.features.length;
-  }
-  return features;
-}
-
-async function fetchLayerOnce(def) {
-  const started = performance.now();
-  const { user } = await signInToLrs();
-  const key = `${LRS}/${def.id}|${user}`;
-  const cached = await cacheGet(key);
-  let features;
-  let source = "server";
-  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS && Array.isArray(cached.features)) {
-    features = cached.features;
-    source = "local cache";
-  } else {
-    features = await downloadFeatures(def);
-    cachePut(key, { savedAt: Date.now(), features });
-  }
-  console.info(`[LRS] ${def.title}: ${features.length} features from ${source} in ${Math.round(performance.now() - started)} ms`);
-  const fields = fieldsOf(features);
-  const oidField = Object.keys(features[0]?.attributes || {}).find((name) => /objectid/i.test(name)) || "OBJECTID";
-  return {
-    id: def.id,
-    name: def.title,
-    features,
-    fields,
-    oidField,
-    geometryType: def.kind === "point" ? "point" : "polyline",
-    routeField: pickField(fields, ROUTE_FIELDS, /routeid/i),
-    fromField: pickField(fields, FROM_FIELDS),
-    toField: pickField(fields, TO_FIELDS),
-    def,
-  };
-}
-
-const loadedLayers = [];
-const layerListeners = new Set();
-
-export function subscribeLayers(listener) {
-  loadedLayers.forEach(listener);
-  layerListeners.add(listener);
-  return () => layerListeners.delete(listener);
-}
-
-function publishLayer(layer) {
-  loadedLayers.push(layer);
-  layerListeners.forEach((listener) => listener(layer));
-}
-
-const layerPromises = new Map();
 const failedLayers = new Set();
 
 /** Titles of layers that could not be downloaded this session. */
@@ -288,22 +179,21 @@ function layerOf(def) {
   return layerPromises.get(def.id);
 }
 
-const ROAD_DEF = LRS_LAYER_DEFS.find((def) => def.route);
+const metaCache = new Map();
 
-/** Road Network alone: enough for the route list, route geometry and nearest-road analysis. */
-async function roadNetwork() {
-  const centerline = await layerOf(ROAD_DEF);
-  if (!centerline.features.length) throw new Error("Road Network was not loaded");
-  return centerline;
+function layerMeta(layerId) {
+  if (!metaCache.has(layerId)) metaCache.set(layerId, getJson(`${LRS}/${layerId}`));
+  return metaCache.get(layerId);
 }
 
-let described = null;
-function service() {
-  if (!described) {
-    const ordered = [ROAD_DEF, ...LRS_LAYER_DEFS.filter((def) => !def.route && def.kind === "point"), ...LRS_LAYER_DEFS.filter((def) => !def.route && def.kind !== "point")];
-    described = Promise.all(ordered.map(layerOf)).then(async (layers) => ({ layers, centerline: await roadNetwork() }));
-  }
-  return described;
+function namedField(fields, candidates, fallback) {
+  return pickField(fields, candidates, fallback);
+}
+
+function whereEquals(field, value, type) {
+  const text = String(value ?? "").trim().replace(/'/g, "''");
+  if (/Integer|Double|Single|Small|OID/i.test(type || "") && /^-?\d+(\.\d+)?$/.test(text)) return `${field} = ${text}`;
+  return `${field} = '${text}'`;
 }
 
 async function queryFeatures(layerId, params, attempts = 4) {
@@ -328,47 +218,126 @@ async function queryFeatures(layerId, params, attempts = 4) {
   throw lastError;
 }
 
-export async function loadLayerCache() {
-  return service();
+async function queryPages(layerId, params, pageCap = 8) {
+  const features = [];
+  const size = Number(params.resultRecordCount || 500);
+  let offset = 0;
+  for (let page = 0; page < pageCap; page += 1) {
+    const batch = await queryFeatures(layerId, { ...params, resultOffset: String(offset), resultRecordCount: String(size) });
+    features.push(...batch.features);
+    if (!batch.exceeded || !batch.features.length) break;
+    offset += batch.features.length;
+  }
+  return features;
 }
 
-function routeFieldOf(centerline) {
-  return centerline.routeField || centerline.fields.find((item) => item.type === "esriFieldTypeString" && !/globalid|objectid/i.test(item.name))?.name || null;
+async function roadFields() {
+  const meta = await layerMeta(ROAD_ID);
+  const fields = meta.fields || [];
+  const routeField = namedField(fields, ROUTE_FIELDS, /routeid/i);
+  const routeType = fields.find((field) => field.name === routeField)?.type || "";
+  const codeField = namedField(fields, CODE_FIELDS);
+  return { fields, routeField, routeType, codeField };
+}
+
+function extentParams(extent, kind) {
+  const width = Math.abs(extent.xmax - extent.xmin);
+  const faithful = kind !== "point" && width < 0.05;
+  const params = {
+    where: "1=1",
+    geometry: JSON.stringify({ xmin: extent.xmin, ymin: extent.ymin, xmax: extent.xmax, ymax: extent.ymax, spatialReference: { wkid: 4326 } }),
+    geometryType: "esriGeometryEnvelope",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: "*",
+    returnGeometry: "true",
+    outSR: "4326",
+    geometryPrecision: faithful ? "6" : "5",
+    resultRecordCount: kind === "point" ? "600" : "400",
+  };
+  if (kind === "point") return params;
+  if (faithful) params.returnTrueCurves = "true";
+  else params.maxAllowableOffset = String(Math.min(0.0012, Math.max(0.000025, width / 5000)));
+  return params;
+}
+
+/** Warm the road-layer metadata so the first geometry query does not wait on it. */
+export function prepareRoads() {
+  return roadFields().then(() => {}).catch(() => {});
+}
+
+/** Roads in a longitude/latitude box. A local box returns the published curves in one request. */
+export async function loadRoadsInExtent(extent) {
+  const meta = await layerMeta(ROAD_ID);
+  const fields = meta.fields || [];
+  const routeField = namedField(fields, ROUTE_FIELDS, /routeid/i);
+  const oidField = fields.find((field) => field.type === "esriFieldTypeOID")?.name || "OBJECTID";
+  const width = Math.abs(extent.xmax - extent.xmin);
+  const local = width < 0.12;
+  const params = {
+    where: "1=1",
+    geometry: JSON.stringify({ xmin: extent.xmin, ymin: extent.ymin, xmax: extent.xmax, ymax: extent.ymax, spatialReference: { wkid: 4326 } }),
+    geometryType: "esriGeometryEnvelope",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: routeField ? `${oidField},${routeField}` : oidField,
+    returnGeometry: "true",
+    returnTrueCurves: "true",
+    returnZ: "false",
+    returnM: "false",
+    outSR: "4326",
+    resultRecordCount: local ? "80" : "120",
+  };
+  if (!local) params.maxAllowableOffset = String(Math.min(0.0004, Math.max(0.00003, width / 8000)));
+  const features = await queryPages(ROAD_ID, params, local ? 2 : 1);
+  return { features, routeField };
+}
+
+/** One visible layer inside the current view, not the whole country. */
+export async function loadLayerInExtent(def, extent) {
+  const meta = await layerMeta(def.id);
+  const routeField = namedField(meta.fields || [], ROUTE_FIELDS, /routeid/i);
+  const features = await queryPages(def.id, extentParams(extent, def.kind), 1);
+  return { id: def.id, features, routeField, def };
 }
 
 export const routeKey = (value) => String(value ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
 const hasGeometry = (feature) => flattenPaths(feature.geometry).length > 0;
 
 export async function loadRouteCatalog() {
-  service();
-  const centerline = await roadNetwork();
-  const field = routeFieldOf(centerline);
-  if (!field) throw new Error("Road Network has no route id field");
-  const codeField = pickField(centerline.fields, CODE_FIELDS);
-  const features = centerline.features;
+  const { routeField, codeField } = await roadFields();
+  if (!routeField) throw new Error("Road Network has no route id field");
+  const features = await queryPages(ROAD_ID, {
+    where: "1=1",
+    outFields: [routeField, codeField].filter(Boolean).join(","),
+    returnGeometry: "false",
+    resultRecordCount: "1000",
+  });
   const byId = new Map();
   features.forEach((feature) => {
-    const id = String(feature.attributes[field] ?? "").trim();
+    const id = String(feature.attributes[routeField] ?? "").trim();
     if (!id || /[{}]/.test(id)) return;
     const key = routeKey(id);
-    const drawn = hasGeometry(feature);
-    const known = byId.get(key);
-    if (known && (known.drawn || !drawn)) return;
+    if (byId.has(key)) return;
     const code = codeField ? String(feature.attributes[codeField] ?? "").trim() : "";
-    byId.set(key, { id, code, trajectory: code || "Road Network", roadClass: "Road Network", routeField: field, drawn });
+    byId.set(key, { id, code, trajectory: code || "Road Network", roadClass: "Road Network", routeField, drawn: true });
   });
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
 export async function loadRoute(routeId) {
-  const centerline = await roadNetwork();
-  const field = routeFieldOf(centerline);
-  const wanted = routeKey(routeId);
-  const features = centerline.features.filter((feature) => routeKey(feature.attributes[field]) === wanted && hasGeometry(feature));
+  const { routeField, routeType, codeField } = await roadFields();
+  if (!routeField) throw new Error("Road Network has no route id field");
+  const features = (await queryPages(ROAD_ID, {
+    where: whereEquals(routeField, routeId, routeType),
+    outFields: "*",
+    returnGeometry: "true",
+    returnTrueCurves: "true",
+    resultRecordCount: "200",
+  })).filter(hasGeometry);
   if (!features.length) throw new Error(`Route ${String(routeId).trim()} has no Road Network geometry to draw or measure.`);
   const route = buildRoute(features);
   if (!(route.lengthKm > 0)) throw new Error(`Route ${String(routeId).trim()} geometry has zero length.`);
-  const codeField = pickField(centerline.fields, CODE_FIELDS);
   const code = codeField ? features.map((feature) => feature.attributes[codeField]).find(Boolean) : "";
   return {
     ...route,
@@ -377,14 +346,9 @@ export async function loadRoute(routeId) {
     roadClass: "Road Network",
     features,
     geometries: features.map((feature) => feature.geometry).filter(Boolean),
-    routeField: field,
+    routeField,
     layerId: 3,
   };
-}
-
-function matchesRoute(layer, feature, route) {
-  if (!layer.routeField) return true;
-  return routeKey(feature.attributes[layer.routeField]) === routeKey(route.id);
 }
 
 function routeBox(route, padDeg) {
@@ -409,19 +373,51 @@ function nearBox(feature, box) {
   return Boolean(at) && at[0] >= box.minX && at[0] <= box.maxX && at[1] >= box.minY && at[1] <= box.maxY;
 }
 
+async function featuresForRoute(def, route) {
+  const meta = await layerMeta(def.id);
+  const fields = meta.fields || [];
+  const routeField = namedField(fields, ROUTE_FIELDS, /routeid/i);
+  const routeType = fields.find((field) => field.name === routeField)?.type || "";
+  const fromField = namedField(fields, FROM_FIELDS);
+  const toField = namedField(fields, TO_FIELDS);
+  const layer = { id: def.id, name: def.title, features: [], fields, routeField, fromField, toField, def };
+  const geometry = {
+    outFields: "*",
+    returnGeometry: "true",
+    outSR: "4326",
+    geometryPrecision: "5",
+    resultRecordCount: "500",
+  };
+  if (routeField) {
+    layer.features = await queryPages(def.id, { ...geometry, where: whereEquals(routeField, route.id, routeType) });
+  }
+  if (!layer.features.length && route.vertices?.length) {
+    const box = routeBox(route, 0.01);
+    layer.features = (await queryPages(def.id, {
+      ...geometry,
+      where: "1=1",
+      geometry: JSON.stringify({ xmin: box.minX, ymin: box.minY, xmax: box.maxX, ymax: box.maxY, spatialReference: { wkid: 4326 } }),
+      geometryType: "esriGeometryEnvelope",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+    }, 2)).filter((feature) => nearBox(feature, box));
+  }
+  return layer;
+}
+
 export async function loadEvents(route) {
-  const { layers } = await service();
   const maxKm = SNAP_METERS / 1000;
   const events = [];
   const mapLayers = [];
+  const defs = LRS_LAYER_DEFS.filter((def) => !def.route && def.chart !== false);
+  const layers = await Promise.all(defs.map((def) => featuresForRoute(def, route).catch((error) => {
+    console.error(def.title, error);
+    failedLayers.add(def.title);
+    return { id: def.id, name: def.title, features: [], fields: [], routeField: null, fromField: null, toField: null, def };
+  })));
 
   for (const layer of layers) {
-    if (layer.def.route || layer.def.chart === false) continue;
-    let features = layer.features.filter((feature) => matchesRoute(layer, feature, route));
-    if (!features.length && route.vertices?.length) {
-      const box = routeBox(route, 0.01);
-      features = layer.features.filter((feature) => nearBox(feature, box));
-    }
+    const features = layer.features;
     mapLayers.push({ id: layer.id, title: layer.name });
     features.forEach((feature, index) => {
       const name = titleOf(feature.attributes, layer.routeField, layer.def.title);
@@ -588,13 +584,17 @@ const roadPaths = new WeakMap();
 
 /** Road Network routes within maxKm of [lon, lat], nearest first, one entry per route id. */
 export async function nearestRoads(point, maxKm, limit = 12) {
-  const centerline = await roadNetwork();
-  const field = routeFieldOf(centerline);
-  const codeField = pickField(centerline.fields, CODE_FIELDS);
+  const { routeField: field, codeField } = await roadFields();
   const padLat = maxKm / 111;
   const padLon = maxKm / (111 * Math.cos((point[1] * Math.PI) / 180));
+  const features = await loadRoadsInExtent({
+    xmin: point[0] - padLon,
+    ymin: point[1] - padLat,
+    xmax: point[0] + padLon,
+    ymax: point[1] + padLat,
+  }).then((result) => result.features);
   const byRoute = new Map();
-  centerline.features.forEach((feature) => {
+  features.forEach((feature) => {
     const id = field ? String(feature.attributes?.[field] ?? "").trim() : "";
     if (!id || !feature.geometry) return;
     let paths = roadPaths.get(feature);

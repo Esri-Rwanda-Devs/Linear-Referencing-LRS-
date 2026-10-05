@@ -13,16 +13,21 @@ export function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-function sampleArc(start, mid, end, steps = 18) {
+function arcSteps(sweep) {
+  return Math.max(16, Math.min(72, Math.ceil(Math.abs(sweep) / (Math.PI / 36))));
+}
+
+function sampleArc(start, mid, end, steps) {
   const circle = circleFromThree(start, mid, end);
   if (!circle) return [[end[0], end[1]]];
   const a0 = Math.atan2(start[1] - circle.y, start[0] - circle.x);
   const a1 = Math.atan2(mid[1] - circle.y, mid[0] - circle.x);
   const a2 = Math.atan2(end[1] - circle.y, end[0] - circle.x);
   const sweep = sweepThrough(a0, a1, a2);
+  const count = steps || arcSteps(sweep);
   const points = [];
-  for (let i = 1; i <= steps; i += 1) {
-    const angle = a0 + sweep * (i / steps);
+  for (let i = 1; i <= count; i += 1) {
+    const angle = a0 + sweep * (i / count);
     points.push([circle.x + circle.r * Math.cos(angle), circle.y + circle.r * Math.sin(angle)]);
   }
   return points;
@@ -85,8 +90,9 @@ export function densifyCurvePath(parts) {
       if (clockwise && sweep > 0) sweep -= Math.PI * 2;
       if (!clockwise && sweep < 0) sweep += Math.PI * 2;
       const radius = Math.hypot(current[0] - center[0], current[1] - center[1]);
-      for (let i = 1; i <= 18; i += 1) {
-        const angle = startAngle + sweep * (i / 18);
+      const steps = arcSteps(sweep);
+      for (let i = 1; i <= steps; i += 1) {
+        const angle = startAngle + sweep * (i / steps);
         points.push([center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)]);
       }
       current = [end[0], end[1]];
@@ -94,7 +100,8 @@ export function densifyCurvePath(parts) {
     }
     if (part.b) {
       const [c1, c2, end] = part.b;
-      for (let i = 1; i <= 16; i += 1) points.push(bezier(current, c1, c2, end, i / 16));
+      const steps = 24;
+      for (let i = 1; i <= steps; i += 1) points.push(bezier(current, c1, c2, end, i / steps));
       current = [end[0], end[1]];
     }
   });
