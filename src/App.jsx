@@ -5,7 +5,8 @@ import SegmentAnalysis from "./components/SegmentAnalysis";
 import RoutePicker from "./components/RoutePicker";
 import RouteCompare from "./components/RouteCompare";
 import StripChart, { ChartSymbol } from "./components/StripChart";
-import { LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
+import { groupLabel, LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
+import { exportComparison, exportRouteAssets, exportSegmentAssets } from "./lrs/excel";
 import {
   failedLayerTitles,
   featuresAtMeasure,
@@ -549,9 +550,19 @@ export default function App() {
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
           <h1>Roads Asset Mapping Application</h1>
         </div>
-        {/* <p className="source">
-          Signin to Road_Asset_LRS_Map to view the map.
-        </p> */}
+        <button
+          type="button"
+          className="export-excel"
+          disabled={!route || events.length === 0}
+          title={route ? `Download assets for ${route.id}` : "Choose a road first"}
+          onClick={() => {
+            if (compareShown) exportComparison({ route, events }, compareShown);
+            else if (segment) exportSegmentAssets(route, events, segment);
+            else exportRouteAssets(route, events);
+          }}
+        >
+          {compareShown ? "Export comparison" : segment ? "Export segment" : "Export Excel"}
+        </button>
       </header>
       <div className="workspace">
         {/* <Planner
@@ -884,7 +895,7 @@ export default function App() {
               )}
               {grouped.map(([group, items]) => (
                 <div key={group}>
-                  <b>{group}</b>
+                  <b>{groupLabel(group)}</b>
                   <ul>
                     {items.slice(0, group === "POI" ? 4 : 6).map((item) => (
                       <li key={item.id} className="hover-item">

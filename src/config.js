@@ -27,6 +27,8 @@ export const GROUPS = [
   { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
 
+export const groupLabel = (id) => GROUPS.find((group) => group.id === id)?.label || id;
+
 /** Layer ids from Road_Asset_LRS_Map FeatureServer. */
 export const LRS_LAYER_DEFS = [
   { id: 3, title: "Road Network", group: "NET", kind: "line", route: true, shape: "bar", color: [56, 189, 248, 0.95], width: 4, swatch: "#38bdf8" },

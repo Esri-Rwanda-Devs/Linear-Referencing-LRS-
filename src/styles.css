@@ -13,8 +13,7 @@ button { cursor: pointer; }
 .app { height: 100%; display: flex; flex-direction: column; padding: 10px;}
 .topbar {
   display: flex;
-  justify-content: center;
-
+  justify-content: space-between;
   gap: 24px;
   align-items: center;
   padding: 12px 18px;
@@ -22,6 +21,17 @@ button { cursor: pointer; }
   /* background-color: #fff; */
   color: #208dba;
 }
+.export-excel {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+  background: #16a34a;
+  color: #fff;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.export-excel:disabled { background: #86efac; color: #14532d; cursor: not-allowed; }
+.segment-actions button.export-excel { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 700; }
 .eyebrow { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; opacity: 0.85; }
 h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
 .source { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.4; }

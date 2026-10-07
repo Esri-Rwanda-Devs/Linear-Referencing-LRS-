@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { exportSegmentAssets } from "../lrs/excel";
 import { summariseSegment } from "../lrs/lrsService";
 import { ChartSymbol } from "./StripChart";
 
@@ -43,6 +44,7 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
         <button type="button" className={selecting ? "on" : ""} onClick={() => onSelecting(!selecting)}>
           {selecting ? (segmentStart !== null ? `From ${segmentStart.toFixed(2)} km… click the end (cancel)` : "Click the start on the route… (cancel)") : "Pick from / to on route"}
         </button>
+        {segment && <button type="button" className="export-excel" onClick={() => exportSegmentAssets(route, events, segment)}>Export Excel</button>}
         {segment && <button type="button" className="link" onClick={() => onSegment(null)}>Clear</button>}
       </div>
 
@@ -50,7 +52,7 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
         <div className="analysis-results segment-summary">
           <div className="segment-length">
             <b>{km(summary.lengthKm)}</b>
-            <span>{summary.pointCount} point assets · {summary.spans.length} attribute layers</span>
+            <span>{summary.pointCount} point assets · {summary.spans.length} line event layers</span>
           </div>
 
           {summary.points.length > 0 && <h4>Point assets</h4>}
@@ -75,7 +77,7 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
             </div>
           ))}
 
-          {summary.spans.length > 0 && <h4>Road attributes</h4>}
+          {summary.spans.length > 0 && <h4>Line events</h4>}
           {summary.spans.map((layer) => (
             <div key={layer.layerId} className="segment-layer">
               <div className="segment-row static">

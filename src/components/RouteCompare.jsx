@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LRS_LAYER_DEFS } from "../config";
+import { exportComparison } from "../lrs/excel";
 import { loadEvents, loadRoute, summariseSegment } from "../lrs/lrsService";
 import RoutePicker from "./RoutePicker";
 import { ChartSymbol } from "./StripChart";
@@ -73,6 +74,7 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
       </div>
       <div className="segment-actions">
         <button type="button" className="primary" onClick={compare} disabled={state.loading}>{state.loading ? "Loading routes…" : "Compare"}</button>
+        {a && b && <button type="button" className="export-excel" onClick={() => exportComparison(a, b)}>Export Excel</button>}
         {a && b && <button type="button" className="link" onClick={clear}>Clear</button>}
       </div>
       {state.error && <em className="error">{state.error}</em>}
