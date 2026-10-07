@@ -41,6 +41,10 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState("");
   const [windowKm, setWindowKm] = useState([0, WINDOW_KM]);
+  const [windowDraft, setWindowDraft] = useState(["0.00", String(WINDOW_KM)]);
+  const windowFocus = useRef(null);
+  const windowKmRef = useRef(windowKm);
+  windowKmRef.current = windowKm;
   const [cursor, setCursor] = useState(null);
   const [follow, setFollow] = useState(true);
   const [projects, setProjects] = useState(readProjects);
@@ -534,6 +538,55 @@ export default function App() {
     return [...bags.entries()];
   }, [nearby]);
 
+  useEffect(() => {
+    setWindowDraft((draft) => [
+      windowFocus.current === 0 ? draft[0] : windowKm[0].toFixed(2),
+      windowFocus.current === 1 ? draft[1] : windowKm[1].toFixed(2),
+    ]);
+  }, [windowKm]);
+
+  const onWindowDraft = (index, raw) => {
+    setWindowDraft((draft) => {
+      const next = [...draft];
+      next[index] = raw;
+      return next;
+    });
+    if (!/^\d+(\.\d+)?$/.test(raw.trim())) return;
+    const value = Number(raw);
+    setFollow(false);
+    setWindowKm((prev) => {
+      const next = [prev[0], prev[1]];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const onWindowBlur = (index, raw) => {
+    windowFocus.current = null;
+    const max = route?.lengthKm;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      const current = windowKmRef.current[index].toFixed(2);
+      setWindowDraft((draft) => {
+        const next = [...draft];
+        next[index] = current;
+        return next;
+      });
+      return;
+    }
+    setFollow(false);
+    setWindowKm((prev) => {
+      const limit = Number.isFinite(max) ? max : value;
+      const next = [prev[0], prev[1]];
+      next[index] = Math.max(0, Math.min(limit, value));
+      if (next[1] < next[0]) {
+        if (index === 0) next[1] = Math.min(limit, next[0]);
+        else next[0] = next[1];
+      }
+      return next;
+    });
+  };
+
   const shiftWindow = (delta) => {
     if (!route) return;
     setWindowKm(([from, to]) => {
@@ -548,7 +601,7 @@ export default function App() {
       <header className="topbar">
         <div>
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
-          <h1>Roads Asset Mapping Application</h1>
+          <h3>Road Location Reference Application</h3>
         </div>
         <button
           type="button"
@@ -1050,25 +1103,29 @@ export default function App() {
                 ‹
               </button>
               <label>
-                Start
+                From measure
                 <input
                   type="number"
-                  step="0.1"
-                  value={windowKm[0].toFixed(2)}
-                  onChange={(event) =>
-                    setWindowKm([Number(event.target.value), windowKm[1]])
-                  }
+                  inputMode="decimal"
+                  value={windowDraft[0]}
+                  onFocus={() => {
+                    windowFocus.current = 0;
+                  }}
+                  onChange={(event) => onWindowDraft(0, event.target.value)}
+                  onBlur={(event) => onWindowBlur(0, event.target.value)}
                 />
               </label>
               <label>
-                End
+                To measure
                 <input
                   type="number"
-                  step="0.1"
-                  value={windowKm[1].toFixed(2)}
-                  onChange={(event) =>
-                    setWindowKm([windowKm[0], Number(event.target.value)])
-                  }
+                  inputMode="decimal"
+                  value={windowDraft[1]}
+                  onFocus={() => {
+                    windowFocus.current = 1;
+                  }}
+                  onChange={(event) => onWindowDraft(1, event.target.value)}
+                  onBlur={(event) => onWindowBlur(1, event.target.value)}
                 />
               </label>
               <button

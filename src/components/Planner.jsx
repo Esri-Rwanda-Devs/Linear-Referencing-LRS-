@@ -33,10 +33,10 @@ function ProjectEditor({ project, events, onUpdate, onDelete }) {
         <input type="range" min="10" max="1000" step="10" value={bufferM} onChange={(event) => update({ bufferM: Number(event.target.value) })} />
       </label>
       <div className="row-2">
-        <label>Start km
+        <label>From measure(km)
           <input type="number" step="0.1" value={project.startKm.toFixed(2)} onChange={(event) => update({ startKm: Math.min(Number(event.target.value) || 0, project.endKm) })} />
         </label>
-        <label>End km
+        <label> To measure(km)
           <input type="number" step="0.1" value={project.endKm.toFixed(2)} onChange={(event) => update({ endKm: Math.max(Number(event.target.value) || 0, project.startKm) })} />
         </label>
       </div>
