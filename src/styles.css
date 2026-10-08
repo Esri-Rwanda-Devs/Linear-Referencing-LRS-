@@ -33,6 +33,8 @@ button { cursor: pointer; }
 }
 .export-excel:disabled { background: #86efac; color: #14532d; cursor: not-allowed; }
 .segment-actions button.export-excel { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 700; }
+.segment-actions button.print-pdf { background: #0f172a; border-color: #0f172a; color: #fff; font-weight: 700; }
+.segment-actions button.print-pdf:disabled { opacity: 0.65; cursor: wait; }
 .eyebrow { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; opacity: 0.85; }
 h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
 .source { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.4; }

@@ -56,7 +56,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
@@ -470,10 +470,12 @@ export function useRoadMap({ route, cursor, project, activeEvent, hiddenLayerIds
         });
       };
       api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
     return () => {
       cancelled = true;
+      if (mapApi) mapApi.current = null;
       view?.destroy();
     };
   }, []);

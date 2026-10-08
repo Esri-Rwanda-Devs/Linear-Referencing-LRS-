@@ -29,11 +29,12 @@ function Cell({ value, other, children }) {
   return <td className={value > other ? "more" : ""}>{children}</td>;
 }
 
-export default function RouteCompare({ catalog, route, events, onCompareRoute, onOpenRoute, onSelectA, onSelectB }) {
+export default function RouteCompare({ catalog, route, events, onCompareRoute, onOpenRoute, onSelectA, onSelectB, onPrint }) {
   const [aId, setAId] = useState(route?.id || "");
   const [openLayer, setOpenLayer] = useState(null);
   const [bId, setBId] = useState("");
   const [state, setState] = useState({ loading: false, error: "", a: null, b: null });
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     if (route?.id && !aId) setAId(route.id);
@@ -77,7 +78,27 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
       </div>
       <div className="segment-actions">
         <button type="button" className="primary" onClick={compare} disabled={state.loading}>{state.loading ? "Loading routes…" : "Compare"}</button>
-        {a && b && <button type="button" className="export-excel" onClick={() => exportComparison(a, b)}>Export Excel</button>}
+        {a && b && <button type="button" className="export-excel" onClick={() => exportComparison(a, b)}>Export</button>}
+        {a && b && (
+          <button
+            type="button"
+            className="print-pdf"
+            disabled={printing}
+            onClick={async () => {
+              setPrinting(true);
+              setState((prev) => ({ ...prev, error: "" }));
+              try {
+                await onPrint?.({ a, b, speedA, speedB });
+              } catch (error) {
+                setState((prev) => ({ ...prev, error: error.message || "Print failed." }));
+              } finally {
+                setPrinting(false);
+              }
+            }}
+          >
+            {printing ? "Printing…" : "Print"}
+          </button>
+        )}
         {a && b && <button type="button" className="link" onClick={clear}>Clear</button>}
       </div>
       {state.error && <em className="error">{state.error}</em>}
@@ -180,7 +201,6 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
               })}
             </tbody>
           </table>
-          <p className="compare-note">Bold marks the higher value. Click an asset row to list and locate its assets on each route. Route B is charted below the main chart.</p>
         </div>
       )}
     </div>

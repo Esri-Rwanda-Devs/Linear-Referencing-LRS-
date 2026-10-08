@@ -16,6 +16,7 @@ import {
   nearestRoads,
 } from "./lrs/lrsService";
 import { locateOnRoute } from "./lrs/geometry";
+import { printMapReport } from "./lrs/printReport";
 import { useRoadMap } from "./map/useRoadMap";
 
 const STORE = "rwanda-lrs-projects";
@@ -494,7 +495,9 @@ export default function App() {
 
   const onLeave = useCallback(() => {}, []);
   const [focusing, setFocusing] = useState(null);
+  const mapApi = useRef(null);
   const mapRef = useRoadMap({
+    mapApi,
     onFocusChange: setFocusing,
     onPickRoute: (id) => {
       setRouteId(id);
@@ -770,6 +773,21 @@ export default function App() {
                       setActiveId(null);
                       setActiveEvent(null);
                       setFollow(true);
+                    }}
+                    onPrint={({ a, b, speedA, speedB }) => {
+                      const charts = [...document.querySelectorAll(".chart-col")].map((col) => ({
+                        title: col.querySelector(".compare-chart-head b")?.textContent?.trim() || "",
+                        svg: col.querySelector("svg.chart")?.outerHTML || "",
+                      })).filter((chart) => chart.svg);
+                      return printMapReport({
+                        bag: mapApi.current,
+                        a,
+                        b,
+                        speedA,
+                        speedB,
+                        charts,
+                        segment: segment && route ? { routeId: route.id, from: segment.from, to: segment.to, events } : null,
+                      });
                     }}
                   />
                 ) : panelTab === "segment" ? (
