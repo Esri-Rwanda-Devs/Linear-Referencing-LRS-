@@ -47,7 +47,8 @@ export const LRS_LAYER_DEFS = [
 
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
 export const VALUE_COLORS = {
-  5: { field: "maxspeed", colors: { 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" } },
+  5: { field: "maxspeed", colors: { 0: "#E2E8F0", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" } },
+  2: { field: "cway_type", colors: { divided: "#4C1D95", undivided: "#C4B5FD" } },
   8: { field: "pavement_category", colors: { paved: "#000000", unpaved: "#F0BEA5" } },
   7: { field: "drain_type", colors: { "no drain": "#F7634F", unlined: "#D7C29E", "surface lined": "#9FEB1C", "fully lined": "#002673" } },
 };

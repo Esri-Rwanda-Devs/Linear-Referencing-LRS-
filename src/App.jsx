@@ -1135,14 +1135,17 @@ export default function App() {
               >
                 ›
               </button>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={follow}
-                  onChange={(event) => setFollow(event.target.checked)}
-                />
-                Follow cursor
-              </label>
+              <button
+                type="button"
+                disabled={!route}
+                onClick={() => {
+                  setFollow(false);
+                  commitSegment(windowKm[0], windowKm[1]);
+                }}
+                className="analysis-button"
+              >
+                Analyse segment
+              </button>
               <span className="status">
                 {status ||
                   (route

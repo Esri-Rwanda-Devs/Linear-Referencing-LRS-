@@ -510,3 +510,17 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .route-picker-list li.selected { font-weight: 700; color: #0e7490; }
 .route-picker-list li.route-picker-none { color: #94a3b8; font-style: italic; cursor: default; background: none; }
 .compare-pick label > span { display: inline-flex; align-items: center; gap: 4px; }
+
+.station-bar .analysis-button {
+  background: #0284c7;
+  color: #fff;
+  border-color: #0284c7;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  /* cursor: pointer; */
+}
+.analysis-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}

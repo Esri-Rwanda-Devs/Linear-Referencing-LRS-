@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { LRS_LAYER_DEFS } from "../config";
 import { exportComparison } from "../lrs/excel";
-import { loadEvents, loadRoute, summariseSegment } from "../lrs/lrsService";
+import { averageMaxSpeed, loadEvents, loadRoute, summariseSegment } from "../lrs/lrsService";
 import RoutePicker from "./RoutePicker";
 import { ChartSymbol } from "./StripChart";
 
@@ -23,6 +23,7 @@ async function routeWithEvents(id, current, currentEvents) {
 }
 
 const perKm = (count, lengthKm) => (lengthKm > 0 ? count / lengthKm : 0);
+const formatSpeed = (value) => `${Number(value.toFixed(1))} km/h`;
 
 function Cell({ value, other, children }) {
   return <td className={value > other ? "more" : ""}>{children}</td>;
@@ -62,6 +63,8 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
   };
 
   const { a, b } = state;
+  const speedA = a ? averageMaxSpeed(a.events, a.route.lengthKm) : 0;
+  const speedB = b ? averageMaxSpeed(b.events, b.route.lengthKm) : 0;
   const layerIds = a && b
     ? LRS_LAYER_DEFS.map((def) => def.id).filter((id) => [a, b].some((side) => side.summary.points.some((layer) => layer.layerId === id) || side.summary.spans.some((layer) => layer.layerId === id)))
     : [];
@@ -96,7 +99,7 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
                     <dt>Assets</dt><dd>{item.summary.pointCount} ({perKm(item.summary.pointCount, item.route.lengthKm).toFixed(1)}/km)</dd>
                     <dt>Pavement</dt><dd title={dominant(8)}>{dominant(8)}</dd>
                     <dt>Drain</dt><dd title={dominant(7)}>{dominant(7)}</dd>
-                    <dt>Speed</dt><dd title={dominant(5)}>{dominant(5)}</dd>
+                    <dt>Speed</dt><dd title="Average max speed, weighted by segment length. Stretches with no max speed count as 0.">{formatSpeed(side === "a" ? speedA : speedB)}</dd>
                     <dt>Culverts</dt><dd>{count(10)}</dd>
                     <dt>Bridges</dt><dd>{count(13)}</dd>
                   </dl>
@@ -123,8 +126,14 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
                 <Cell value={a.summary.pointCount} other={b.summary.pointCount}>{a.summary.pointCount}<small>{perKm(a.summary.pointCount, a.route.lengthKm).toFixed(1)}/km</small></Cell>
                 <Cell value={b.summary.pointCount} other={a.summary.pointCount}>{b.summary.pointCount}<small>{perKm(b.summary.pointCount, b.route.lengthKm).toFixed(1)}/km</small></Cell>
               </tr>
+              <tr className="total">
+                <th>Average speed</th>
+                <Cell value={speedA} other={speedB}>{formatSpeed(speedA)}</Cell>
+                <Cell value={speedB} other={speedA}>{formatSpeed(speedB)}</Cell>
+              </tr>
               {layerIds.map((id) => {
                 const def = LRS_LAYER_DEFS.find((item) => item.id === id);
+                if (!def || def.id === 5) return null;
                 if (def.kind === "point") {
                   const countA = a.summary.points.find((layer) => layer.layerId === id)?.items.length || 0;
                   const countB = b.summary.points.find((layer) => layer.layerId === id)?.items.length || 0;

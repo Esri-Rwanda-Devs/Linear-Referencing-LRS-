@@ -32,11 +32,11 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
     <div className="segment">
       <p className="analysis-origin">
         {route.id} · 0 – {route.lengthKm.toFixed(2)} km
-        <span>Click the highlighted route on the map: first click fills From, second fills To and analyses. You can also type, use the chart window, or drag across the chart.</span>
+        <span>Click the highlighted route on the map.</span>
       </p>
       <form className="segment-range" onSubmit={(event) => { event.preventDefault(); apply(draft.from, draft.to); }}>
-        <label>From<input type="number" step="0.01" min="0" max={route.lengthKm} value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} /></label>
-        <label>To<input type="number" step="0.01" min="0" max={route.lengthKm} value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} /></label>
+        <label>From measure<input type="number" step="0.01" min="0" max={route.lengthKm} value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} /></label>
+        <label>To measure<input type="number" step="0.01" min="0" max={route.lengthKm} value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} /></label>
         <button type="submit">Analyse</button>
       </form>
       <div className="segment-actions">

@@ -100,6 +100,29 @@ function usableLabel(value) {
   return text && !GUID.test(text) ? text : "";
 }
 
+function carriagewayType(attributes) {
+  const keys = Object.keys(attributes || {});
+  const key = ["cway_type", "cwaytype", "carriageway_type", "carriagewaytype"]
+    .map((wanted) => keys.find((name) => name.toLowerCase() === wanted))
+    .find(Boolean);
+  const text = key ? usableLabel(attributes[key]) : "";
+  if (!text) return "";
+  const compact = text.toLowerCase().replace(/[^a-z]/g, "");
+  if (compact.includes("undivided")) return "Undivided";
+  if (compact.includes("divided") || compact === "dual") return "Divided";
+  return text;
+}
+
+function maxSpeedValue(attributes) {
+  const keys = Object.keys(attributes || {});
+  const key = keys.find((name) => name.toLowerCase() === "maxspeed")
+    || keys.find((name) => /max.?speed/i.test(name));
+  if (!key || attributes[key] === null || attributes[key] === undefined || String(attributes[key]).trim() === "") return 0;
+  const match = String(attributes[key]).match(/-?\d+(?:\.\d+)?/);
+  const value = match ? Number(match[0]) : NaN;
+  return Number.isFinite(value) ? value : 0;
+}
+
 function titleOf(attributes, routeField, fallbackTitle = "Event") {
   const keys = Object.keys(attributes);
   for (const field of LABEL_FIELDS) {
@@ -420,7 +443,11 @@ export async function loadEvents(route) {
     const features = layer.features;
     mapLayers.push({ id: layer.id, title: layer.name });
     features.forEach((feature, index) => {
-      const name = titleOf(feature.attributes, layer.routeField, layer.def.title);
+      const name = layer.id === 5
+        ? String(maxSpeedValue(feature.attributes))
+        : layer.id === 2
+          ? (carriagewayType(feature.attributes) || "Carriageway")
+          : titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
@@ -523,7 +550,7 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     title: layer.def.title,
     name,
     shape: layer.def.shape,
-    color: valueColor(layer.id, feature.attributes) || (layer.def.kind === "point" ? layer.def.swatch : paletteColor(`${layer.id}:${name}`)),
+    color: valueColor(layer.id, feature.attributes) || VALUE_COLORS[layer.id]?.colors[colorKey(name)] || (layer.def.kind === "point" ? layer.def.swatch : paletteColor(`${layer.id}:${name}`)),
     kind: layer.def.kind === "point" || to - from <= 0.02 ? "point" : "span",
     from,
     to,
@@ -539,6 +566,41 @@ export function featuresAtMeasure(events, measure, toleranceKm = 0.35) {
     if (event.kind === "span") return measure >= event.from && measure <= event.to;
     return Math.abs(event.measure - measure) <= toleranceKm;
   });
+}
+
+/** Length-weighted average of max speed. Stretches with no max speed count as 0. */
+export function averageMaxSpeed(events, lengthKm) {
+  if (!(lengthKm > 0)) return 0;
+  const pieces = (events || [])
+    .filter((event) => event.layerId === 5)
+    .map((event) => {
+      const match = String(event.name ?? "").match(/-?\d+(?:\.\d+)?/);
+      const speed = match ? Number(match[0]) : 0;
+      return {
+        from: Math.max(0, Math.min(lengthKm, Number(event.from) || 0)),
+        to: Math.max(0, Math.min(lengthKm, Number(event.to) || 0)),
+        speed: Number.isFinite(speed) ? speed : 0,
+      };
+    })
+    .filter((piece) => piece.to > piece.from);
+  const cuts = new Set([0, lengthKm]);
+  pieces.forEach((piece) => {
+    cuts.add(piece.from);
+    cuts.add(piece.to);
+  });
+  const points = [...cuts].sort((a, b) => a - b);
+  let weighted = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const start = points[i];
+    const end = points[i + 1];
+    const mid = (start + end) / 2;
+    let speed = 0;
+    pieces.forEach((piece) => {
+      if (mid >= piece.from && mid < piece.to) speed = Math.max(speed, piece.speed);
+    });
+    weighted += speed * (end - start);
+  }
+  return weighted / lengthKm;
 }
 
 /** Point assets and per-value attribute lengths for the stretch from–to of the loaded route. */

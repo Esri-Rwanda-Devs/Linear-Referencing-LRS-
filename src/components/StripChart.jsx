@@ -71,6 +71,31 @@ function mergeRuns(items) {
   return runs;
 }
 
+/** Splits overlapping spans so each value keeps its own colour instead of one bar covering the others. */
+function separateRuns(items) {
+  if (items.length < 2) return mergeRuns(items);
+  const cuts = [...new Set(items.flatMap((item) => [item.from, item.to]))].sort((a, b) => a - b);
+  const pieces = [];
+  for (let index = 0; index < cuts.length - 1; index += 1) {
+    const start = cuts[index];
+    const end = cuts[index + 1];
+    if (end - start < 1e-6) continue;
+    const mid = (start + end) / 2;
+    const covering = items.filter((item) => item.from <= mid + 1e-9 && item.to >= mid - 1e-9);
+    if (!covering.length) continue;
+    covering.sort((left, right) => (left.to - left.from) - (right.to - right.from) || left.from - right.from);
+    const chosen = covering[0];
+    const last = pieces[pieces.length - 1];
+    if (last && last.name === chosen.name && last.color === chosen.color && Math.abs(last.to - start) < 1e-4) {
+      last.to = end;
+      if (!last.items.includes(chosen)) last.items.push(chosen);
+    } else {
+      pieces.push({ name: chosen.name, from: start, to: end, color: chosen.color, items: [chosen] });
+    }
+  }
+  return pieces;
+}
+
 /** Distinct attribute values with their colours for one layer bucket, longest total length first. */
 function valueColorsOf(bucket) {
   if (!bucket?.spans?.length) return [];
@@ -342,7 +367,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         const endAt = firstAtOrAfter(bucket.points, to + 1e-9);
         points = bucket.points.slice(startAt, endAt);
       }
-      const runs = mergeRuns(spans);
+      const runs = row.layerId === 5 ? separateRuns(spans) : mergeRuns(spans);
 
       const drawn = [];
       let lastX = -Infinity;
@@ -368,13 +393,17 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
           <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
           <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
           <g clipPath={`url(#${clipId})`}>
+            {row.layerId === 5 && (
+              <rect x={labelW} y={y + 1} width={Math.max(0, right - labelW)} height={Math.max(4, layerH - 2)} fill={VALUE_COLORS[5].colors[0]} />
+            )}
             {runs.map((run, runIndex) => {
               const x1 = clampX(xOf(run.from));
               const x2 = clampX(xOf(run.to));
+              const band = row.layerId === 5 || row.layerId === 2;
               const first = run.items[0];
               return (
-                <rect key={`r-${runIndex}`} x={x1} y={yMid - barH / 2} width={Math.max(1.5, x2 - x1)} height={barH} rx="2" fill={run.color}
-                  stroke="#ffffff" strokeWidth="0.8" style={{ cursor: "pointer" }} onClick={pick(first)}>
+                <rect key={`r-${runIndex}`} x={x1} y={band ? y + 1 : yMid - barH / 2} width={Math.max(1.5, x2 - x1)} height={band ? Math.max(4, layerH - 2) : barH} rx={band ? 0 : 2} fill={run.color}
+                  stroke={band ? "none" : "#ffffff"} strokeWidth={band ? 0 : 0.8} style={{ cursor: "pointer" }} onClick={pick(first)}>
                   <title>{tooltip({ ...first, title: "" }, `${run.from.toFixed(3)} – ${run.to.toFixed(3)} km${run.items.length > 1 ? ` · ${run.items.length} records` : ""}`)}</title>
                 </rect>
               );
