@@ -1,5 +1,5 @@
 import { LRS_LAYER_DEFS } from "../config";
-import { summariseSegment } from "./lrsService";
+import { averageMaxSpeed, summariseSegment } from "./lrsService";
 
 const PRINT_URL = "https://utility.arcgisonline.com/arcgis/rest/services/Utilities/PrintingTools/GPServer/Export%20Web%20Map%20Task";
 
@@ -161,6 +161,7 @@ function reportHtml({ a, b, speedA, speedB, charts, segment, map }) {
     small { display: block; color: #64748b; font-weight: 500; }
     img.map { width: 100%; height: auto; border: 1px solid #e2e8f0; }
     .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .charts.one { grid-template-columns: 1fr; }
     figure { margin: 0; }
     figcaption { font-weight: 700; margin-bottom: 4px; }
     svg { width: 100%; height: auto; background: #fff; border: 1px solid #e2e8f0; }
@@ -183,7 +184,7 @@ function reportHtml({ a, b, speedA, speedB, charts, segment, map }) {
   <p class="meta">${esc(map.source)}. Route A is cyan, route B is magenta${segment ? ", and the selected segment is yellow" : ""}.</p>
   <img class="map" alt="Printed map" src="${esc(map.url)}" />
   <h2>Chart</h2>
-  <div class="charts">${chartHtml}</div>
+  <div class="charts${charts.length > 1 ? "" : " one"}">${chartHtml}</div>
   <script>
     const image = document.querySelector("img.map");
     const go = () => setTimeout(() => window.print(), 250);
@@ -196,7 +197,7 @@ function reportHtml({ a, b, speedA, speedB, charts, segment, map }) {
 
 function openReport() {
   const page = window.open("", "lrs-print");
-  if (!page) throw new Error("Allow pop-ups to print the comparison.");
+  if (!page) throw new Error("Allow pop-ups to print.");
   page.document.write("<p style=\"font-family:sans-serif;padding:24px\">Preparing the map and charts…</p>");
   return page;
 }
@@ -207,8 +208,86 @@ function writeReport(page, html) {
   page.document.close();
 }
 
-/** Prints the comparison summary, an Esri map, the charts, and the selected segment when one is set. */
-export async function printMapReport({ bag, a, b, speedA, speedB, charts, segment }) {
+function layerLines(summary, lengthKm) {
+  const rows = [];
+  LRS_LAYER_DEFS.forEach((def) => {
+    if (def.route || def.chart === false || def.id === 5) return;
+    if (def.kind === "point") {
+      const count = summary.points.find((layer) => layer.layerId === def.id)?.items.length || 0;
+      if (!count) return;
+      rows.push([def.title, `${count} <small>${perKm(count, lengthKm).toFixed(1)}/km</small>`]);
+      return;
+    }
+    const span = summary.spans.find((layer) => layer.layerId === def.id);
+    if (!span?.values?.length) return;
+    const values = span.values.slice(0, 4).map((value) => `${esc(value.name)} <small>${Math.round(value.share * 100)}% · ${km(value.km)}</small>`).join("");
+    rows.push([def.title, values]);
+  });
+  return rows;
+}
+
+function routeReportHtml({ route, events, segment, charts, map }) {
+  const when = new Date().toLocaleString();
+  const from = segment ? segment.from : 0;
+  const to = segment ? segment.to : route.lengthKm;
+  const focused = summariseSegment(events, from, to);
+  const lengthKm = Math.max(0, to - from);
+  const speed = averageMaxSpeed(events.map((event) => ({ ...event, from: event.from - from, to: event.to - from })), lengthKm);
+  const rows = [
+    ["Length", km(lengthKm)],
+    ["Point assets", `${focused.pointCount} <small>${perKm(focused.pointCount, lengthKm).toFixed(1)}/km</small>`],
+    ["Average speed", speedText(speed)],
+    ...layerLines(focused, lengthKm),
+  ];
+  const chartHtml = (charts || []).map((chart) => `
+    <figure>
+      <figcaption>${esc(chart.title || route.id)}</figcaption>
+      ${chart.svg}
+    </figure>`).join("");
+  const heading = segment ? `Segment · ${esc(route.id)}` : `Route · ${esc(route.id)}`;
+  const range = segment ? `${km(segment.from)} – ${km(segment.to)} · ` : "";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${heading}</title>
+  <style>
+    @page { size: A4 landscape; margin: 12mm; }
+    body { margin: 0; color: #0f172a; font: 13px/1.4 "Segoe UI", sans-serif; }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    h2 { margin: 18px 0 6px; font-size: 14px; }
+    .meta { margin: 0 0 10px; color: #64748b; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+    tbody th { font-weight: 600; width: 28%; }
+    small { display: block; color: #64748b; font-weight: 500; }
+    img.map { width: 100%; height: auto; border: 1px solid #e2e8f0; }
+    .charts { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    figure { margin: 0; }
+    figcaption { font-weight: 700; margin-bottom: 4px; }
+    svg { width: 100%; height: auto; background: #fff; border: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <h1>${heading}</h1>
+  <p class="meta">${esc(when)} · ${range}${km(route.lengthKm)} route</p>
+  <table><tbody>${rows.map(([label, text]) => `<tr><th>${esc(label)}</th><td>${text}</td></tr>`).join("")}</tbody></table>
+  <h2>Map</h2>
+  <p class="meta">${esc(map.source)}. The route is cyan${segment ? " and the selected segment is yellow" : ""}.</p>
+  <img class="map" alt="Printed map" src="${esc(map.url)}" />
+  <h2>Chart</h2>
+  <div class="charts">${chartHtml}</div>
+  <script>
+    const image = document.querySelector("img.map");
+    const go = () => setTimeout(() => window.print(), 250);
+    if (!image || image.complete) go();
+    else { image.onload = go; image.onerror = go; }
+  </script>
+</body>
+</html>`;
+}
+
+async function runPrint(bag, buildHtml) {
   const page = openReport();
   const view = bag?.view;
   if (!view) {
@@ -219,11 +298,46 @@ export async function printMapReport({ bag, a, b, speedA, speedB, charts, segmen
   try {
     saved = await frameMap(bag);
     const map = await mapImage(view);
-    writeReport(page, reportHtml({ a, b, speedA, speedB, charts: charts || [], segment, map }));
+    writeReport(page, buildHtml(map));
   } catch (error) {
     page.close();
     throw error;
   } finally {
     if (saved) view.goTo(saved, { animate: false }).catch(() => {});
   }
+}
+
+export function chartSnapshots() {
+  const columns = [...document.querySelectorAll(".chart-col")];
+  const fromColumns = columns.map((col) => ({
+    title: col.querySelector(".compare-chart-head b")?.textContent?.trim() || "",
+    svg: col.querySelector("svg.chart")?.outerHTML || "",
+  })).filter((chart) => chart.svg);
+  if (fromColumns.length) return fromColumns;
+  return [...document.querySelectorAll("svg.chart")].map((svg) => ({ title: "", svg: svg.outerHTML }));
+}
+
+/** Prints the comparison summary, an Esri map, the charts, and the selected segment when one is set. */
+function withSummary(side) {
+  if (side?.summary) return side;
+  return { ...side, summary: summariseSegment(side.events, 0, side.route.lengthKm) };
+}
+
+export function printMapReport({ bag, a, b, speedA, speedB, charts, segment }) {
+  const left = withSummary(a);
+  const right = withSummary(b);
+  return runPrint(bag, (map) => reportHtml({
+    a: left,
+    b: right,
+    speedA: speedA ?? averageMaxSpeed(left.events, left.route.lengthKm),
+    speedB: speedB ?? averageMaxSpeed(right.events, right.route.lengthKm),
+    charts: charts || chartSnapshots(),
+    segment,
+    map,
+  }));
+}
+
+/** Prints one route, or the selected segment of that route, with the map and chart. */
+export function printRouteReport({ bag, route, events, segment, charts }) {
+  return runPrint(bag, (map) => routeReportHtml({ route, events, segment, charts: charts || chartSnapshots(), map }));
 }

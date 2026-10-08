@@ -32,6 +32,17 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .export-excel:disabled { background: #86efac; color: #14532d; cursor: not-allowed; }
+.print-pdf {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 14px;
+  background: #0f172a;
+  color: #fff;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.print-pdf:disabled { background: #94a3b8; color: #f8fafc; cursor: not-allowed; }
+.top-actions { display: flex; gap: 8px; align-items: center; }
 .segment-actions button.export-excel { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 700; }
 .segment-actions button.print-pdf { background: #0f172a; border-color: #0f172a; color: #fff; font-weight: 700; }
 .segment-actions button.print-pdf:disabled { opacity: 0.65; cursor: wait; }

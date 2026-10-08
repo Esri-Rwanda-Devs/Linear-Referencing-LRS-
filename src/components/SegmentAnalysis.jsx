@@ -5,9 +5,10 @@ import { ChartSymbol } from "./StripChart";
 
 const km = (value) => `${value.toFixed(value < 10 ? 3 : 2)} km`;
 
-export default function SegmentAnalysis({ route, events, segment, segmentStart = null, selecting, windowKm, onSegment, onSelecting, onSelectEvent }) {
+export default function SegmentAnalysis({ route, events, segment, segmentStart = null, selecting, windowKm, onSegment, onSelecting, onSelectEvent, onPrint }) {
   const [draft, setDraft] = useState({ from: "", to: "" });
   const [open, setOpen] = useState(null);
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     setDraft(segment ? { from: segment.from.toFixed(3), to: segment.to.toFixed(3) } : { from: "", to: "" });
@@ -45,6 +46,23 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
           {selecting ? (segmentStart !== null ? `From ${segmentStart.toFixed(2)} km… click the end (cancel)` : "Click the start on the route… (cancel)") : "Pick from / to on route"}
         </button>
         {segment && <button type="button" className="export-excel" onClick={() => exportSegmentAssets(route, events, segment)}>Export Excel</button>}
+        {segment && (
+          <button
+            type="button"
+            className="print-pdf"
+            disabled={printing}
+            onClick={async () => {
+              setPrinting(true);
+              try {
+                await onPrint?.();
+              } finally {
+                setPrinting(false);
+              }
+            }}
+          >
+            {printing ? "Printing…" : "Print"}
+          </button>
+        )}
         {segment && <button type="button" className="link" onClick={() => onSegment(null)}>Clear</button>}
       </div>
 

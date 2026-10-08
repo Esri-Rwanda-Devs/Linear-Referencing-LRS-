@@ -16,7 +16,7 @@ import {
   nearestRoads,
 } from "./lrs/lrsService";
 import { locateOnRoute } from "./lrs/geometry";
-import { printMapReport } from "./lrs/printReport";
+import { chartSnapshots, printMapReport, printRouteReport } from "./lrs/printReport";
 import { useRoadMap } from "./map/useRoadMap";
 
 const STORE = "rwanda-lrs-projects";
@@ -138,6 +138,7 @@ export default function App() {
   const [segment, setSegment] = useState(null);
   const [selectingSegment, setSelectingSegment] = useState(false);
   const [segmentStart, setSegmentStart] = useState(null);
+  const [printing, setPrinting] = useState(false);
   const segmentStartRef = useRef(null);
   segmentStartRef.current = segmentStart;
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() =>
@@ -606,19 +607,48 @@ export default function App() {
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
           <h3>Road Location Reference Application</h3>
         </div>
-        <button
-          type="button"
-          className="export-excel"
-          disabled={!route || events.length === 0}
-          title={route ? `Download assets for ${route.id}` : "Choose a road first"}
-          onClick={() => {
-            if (compareShown) exportComparison({ route, events }, compareShown);
-            else if (segment) exportSegmentAssets(route, events, segment);
-            else exportRouteAssets(route, events);
-          }}
-        >
-          {compareShown ? "Export comparison" : segment ? "Export segment" : "Export Excel"}
-        </button>
+        <div className="top-actions">
+          <button
+            type="button"
+            className="export-excel"
+            disabled={!route || events.length === 0}
+            title={route ? `Download assets for ${route.id}` : "Choose a road first"}
+            onClick={() => {
+              if (compareShown) exportComparison({ route, events }, compareShown);
+              else if (segment) exportSegmentAssets(route, events, segment);
+              else exportRouteAssets(route, events);
+            }}
+          >
+            {compareShown ? "Export comparison" : segment ? "Export segment" : "Export Excel"}
+          </button>
+          <button
+            type="button"
+            className="print-pdf"
+            disabled={!route || events.length === 0 || printing}
+            title={route ? `Print ${route.id}` : "Choose a road first"}
+            onClick={() => {
+              setPrinting(true);
+              const job = compareShown
+                ? printMapReport({
+                  bag: mapApi.current,
+                  a: { route, events },
+                  b: compareShown,
+                  charts: chartSnapshots(),
+                  segment: segment ? { routeId: route.id, from: segment.from, to: segment.to, events } : null,
+                })
+                : printRouteReport({
+                  bag: mapApi.current,
+                  route,
+                  events,
+                  segment: segment || null,
+                  charts: chartSnapshots(),
+                });
+              job.catch((error) => setStatus(error.message || "Print failed.")).finally(() => setPrinting(false));
+            }}
+          >
+            {printing ? "Printing…" : "Print"}
+          </button>
+        </div>
       </header>
       <div className="workspace">
         {/* <Planner
@@ -819,6 +849,13 @@ export default function App() {
                       if (!value) setSegmentStart(null);
                     }}
                     onSelectEvent={focusEvent}
+                    onPrint={() => printRouteReport({
+                      bag: mapApi.current,
+                      route,
+                      events,
+                      segment,
+                      charts: chartSnapshots(),
+                    }).catch((error) => setStatus(error.message || "Print failed."))}
                   />
                 ) : (
                   <>
