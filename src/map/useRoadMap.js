@@ -464,8 +464,12 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
         });
         lrsLayers.forEach((layer, index) => {
           if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
+          const lineEvent = LRS_LAYER_DEFS[index].kind === "line";
           layer.featureEffect = routeWhere.value
-            ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
+            ? new FeatureEffect({
+              filter: new FeatureFilter({ where: routeWhere.value }),
+              excludedEffect: lineEvent ? "opacity(0%)" : "opacity(16%) grayscale(60%)",
+            })
             : null;
         });
       };
@@ -679,25 +683,41 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
         outline: { color: [120, 53, 15], width: 2.5 },
       }),
     }));
-    if (activeEvent?.point) {
-      bag.cursorLayer.add(new bag.Graphic({
-        geometry: new bag.Point({ longitude: activeEvent.point[0], latitude: activeEvent.point[1] }),
-        symbol: new bag.SimpleMarkerSymbol({
-          style: "circle",
-          color: [250, 204, 21, 0.95],
-          size: 12,
-          outline: { color: [255, 255, 255], width: 2 },
-        }),
-      }));
+    if (activeEvent && route) {
+      const span = activeEvent.kind === "span" ? sliceVertices(route.vertices, route.measures, activeEvent.from, activeEvent.to) : [];
+      if (span.length > 1) {
+        bag.cursorLayer.add(new bag.Graphic({
+          geometry: new bag.Polyline({ paths: [span], spatialReference: { wkid: 4326 } }),
+          symbol: new bag.SimpleLineSymbol({ color: [250, 204, 21, 1], width: 8, cap: "round", join: "round" }),
+        }));
+      }
+      const at = pointAtMeasure(route.vertices, route.measures, activeEvent.measure);
+      if (at) {
+        bag.cursorLayer.add(new bag.Graphic({
+          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+          symbol: new bag.SimpleMarkerSymbol({
+            style: "circle",
+            color: [250, 204, 21, 0.95],
+            size: 12,
+            outline: { color: [255, 255, 255], width: 2 },
+          }),
+        }));
+      }
     }
   }, [route, cursor, activeEvent, ready]);
 
   useEffect(() => {
     const bag = api.current;
-    if (!bag?.view || !activeEvent?.point) return;
-    const point = new bag.Point({ longitude: activeEvent.point[0], latitude: activeEvent.point[1] });
-    bag.view.goTo({ target: point, zoom: 17 }, { duration: 650, easing: "ease-in-out" }).catch(() => {});
-  }, [activeEvent, ready]);
+    if (!bag?.view || !activeEvent || !route) return;
+    const span = activeEvent.kind === "span" ? sliceVertices(route.vertices, route.measures, activeEvent.from, activeEvent.to) : [];
+    if (span.length > 1) {
+      bag.view.goTo({ target: new bag.Polyline({ paths: [span], spatialReference: { wkid: 4326 } }), padding: 80 }, { duration: 650, easing: "ease-in-out" }).catch(() => {});
+      return;
+    }
+    const at = pointAtMeasure(route.vertices, route.measures, activeEvent.measure);
+    if (!at) return;
+    bag.view.goTo({ target: new bag.Point({ longitude: at[0], latitude: at[1] }), zoom: 17 }, { duration: 650, easing: "ease-in-out" }).catch(() => {});
+  }, [activeEvent, route, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -722,19 +742,36 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
         }));
       }
     }
-    if (compareEvent?.point) {
-      bag.compareCursorLayer.add(new bag.Graphic({
-        geometry: new bag.Point({ longitude: compareEvent.point[0], latitude: compareEvent.point[1] }),
-        symbol: new bag.SimpleMarkerSymbol({ style: "circle", color: [217, 70, 239, 0.95], size: 12, outline: { color: [255, 255, 255], width: 2 } }),
-      }));
+    if (compareEvent) {
+      const span = compareEvent.kind === "span" ? sliceVertices(compareRoute.vertices, compareRoute.measures, compareEvent.from, compareEvent.to) : [];
+      if (span.length > 1) {
+        bag.compareCursorLayer.add(new bag.Graphic({
+          geometry: new bag.Polyline({ paths: [span], spatialReference: { wkid: 4326 } }),
+          symbol: new bag.SimpleLineSymbol({ color: [217, 70, 239, 1], width: 8, cap: "round", join: "round" }),
+        }));
+      }
+      const at = pointAtMeasure(compareRoute.vertices, compareRoute.measures, compareEvent.measure);
+      if (at) {
+        bag.compareCursorLayer.add(new bag.Graphic({
+          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+          symbol: new bag.SimpleMarkerSymbol({ style: "circle", color: [217, 70, 239, 0.95], size: 12, outline: { color: [255, 255, 255], width: 2 } }),
+        }));
+      }
     }
   }, [route, compareRoute, compareCursor, compareEvent, ready]);
 
   useEffect(() => {
     const bag = api.current;
-    if (!bag?.view || !compareEvent?.point) return;
-    bag.view.goTo({ target: new bag.Point({ longitude: compareEvent.point[0], latitude: compareEvent.point[1] }), zoom: 17 }, { duration: 650 }).catch(() => {});
-  }, [compareEvent, ready]);
+    if (!bag?.view || !compareEvent || !compareRoute || compareRoute.id === route?.id) return;
+    const span = compareEvent.kind === "span" ? sliceVertices(compareRoute.vertices, compareRoute.measures, compareEvent.from, compareEvent.to) : [];
+    if (span.length > 1) {
+      bag.view.goTo({ target: new bag.Polyline({ paths: [span], spatialReference: { wkid: 4326 } }), padding: 80 }, { duration: 650 }).catch(() => {});
+      return;
+    }
+    const at = pointAtMeasure(compareRoute.vertices, compareRoute.measures, compareEvent.measure);
+    if (!at) return;
+    bag.view.goTo({ target: new bag.Point({ longitude: at[0], latitude: at[1] }), zoom: 17 }, { duration: 650 }).catch(() => {});
+  }, [compareEvent, compareRoute, route, ready]);
 
   useEffect(() => {
     const bag = api.current;

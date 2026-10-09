@@ -241,7 +241,13 @@ export default function App() {
 
   const focusEvent = (item) => {
     setActiveEvent(item);
+    setFollow(false);
     setCursor({ measure: item.measure, source: "chart" });
+    if (item.kind === "span" && route && item.to > item.from) {
+      const pad = Math.max(0.15, (item.to - item.from) * 0.2);
+      setWindowKm([Math.max(0, item.from - pad), Math.min(route.lengthKm, item.to + pad)]);
+      return;
+    }
     const span = windowKm[1] - windowKm[0];
     const start = Math.max(0, item.measure - span / 2);
     setWindowKm([start, start + span]);

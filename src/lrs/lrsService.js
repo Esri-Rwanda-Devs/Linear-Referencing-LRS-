@@ -1,5 +1,5 @@
 import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../config";
-import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, projectSegment, toLonLat } from "./geometry";
+import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, toLonLat } from "./geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
@@ -396,6 +396,25 @@ function nearBox(feature, box) {
   return Boolean(at) && at[0] >= box.minX && at[0] <= box.maxX && at[1] >= box.minY && at[1] <= box.maxY;
 }
 
+function routeIds(route) {
+  return [...new Set([route.id, route.trajectory, route.code]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => value && value !== "Road Network"))];
+}
+
+function matchesRoute(feature, routeField, route) {
+  if (!routeField) return false;
+  const value = routeKey(feature.attributes?.[routeField]);
+  if (!value) return false;
+  return routeIds(route).some((id) => routeKey(id) === value);
+}
+
+function liesOnRoute(feature, route) {
+  const paths = flattenPaths(feature.geometry);
+  if (!paths.length || !route.vertices?.length) return false;
+  return Boolean(lineMeasureSpan(route.vertices, route.measures, paths, 0.15));
+}
+
 async function featuresForRoute(def, route) {
   const meta = await layerMeta(def.id);
   const fields = meta.fields || [];
@@ -411,10 +430,26 @@ async function featuresForRoute(def, route) {
     geometryPrecision: "5",
     resultRecordCount: "500",
   };
+  const lineEvent = def.kind === "line" && !def.route;
   if (routeField) {
-    layer.features = await queryPages(def.id, { ...geometry, where: whereEquals(routeField, route.id, routeType) });
+    const where = routeIds(route).map((id) => whereEquals(routeField, id, routeType)).join(" OR ");
+    if (where) {
+      layer.features = (await queryPages(def.id, { ...geometry, where }))
+        .filter((feature) => matchesRoute(feature, routeField, route) || !String(feature.attributes?.[routeField] ?? "").trim());
+    }
   }
-  if (!layer.features.length && route.vertices?.length) {
+  if (lineEvent && !layer.features.length && route.vertices?.length) {
+    const box = routeBox(route, 0.004);
+    layer.features = (await queryPages(def.id, {
+      ...geometry,
+      where: "1=1",
+      geometry: JSON.stringify({ xmin: box.minX, ymin: box.minY, xmax: box.maxX, ymax: box.maxY, spatialReference: { wkid: 4326 } }),
+      geometryType: "esriGeometryEnvelope",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+    }, 3)).filter((feature) => matchesRoute(feature, routeField, route) || liesOnRoute(feature, route));
+  }
+  if (!lineEvent && !layer.features.length && route.vertices?.length) {
     const box = routeBox(route, 0.01);
     layer.features = (await queryPages(def.id, {
       ...geometry,
@@ -452,10 +487,30 @@ export async function loadEvents(route) {
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
       const hasMeasure = Number.isFinite(fromValue);
+      const lineEvent = layer.def.kind === "line" && !layer.def.route;
+      const onRoad = (measure) => pointAtMeasure(route.vertices, route.measures, measure);
       if (hasMeasure) {
-        const from = Math.min(fromValue, toValue);
-        const to = Math.max(fromValue, Number.isFinite(toValue) ? toValue : fromValue);
-        events.push(eventRecord(layer, feature, index, name, from, to, featurePoint(feature)));
+        let from = Math.min(fromValue, toValue);
+        let to = Math.max(fromValue, Number.isFinite(toValue) ? toValue : fromValue);
+        if (lineEvent) {
+          const length = route.lengthKm || 0;
+          if (!(length > 0) || to < 0) return;
+          if (from > length * 3 && from > 50) {
+            const span = lineMeasureSpan(route.vertices, route.measures, flattenPaths(feature.geometry), 0.15);
+            if (!span) return;
+            events.push(eventRecord(layer, feature, index, name, span.from, span.to, onRoad((span.from + span.to) / 2)));
+            return;
+          }
+          from = Math.max(0, Math.min(length, from));
+          to = Math.max(from, Math.min(length, to));
+        }
+        events.push(eventRecord(layer, feature, index, name, from, to, lineEvent ? onRoad((from + to) / 2) : featurePoint(feature)));
+        return;
+      }
+      if (lineEvent) {
+        const span = lineMeasureSpan(route.vertices, route.measures, flattenPaths(feature.geometry), maxKm);
+        if (!span) return;
+        events.push(eventRecord(layer, feature, index, name, span.from, span.to, onRoad((span.from + span.to) / 2)));
         return;
       }
       if (feature.geometry?.x !== undefined) {
