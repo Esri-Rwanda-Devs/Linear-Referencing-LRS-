@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/portal/:path*",
+      "destination": "https://gh.space.gov.rw/portal/:path*"
+    },
+    {
+      "source": "/server/:path*",
+      "destination": "https://gh.space.gov.rw/server/:path*"
+    }
+  ]
+}

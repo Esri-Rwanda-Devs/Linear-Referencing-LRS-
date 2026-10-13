@@ -28,7 +28,7 @@ function loadModules(names) {
 const REMOTE = "https://gh.space.gov.rw";
 
 function devUrl(url) {
-  if (!import.meta.env.DEV || typeof url !== "string") return url;
+  if (typeof url !== "string" || window.location.host === "gh.space.gov.rw") return url;
   let next = url.startsWith(REMOTE) ? `${window.location.origin}${url.slice(REMOTE.length)}` : url;
   const httpsLocal = `https://${window.location.host}`;
   if (window.location.protocol === "http:" && next.startsWith(httpsLocal)) {
@@ -38,7 +38,7 @@ function devUrl(url) {
 }
 
 function installDevProxyRewrite() {
-  if (!import.meta.env.DEV || window.__lrsFetchPatched) return;
+  if (window.__lrsFetchPatched || window.location.host === "gh.space.gov.rw") return;
   window.__lrsFetchPatched = true;
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
