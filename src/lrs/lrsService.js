@@ -533,7 +533,8 @@ export async function loadEvents(route) {
           from = Math.max(0, Math.min(length, from));
           to = Math.max(from, Math.min(length, to));
         }
-        events.push(eventRecord(layer, feature, index, name, from, to, lineEvent ? onRoad((from + to) / 2) : featurePoint(feature)));
+        const midpoint = (from + to) / 2;
+        events.push(eventRecord(layer, feature, index, name, from, to, lineEvent || layer.def.snap ? onRoad(midpoint) : featurePoint(feature)));
         return;
       }
       if (lineEvent) {
@@ -547,7 +548,7 @@ export async function loadEvents(route) {
         if (!locatedPoint) return;
         const hit = locateOnRoute(route.vertices, route.measures, locatedPoint, maxKm * 8);
         if (!hit) return;
-        events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, locatedPoint, hit.distanceKm * 1000));
+        events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, layer.def.snap ? hit.point : locatedPoint, hit.distanceKm * 1000));
         return;
       }
       const span = lineMeasureSpan(route.vertices, route.measures, flattenPaths(feature.geometry), maxKm * 4);

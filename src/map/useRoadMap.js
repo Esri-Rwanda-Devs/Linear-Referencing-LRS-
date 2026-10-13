@@ -56,7 +56,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
@@ -121,7 +121,8 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
       const compareLayer = new GraphicsLayer({ id: "lrs-compare", listMode: "hide" });
       const compareCursorLayer = new GraphicsLayer({ id: "lrs-compare-cursor", listMode: "hide" });
       const hereLayer = new GraphicsLayer({ id: "lrs-here", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, compareCursorLayer, cursorLayer, hereLayer] });
+      const accidentLayer = new GraphicsLayer({ id: "lrs-accidents", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -191,11 +192,11 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
       const roadDef = LRS_LAYER_DEFS[roadIndex];
       const roadLayer = new GraphicsLayer({ id: `lrs-${roadDef.id}`, title: roadDef.title, listMode: "hide" });
       lrsLayers[roadIndex] = roadLayer;
+      const overlayCount = map.layers.length;
       map.add(roadLayer, 0);
       const roadInk = new SimpleLineSymbol({ color: roadDef.color, width: roadDef.width || 3, cap: "round", join: "round" });
       const roadDim = new SimpleLineSymbol({ color: [roadDef.color[0], roadDef.color[1], roadDef.color[2], 0.22], width: roadDef.width || 3, cap: "round", join: "round" });
       const drawnRoads = new globalThis.Map();
-      const OVERLAY_COUNT = map.layers.length;
       const routeWhere = { value: null };
       const effectFor = () => (routeWhere.value
         ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
@@ -289,7 +290,8 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
           featureEffect: def.showAll ? null : effectFor(),
         });
         lrsLayers[index] = featureLayer;
-        map.add(featureLayer, def.kind === "point" ? Math.max(0, map.layers.length - OVERLAY_COUNT) : 0);
+        const aboveRoads = Math.max(1, map.layers.length - overlayCount);
+        map.add(featureLayer, def.kind === "point" || def.showAll ? aboveRoads : 0);
         return featureLayer;
       };
       const graphicsFor = (features, routeField, index, keepCurves) => {
@@ -477,7 +479,7 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
             : null;
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -731,6 +733,32 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
     bag.compareRoute = other;
     bag.applyRouteEffect?.(route, other);
   }, [route, compareRoute, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.accidentLayer) return;
+    const accidentId = LRS_LAYER_DEFS.find((def) => def.snap)?.id;
+    bag.accidentLayer.removeAll();
+    const mark = (target, items) => {
+      if (!target?.vertices?.length || !items?.length || accidentId === undefined) return;
+      items.filter((item) => item.layerId === accidentId).forEach((item) => {
+        const at = pointAtMeasure(target.vertices, target.measures, item.measure);
+        if (!at) return;
+        bag.accidentLayer.add(new bag.Graphic({
+          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+          attributes: { id: item.id },
+          symbol: new bag.SimpleMarkerSymbol({
+            style: "triangle",
+            color: item.color || [220, 38, 38, 0.95],
+            size: 14,
+            outline: { color: [255, 255, 255, 1], width: 1.5 },
+          }),
+        }));
+      });
+    };
+    mark(route, events);
+    if (compareRoute && compareRoute.id !== route?.id) mark(compareRoute, compareEvents);
+  }, [route, events, compareRoute, compareEvents, ready]);
 
   useEffect(() => {
     const bag = api.current;

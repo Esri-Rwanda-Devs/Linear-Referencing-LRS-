@@ -513,6 +513,7 @@ export default function App() {
       setFollow(true);
     },
     route,
+    events,
     cursor,
     project: activeProject,
     activeEvent,
@@ -523,6 +524,7 @@ export default function App() {
       Boolean(route) && (selectingSegment || panelTab === "segment"),
     onSegmentClick,
     compareRoute: compareShown?.route || null,
+    compareEvents: compareShown?.events || null,
     compareCursor,
     compareEvent,
     uiPanel: panelHost,
