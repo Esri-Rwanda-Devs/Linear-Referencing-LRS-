@@ -142,7 +142,7 @@ export default function App() {
   const segmentStartRef = useRef(null);
   segmentStartRef.current = segmentStart;
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() =>
-    LRS_LAYER_DEFS.filter((layer) => !layer.route).map((layer) => layer.id),
+    LRS_LAYER_DEFS.filter((layer) => !layer.route && !layer.visible).map((layer) => layer.id),
   );
 
   useEffect(() => {

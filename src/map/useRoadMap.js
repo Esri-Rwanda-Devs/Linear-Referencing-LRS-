@@ -286,7 +286,7 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
           popupEnabled: false,
           listMode: "hide",
           visible: !(hiddenRef.current || []).includes(def.id),
-          featureEffect: effectFor(),
+          featureEffect: def.showAll ? null : effectFor(),
         });
         lrsLayers[index] = featureLayer;
         map.add(featureLayer, def.kind === "point" ? Math.max(0, map.layers.length - OVERLAY_COUNT) : 0);
@@ -464,6 +464,10 @@ export function useRoadMap({ mapApi, route, cursor, project, activeEvent, hidden
         });
         lrsLayers.forEach((layer, index) => {
           if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
+          if (LRS_LAYER_DEFS[index].showAll) {
+            layer.featureEffect = null;
+            return;
+          }
           const lineEvent = LRS_LAYER_DEFS[index].kind === "line";
           layer.featureEffect = routeWhere.value
             ? new FeatureEffect({

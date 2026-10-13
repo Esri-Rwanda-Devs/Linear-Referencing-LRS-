@@ -5,7 +5,7 @@ const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid"
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
 const TO_FIELDS = ["tomeasure", "to_measure", "endmeasure", "tom", "tokm", "endmeasure"];
 const CODE_FIELDS = ["routecode", "route_code", "roadcode", "road_code", "routename", "route_name"];
-const LABEL_FIELDS = ["name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drain_type", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
+const LABEL_FIELDS = ["accident_id", "name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drain_type", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "severity", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
 const SKIP_LABEL = /globalid|objectid|guid|date|created|edited|user|shape|routeid|route_id|measure|^fid$/i;
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
 
@@ -204,9 +204,10 @@ function layerOf(def) {
 
 const metaCache = new Map();
 
-function layerMeta(layerId) {
-  if (!metaCache.has(layerId)) metaCache.set(layerId, getJson(`${LRS}/${layerId}`));
-  return metaCache.get(layerId);
+function layerMeta(layerId, service = LRS) {
+  const key = `${service}/${layerId}`;
+  if (!metaCache.has(key)) metaCache.set(key, getJson(`${service}/${layerId}`));
+  return metaCache.get(key);
 }
 
 function namedField(fields, candidates, fallback) {
@@ -219,14 +220,14 @@ function whereEquals(field, value, type) {
   return `${field} = '${text}'`;
 }
 
-async function queryFeatures(layerId, params, attempts = 4) {
+async function queryFeatures(layerId, params, attempts = 4, service = LRS) {
   const { token } = await signInToLrs();
   const query = new URLSearchParams({ f: "json", token, ...params });
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const data = await limited(async () => {
-        const response = await fetch(`${devUrl(LRS)}/${layerId}/query?${query}`);
+        const response = await fetch(`${devUrl(service)}/${layerId}/query?${query}`);
         if (!response.ok) throw new Error(`Query failed ${response.status}`);
         return response.json();
       }, layerId === ROAD_ID ? 1 : 0);
@@ -241,12 +242,12 @@ async function queryFeatures(layerId, params, attempts = 4) {
   throw lastError;
 }
 
-async function queryPages(layerId, params, pageCap = 8) {
+async function queryPages(layerId, params, pageCap = 8, service = LRS) {
   const features = [];
   const size = Number(params.resultRecordCount || 500);
   let offset = 0;
   for (let page = 0; page < pageCap; page += 1) {
-    const batch = await queryFeatures(layerId, { ...params, resultOffset: String(offset), resultRecordCount: String(size) });
+    const batch = await queryFeatures(layerId, { ...params, resultOffset: String(offset), resultRecordCount: String(size) }, 4, service);
     features.push(...batch.features);
     if (!batch.exceeded || !batch.features.length) break;
     offset += batch.features.length;
@@ -318,9 +319,10 @@ export async function loadRoadsInExtent(extent) {
 
 /** One visible layer inside the current view, not the whole country. */
 export async function loadLayerInExtent(def, extent) {
-  const meta = await layerMeta(def.id);
+  const service = def.service || LRS;
+  const meta = await layerMeta(def.id, service);
   const routeField = namedField(meta.fields || [], ROUTE_FIELDS, /routeid/i);
-  const features = await queryPages(def.id, extentParams(extent, def.kind), 1);
+  const features = await queryPages(def.id, extentParams(extent, def.kind), 1, service);
   return { id: def.id, features, routeField, def };
 }
 
@@ -415,8 +417,15 @@ function liesOnRoute(feature, route) {
   return Boolean(lineMeasureSpan(route.vertices, route.measures, paths, 0.15));
 }
 
+function pointOnRoute(feature, route) {
+  if (feature.geometry?.x === undefined || !route.vertices?.length) return false;
+  const at = toLonLat(feature.geometry.x, feature.geometry.y);
+  return Boolean(at && locateOnRoute(route.vertices, route.measures, at, 0.15));
+}
+
 async function featuresForRoute(def, route) {
-  const meta = await layerMeta(def.id);
+  const service = def.service || LRS;
+  const meta = await layerMeta(def.id, service);
   const fields = meta.fields || [];
   const routeField = namedField(fields, ROUTE_FIELDS, /routeid/i);
   const routeType = fields.find((field) => field.name === routeField)?.type || "";
@@ -434,9 +443,29 @@ async function featuresForRoute(def, route) {
   if (routeField) {
     const where = routeIds(route).map((id) => whereEquals(routeField, id, routeType)).join(" OR ");
     if (where) {
-      layer.features = (await queryPages(def.id, { ...geometry, where }))
+      layer.features = (await queryPages(def.id, { ...geometry, where }, 8, service))
         .filter((feature) => matchesRoute(feature, routeField, route) || !String(feature.attributes?.[routeField] ?? "").trim());
     }
+  }
+  if (def.snap && route.vertices?.length) {
+    const box = routeBox(route, 0.006);
+    const seen = new Set(layer.features.map((feature) => feature.attributes?.OBJECTID ?? feature.attributes?.objectid));
+    const extra = await queryPages(def.id, {
+      ...geometry,
+      where: "1=1",
+      geometry: JSON.stringify({ xmin: box.minX, ymin: box.minY, xmax: box.maxX, ymax: box.maxY, spatialReference: { wkid: 4326 } }),
+      geometryType: "esriGeometryEnvelope",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+    }, 2, service);
+    extra.forEach((feature) => {
+      const oid = feature.attributes?.OBJECTID ?? feature.attributes?.objectid;
+      if (seen.has(oid)) return;
+      if (matchesRoute(feature, routeField, route) || pointOnRoute(feature, route)) {
+        layer.features.push(feature);
+        seen.add(oid);
+      }
+    });
   }
   if (lineEvent && !layer.features.length && route.vertices?.length) {
     const box = routeBox(route, 0.004);
@@ -447,9 +476,9 @@ async function featuresForRoute(def, route) {
       geometryType: "esriGeometryEnvelope",
       inSR: "4326",
       spatialRel: "esriSpatialRelIntersects",
-    }, 3)).filter((feature) => matchesRoute(feature, routeField, route) || liesOnRoute(feature, route));
+    }, 3, service)).filter((feature) => matchesRoute(feature, routeField, route) || liesOnRoute(feature, route));
   }
-  if (!lineEvent && !layer.features.length && route.vertices?.length) {
+  if (!lineEvent && !def.snap && !layer.features.length && route.vertices?.length) {
     const box = routeBox(route, 0.01);
     layer.features = (await queryPages(def.id, {
       ...geometry,
@@ -458,7 +487,7 @@ async function featuresForRoute(def, route) {
       geometryType: "esriGeometryEnvelope",
       inSR: "4326",
       spatialRel: "esriSpatialRelIntersects",
-    }, 2)).filter((feature) => nearBox(feature, box));
+    }, 2, service)).filter((feature) => nearBox(feature, box));
   }
   return layer;
 }
@@ -486,7 +515,7 @@ export async function loadEvents(route) {
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
-      const hasMeasure = Number.isFinite(fromValue);
+      const hasMeasure = Number.isFinite(fromValue) && (!layer.def.snap || matchesRoute(feature, layer.routeField, route));
       const lineEvent = layer.def.kind === "line" && !layer.def.route;
       const onRoad = (measure) => pointAtMeasure(route.vertices, route.measures, measure);
       if (hasMeasure) {
@@ -537,6 +566,7 @@ function featurePoint(feature) {
 }
 
 const DETAIL_SKIP = /globalid|objectid|^fid$|shape|guid|eventid|routeid|route_id|routename|route_name|fromdate|todate|locerror|created|edited|^gdb_|^st_/i;
+const DETAIL_FIRST = ["severity", "probable_cause", "vehicle_type", "priority", "resolved", "district", "sector", "cell", "village", "impacted_category", "action_taken", "details", "accident_id"];
 
 function prettyField(name) {
   return name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim().replace(/^./, (char) => char.toUpperCase());
@@ -544,7 +574,7 @@ function prettyField(name) {
 
 function prettyValue(name, value) {
   if (typeof value === "number") {
-    if (/date/i.test(name) && value > 1e11) return new Date(value).toLocaleDateString();
+    if (/date|time/i.test(name) && !/measure/i.test(name) && value > 1e11) return new Date(value).toLocaleString();
     if (/measure/i.test(name)) return `${value.toFixed(3)} km`;
     return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
   }
@@ -555,6 +585,13 @@ function prettyValue(name, value) {
 function detailsOf(attributes, name) {
   return Object.entries(attributes)
     .filter(([field, value]) => !DETAIL_SKIP.test(field) && value !== null && value !== undefined && String(value).trim() !== "" && String(value).trim() !== name && !GUID.test(String(value).trim()))
+    .sort((a, b) => {
+      const rank = (field) => {
+        const at = DETAIL_FIRST.indexOf(field.toLowerCase());
+        return at < 0 ? DETAIL_FIRST.length : at;
+      };
+      return rank(a[0]) - rank(b[0]);
+    })
     .map(([field, value]) => [prettyField(field), prettyValue(field, value)])
     .slice(0, 8);
 }

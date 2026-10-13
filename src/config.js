@@ -3,6 +3,7 @@ export const LRS = "https://gh.space.gov.rw/server/rest/services/Road_Asset_LRS_
 export const ROAD = "https://gh.space.gov.rw/server/rest/services/Road/FeatureServer";
 export const WATER = "https://gh.space.gov.rw/server/rest/services/Water/FeatureServer";
 export const ADMIN = "https://gh.space.gov.rw/server/rest/services/Admin_Boundaries/FeatureServer";
+export const ACCIDENTS = "https://gh.space.gov.rw/server/rest/services/Road_Asset_Network/FeatureServer";
 
 /** Map Viewer item from the request. It is not public; the app uses the open Road service on the same server. */
 export const REQUESTED_ITEM = "44f8c12876dc4751b3ec8c4116c4202f";
@@ -23,7 +24,7 @@ export const EVENT_LAYERS = [
 export const GROUPS = [
   { id: "NET", label: "NET", hint: "Road network", color: "#0f766e" },
   { id: "ATT", label: "Line Events", hint: "Pavement, drain, speed, carriageway", color: "#7c3aed" },
-  { id: "POI", label: "POI", hint: "Points of interest", color: "#e11d48" },
+  { id: "POI", label: "POI", hint: "Points of interest and accidents", color: "#e11d48" },
   { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
 
@@ -43,10 +44,12 @@ export const LRS_LAYER_DEFS = [
   { id: 9, title: "LV Supports", group: "POI", kind: "point", shape: "triangle", color: [22, 163, 74, 0.95], swatch: "#16a34a" },
   { id: 6, title: "Point Assets", group: "POI", kind: "point", shape: "circle", color: [37, 99, 235, 0.95], swatch: "#2563eb" },
   { id: 0, title: "KM Stones", group: "POI", kind: "point", shape: "diamond", color: [219, 39, 119, 0.95], swatch: "#db2777" },
+  { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", visible: true, showAll: true, snap: true },
 ];
 
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
 export const VALUE_COLORS = {
+  17: { field: "severity", colors: { fatal: "#7f1d1d", serious: "#dc2626", minor: "#f59e0b", slight: "#fbbf24" } },
   5: { field: "maxspeed", colors: { 0: "#E2E8F0", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" } },
   2: { field: "cway_type", colors: { divided: "#4C1D95", undivided: "#C4B5FD" } },
   8: { field: "pavement_category", colors: { paved: "#000000", unpaved: "#F0BEA5" } },
