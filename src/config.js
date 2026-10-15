@@ -4,6 +4,8 @@ export const ROAD = "https://gh.space.gov.rw/server/rest/services/Road/FeatureSe
 export const WATER = "https://gh.space.gov.rw/server/rest/services/Water/FeatureServer";
 export const ADMIN = "https://gh.space.gov.rw/server/rest/services/Admin_Boundaries/FeatureServer";
 export const ACCIDENTS = "https://gh.space.gov.rw/server/rest/services/Road_Asset_Network/FeatureServer";
+export const GEOCODE_URL = "https://esrirw.rw/server/rest/services/Reverse_Geocoding_Version9/GeocodeServer";
+export const GEOCODE_KEY = "AAPTanqtJT0rEf5TE3yrpnIPgcw..4IBpIq6EgJTOS4dz_BXG1eN1AJDbS7nxET6TuSqeqpBJJwrJRN1EBi8h-YFVGciBND387FCtx8kUi8nr7TxSZqz8WVGlH-r3k2ELkPa4q1l3F9QdEZvSV8AJe22G8Td2kNTDU_ln4a-VNug5l5V0GY01WpMb5uRunKro3xNVvdF-9i8yHApELMnVNCntEICYUHzqGUh8EqDCpvQxJze6mMArsItZe0kp6mn6AT1_ZSbuCYoi";
 
 /** Map Viewer item from the request. It is not public; the app uses the open Road service on the same server. */
 export const REQUESTED_ITEM = "44f8c12876dc4751b3ec8c4116c4202f";
@@ -49,7 +51,7 @@ export const LRS_LAYER_DEFS = [
 
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
 export const VALUE_COLORS = {
-  17: { field: "severity", colors: { fatal: "#7f1d1d", serious: "#dc2626", minor: "#f59e0b", slight: "#fbbf24" } },
+  17: { field: "severity", colors: { fatal: "#7f1d1d", serious: "#dc2626", minor: "#f59e0b" } },
   5: { field: "maxspeed", colors: { 0: "#E2E8F0", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" } },
   2: { field: "cway_type", colors: { divided: "#4C1D95", undivided: "#C4B5FD" } },
   8: { field: "pavement_category", colors: { paved: "#000000", unpaved: "#F0BEA5" } },

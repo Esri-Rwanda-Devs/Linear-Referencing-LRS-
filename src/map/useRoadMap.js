@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { LRS_LAYER_DEFS } from "../config";
+import { GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS } from "../config";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
 import { accidentInLastMonth, accidentTime, hotspotSpans, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
 
@@ -20,6 +20,7 @@ const MODULES = [
   "esri/widgets/Search",
   "esri/widgets/Locate",
   "esri/geometry/support/webMercatorUtils",
+  "esri/config",
 ];
 
 const OPEN_AT = { center: [30.0619, -1.9441], scale: 32000 };
@@ -116,7 +117,13 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     }
     loadModules(MODULES).then(async (mods) => {
       if (cancelled || !ref.current) return;
-      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils] = mods;
+      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils, esriConfig] = mods;
+      esriConfig.request.interceptors.push({
+        urls: /esrirw\.rw\/server\/rest\/services\/Reverse_Geocoding_Version9/i,
+        before(params) {
+          params.requestOptions.query = { ...params.requestOptions.query, token: GEOCODE_KEY };
+        },
+      });
       const overlay = new GraphicsLayer({ id: "lrs-overlay", listMode: "hide" });
       const cursorLayer = new GraphicsLayer({ id: "lrs-cursor", listMode: "hide" });
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
@@ -136,15 +143,53 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         highlightOptions: { color: [232, 122, 46], haloOpacity: 0 },
       });
       view.ui.remove("attribution");
-      const search = new Search({ view, popupEnabled: false, resultGraphicEnabled: false, locationEnabled: false, placeholder: "Search a place in Rwanda" });
-      search.when(() => {
-        search.defaultSources?.forEach((source) => { source.countryCode = "RWA"; });
-      }).catch(() => {});
+      const search = new Search({
+        view,
+        includeDefaultSources: false,
+        popupEnabled: false,
+        resultGraphicEnabled: false,
+        locationEnabled: false,
+        sources: [{
+          url: GEOCODE_URL,
+          apiKey: GEOCODE_KEY,
+          singleLineFieldName: "SingleLine",
+          name: "Rwanda places",
+          placeholder: "Search a place in Rwanda",
+          suggestionsEnabled: true,
+          minSuggestCharacters: 2,
+          maxSuggestions: 6,
+          maxResults: 6,
+          outFields: ["LongLabel", "ShortLabel", "Match_addr", "PlaceName", "Addr_type"],
+        }],
+      });
       search.on("select-result", (event) => {
         const geometry = event.result?.feature?.geometry;
         const point = geometry?.type === "point" ? geometry : geometry?.extent?.center;
-        if (point) originRef.current?.([point.longitude, point.latitude], event.result.name || "Search result");
+        const attributes = event.result?.feature?.attributes || {};
+        const name = attributes.LongLabel || attributes.ShortLabel || attributes.Match_addr || event.result?.name || "Search result";
+        if (point) originRef.current?.([point.longitude, point.latitude], name);
       });
+      const placeName = (longitude, latitude) => {
+        const params = new URLSearchParams({
+          f: "json",
+          location: `${longitude},${latitude}`,
+          outSR: "4326",
+          token: GEOCODE_KEY,
+        });
+        return fetch(`${GEOCODE_URL}/reverseGeocode?${params}`)
+          .then((response) => response.json())
+          .then((data) => {
+            const address = data.address || {};
+            return address.LongLabel || address.ShortLabel || address.Match_addr || address.Address || "";
+          })
+          .catch(() => "");
+      };
+      const nameOrigin = (longitude, latitude, fallback, options) => {
+        originRef.current?.([longitude, latitude], fallback, options);
+        placeName(longitude, latitude).then((name) => {
+          if (name) originRef.current?.([longitude, latitude], name, options);
+        });
+      };
       const hereMarks = [];
       const showHere = (longitude, latitude) => {
         if (hereMarks.length) view.graphics.removeMany(hereMarks);
@@ -174,7 +219,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           locationPending = false;
           if (!cancelled) refreshExtent();
         });
-        originRef.current?.([longitude, latitude], "My location", { wide: true });
+        nameOrigin(longitude, latitude, "My location", { wide: true });
         console.info(`[LRS] Current location ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
       };
       const locate = new Locate({ view, popupEnabled: false, scale: 1128 });
@@ -548,7 +593,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           return;
         }
         if (pickingRef.current) {
-          originRef.current?.([event.mapPoint.longitude, event.mapPoint.latitude], "Picked on map");
+          nameOrigin(event.mapPoint.longitude, event.mapPoint.latitude, "Picked on map");
           return;
         }
         const roadLayer = lrsLayers[roadIndex];
