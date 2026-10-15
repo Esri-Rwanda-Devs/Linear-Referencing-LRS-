@@ -892,7 +892,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     const bag = api.current;
     if (!bag?.accidentLayer) return;
-    const accidentId = LRS_LAYER_DEFS.find((def) => def.snap)?.id;
+    const accidentId = 17;
     bag.accidentLayer.removeAll();
     const mark = (target, item) => {
       if (!target?.vertices?.length || !item || item.layerId !== accidentId) return;

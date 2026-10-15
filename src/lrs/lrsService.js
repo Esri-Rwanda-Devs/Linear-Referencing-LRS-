@@ -511,7 +511,9 @@ export async function loadEvents(route) {
         ? String(maxSpeedValue(feature.attributes))
         : layer.id === 2
           ? (carriagewayType(feature.attributes) || "Carriageway")
-          : titleOf(feature.attributes, layer.routeField, layer.def.title);
+          : layer.id === 18
+            ? (usableLabel(feature.attributes?.road) || usableLabel(feature.attributes?.cell) || "Camera")
+            : titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
@@ -567,7 +569,7 @@ function featurePoint(feature) {
 }
 
 const DETAIL_SKIP = /globalid|objectid|^fid$|shape|guid|eventid|routeid|route_id|routename|route_name|fromdate|todate|locerror|created|edited|^gdb_|^st_/i;
-const DETAIL_FIRST = ["severity", "probable_cause", "vehicle_type", "priority", "resolved", "district", "sector", "cell", "village", "impacted_category", "action_taken", "details", "accident_id"];
+const DETAIL_FIRST = ["severity", "probable_cause", "vehicle_type", "priority", "resolved", "road", "district", "sector", "cell", "village", "impacted_category", "action_taken", "details", "accident_id"];
 
 function prettyField(name) {
   return name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim().replace(/^./, (char) => char.toUpperCase());
