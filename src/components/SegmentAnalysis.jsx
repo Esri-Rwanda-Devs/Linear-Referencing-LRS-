@@ -72,6 +72,15 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
             <b>{km(summary.lengthKm)}</b>
             <span>{summary.pointCount} point assets · {summary.spans.length} line event layers</span>
           </div>
+          {summary.accidents && (
+            <div className={`accident-count ${summary.accidents.level}`}>
+              <strong>{summary.accidents.count}</strong>
+              <div>
+                <b>Accidents · last month</b>
+                <span>{summary.accidents.label}</span>
+              </div>
+            </div>
+          )}
 
           {summary.points.length > 0 && <h4>Point assets</h4>}
           {summary.points.map((layer) => (

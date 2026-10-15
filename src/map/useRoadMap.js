@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LRS_LAYER_DEFS } from "../config";
-import { flattenPaths, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
-import { loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey } from "../lrs/lrsService";
+import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
+import { accidentInLastMonth, accidentTime, hotspotSpans, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
 
 const MODULES = [
   "esri/Map",
@@ -69,6 +69,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   segmentClickRef.current = onSegmentClick;
   const hiddenRef = useRef(hiddenLayerIds);
   hiddenRef.current = hiddenLayerIds;
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   const ref = useRef(null);
   const api = useRef(null);
   const hoverRef = useRef(onHoverMeasure);
@@ -118,11 +122,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const projectLayer = new GraphicsLayer({ id: "lrs-project", listMode: "hide" });
       const analysisLayer = new GraphicsLayer({ id: "lrs-analysis", listMode: "hide" });
       const segmentLayer = new GraphicsLayer({ id: "lrs-segment", listMode: "hide" });
+      const hotspotLayer = new GraphicsLayer({ id: "lrs-hotspots", listMode: "hide" });
       const compareLayer = new GraphicsLayer({ id: "lrs-compare", listMode: "hide" });
       const compareCursorLayer = new GraphicsLayer({ id: "lrs-compare-cursor", listMode: "hide" });
       const hereLayer = new GraphicsLayer({ id: "lrs-here", listMode: "hide" });
       const accidentLayer = new GraphicsLayer({ id: "lrs-accidents", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, segmentLayer, projectLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer] });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, hotspotLayer, segmentLayer, projectLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -194,9 +199,15 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       lrsLayers[roadIndex] = roadLayer;
       const overlayCount = map.layers.length;
       map.add(roadLayer, 0);
-      const roadInk = new SimpleLineSymbol({ color: roadDef.color, width: roadDef.width || 3, cap: "round", join: "round" });
-      const roadDim = new SimpleLineSymbol({ color: [roadDef.color[0], roadDef.color[1], roadDef.color[2], 0.22], width: roadDef.width || 3, cap: "round", join: "round" });
+      const roadCasing = new SimpleLineSymbol({ color: [120, 128, 138, 0.95], width: 4.2, cap: "round", join: "round" });
+      const roadCenter = new SimpleLineSymbol({ color: [255, 255, 255, 0.98], width: 1.8, cap: "round", join: "round" });
+      const roadCasingDim = new SimpleLineSymbol({ color: [148, 163, 184, 0.4], width: 4.2, cap: "round", join: "round" });
+      const roadCenterDim = new SimpleLineSymbol({ color: [255, 255, 255, 0.35], width: 1.8, cap: "round", join: "round" });
+      const segmentCasing = new SimpleLineSymbol({ color: [255, 255, 255, 1], width: 8, cap: "round", join: "round" });
       const drawnRoads = new globalThis.Map();
+      const roadLines = [];
+      const accidentsSeen = new Map();
+      let accidentFeatures = [];
       const routeWhere = { value: null };
       const effectFor = () => (routeWhere.value
         ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
@@ -227,6 +238,98 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         return null;
       };
       const roadDetail = (geometry) => (geometry?.curvePaths?.length ? 100000 : (geometry?.paths || []).reduce((sum, path) => sum + path.length, 0));
+      const syncRoadLines = () => {
+        roadLines.length = 0;
+        drawnRoads.forEach((entry) => {
+          flattenPaths(entry.geometry).forEach((vertices) => {
+            if (vertices.length < 2) return;
+            const measures = [0];
+            for (let i = 1; i < vertices.length; i += 1) measures.push(measures[i - 1] + haversineKm(vertices[i - 1], vertices[i]));
+            if (measures[measures.length - 1] < 0.05) return;
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            vertices.forEach(([x, y]) => {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            });
+            roadLines.push({ vertices, measures, minX, minY, maxX, maxY, route: entry.casing?.attributes?.route || "" });
+          });
+        });
+      };
+      const drawSpan = (vertices, measures, span) => {
+        const slice = sliceVertices(vertices, measures, span.from, span.to);
+        if (slice.length < 2) return;
+        const geometry = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
+        hotspotLayer.add(new Graphic({ geometry, symbol: segmentCasing }));
+        hotspotLayer.add(new Graphic({
+          geometry,
+          symbol: new SimpleLineSymbol({ color: span.ink, width: 4.5, cap: "round", join: "round" }),
+        }));
+      };
+      const paintHotspots = () => {
+        hotspotLayer.removeAll();
+        const box = geographicExtent();
+        if (!box || Math.abs(box.xmax - box.xmin) > 0.6 || !roadLines.length) return;
+        const activeKey = routeRef.current?.id ? routeKey(routeRef.current.id) : "";
+        const located = roadLines.map(() => []);
+        accidentFeatures.forEach((feature) => {
+          if (!accidentInLastMonth(accidentTime(feature.attributes))) return;
+          if (feature.geometry?.x === undefined) return;
+          const at = toLonLat(feature.geometry.x, feature.geometry.y);
+          if (!at) return;
+          let best = null;
+          roadLines.forEach((line, index) => {
+            if (activeKey && line.route === activeKey) return;
+            if (at[0] < line.minX - 0.002 || at[0] > line.maxX + 0.002 || at[1] < line.minY - 0.002 || at[1] > line.maxY + 0.002) return;
+            const hit = locateOnRoute(line.vertices, line.measures, at, 0.12);
+            if (!hit || (best && hit.distanceKm >= best.distanceKm)) return;
+            best = { index, measure: hit.measure, distanceKm: hit.distanceKm };
+          });
+          if (best) located[best.index].push(best.measure);
+        });
+        located.forEach((measures, index) => {
+          const line = roadLines[index];
+          hotspotSpans(measures).forEach((span) => drawSpan(line.vertices, line.measures, span));
+        });
+        const active = routeRef.current;
+        if (active?.vertices?.length) {
+          const measures = (eventsRef.current || [])
+            .filter((item) => item.layerId === 17 && accidentInLastMonth(item.occurred))
+            .map((item) => item.measure);
+          hotspotSpans(measures).forEach((span) => drawSpan(active.vertices, active.measures, span));
+        }
+      };
+      const accidentBoxes = [];
+      const boxHolds = (item, extent) => item.xmin <= extent.xmin && item.ymin <= extent.ymin && item.xmax >= extent.xmax && item.ymax >= extent.ymax;
+      const rememberAccidents = (features) => {
+        (features || []).forEach((feature) => {
+          const oid = feature.attributes?.OBJECTID ?? feature.attributes?.objectid;
+          if (oid !== undefined && oid !== null) accidentsSeen.set(oid, feature);
+        });
+        accidentFeatures = [...accidentsSeen.values()];
+        paintHotspots();
+      };
+      const ensureAccidents = (extent) => {
+        if (!extent) return Promise.resolve();
+        if (accidentBoxes.some((item) => boxHolds(item, extent))) {
+          paintHotspots();
+          return Promise.resolve();
+        }
+        const def = LRS_LAYER_DEFS.find((item) => item.id === 17);
+        if (!def) return Promise.resolve();
+        accidentBoxes.push(extent);
+        return loadLayerInExtent(def, extent).then((result) => {
+          if (!cancelled) rememberAccidents(result.features);
+        }).catch((error) => {
+          const at = accidentBoxes.indexOf(extent);
+          if (at >= 0) accidentBoxes.splice(at, 1);
+          console.warn("[LRS] Accident segments failed", error);
+        });
+      };
       const paintRoads = (features, routeFieldName) => {
         const fresh = [];
         features.forEach((feature) => {
@@ -235,21 +338,21 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!oid || !shape) return;
           const detail = roadDetail(feature.geometry);
           const previous = drawnRoads.get(oid);
-          if (previous && (previous.attributes.detail || 0) >= detail) return;
-          if (previous) roadLayer.remove(previous);
+          if (previous && (previous.detail || 0) >= detail) return;
+          if (previous) roadLayer.removeMany([previous.casing, previous.center]);
           const rid = routeFieldName ? String(feature.attributes?.[routeFieldName] ?? "").trim() : "";
-          const graphic = new Graphic({
-            geometry: shape,
-            symbol: roadInk,
-            attributes: { oid, detail, rid, route: rid ? routeKey(rid) : "" },
-          });
-          drawnRoads.set(oid, graphic);
-          fresh.push(graphic);
+          const attributes = { oid, detail, rid, route: rid ? routeKey(rid) : "" };
+          const casing = new Graphic({ geometry: shape, symbol: roadCasing, attributes: { ...attributes, part: "casing" } });
+          const center = new Graphic({ geometry: shape, symbol: roadCenter, attributes: { ...attributes, part: "center" } });
+          drawnRoads.set(oid, { casing, center, detail, geometry: feature.geometry });
+          fresh.push(casing, center);
         });
         if (fresh.length) {
           roadLayer.addMany(fresh);
           console.info(`[LRS] Roads drawn: ${fresh.length} (${drawnRoads.size} on the map)`);
         }
+        syncRoadLines();
+        paintHotspots();
       };
       drawNearbyRoads = (longitude, latitude) => {
         if ((hiddenRef.current || []).includes(roadDef.id)) return;
@@ -261,6 +364,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const record = { ...box, faithful: true };
         covered[roadIndex].push(record);
         const started = performance.now();
+        ensureAccidents(box);
         loadRoadsInExtent(box).then((result) => {
           if (cancelled) return;
           paintRoads(result.features, result.routeField);
@@ -363,6 +467,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             if (hidden.has(def.id) || covers(index, box, faithful)) return;
             const record = { ...box, faithful };
             covered[index].push(record);
+            jobs.push(ensureAccidents(box));
             jobs.push(loadRoadsInExtent(box).then((result) => {
               if (!cancelled) paintRoads(result.features, result.routeField);
             }).catch((error) => {
@@ -379,6 +484,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const load = loadLayerInExtent(def, box);
           jobs.push(load.then((result) => {
             if (cancelled) return null;
+            if (def.id === 17) rememberAccidents(result.features);
             return addFeatures(def, result.features, result.routeField);
           }).catch((error) => {
             const boxes = covered[index];
@@ -462,7 +568,9 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const keys = new Set(ids.map((id) => routeKey(id)));
         routeWhere.value = keyed.length ? `route IN (${keyed.join(",")})` : null;
         roadLayer.graphics.forEach((graphic) => {
-          graphic.symbol = !keys.size || keys.has(graphic.attributes?.route) ? roadInk : roadDim;
+          const on = !keys.size || keys.has(graphic.attributes?.route);
+          const center = graphic.attributes?.part === "center";
+          graphic.symbol = center ? (on ? roadCenter : roadCenterDim) : (on ? roadCasing : roadCasingDim);
         });
         lrsLayers.forEach((layer, index) => {
           if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
@@ -479,7 +587,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             : null;
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, paintHotspots, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -617,16 +725,17 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     const slice = sliceVertices(route.vertices, route.measures, segment.from, segment.to);
     if (slice.length < 2) return;
     const line = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
-    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: [15, 23, 42, 0.85], width: 9, cap: "round", join: "round" }) }));
-    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: [250, 204, 21, 1], width: 5, cap: "round", join: "round" }) }));
+    const tone = segmentAccidents(events, segment.from, segment.to);
+    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: [255, 255, 255, 1], width: 8, cap: "round", join: "round" }) }));
+    segmentLayer.add(new Graphic({ geometry: line, symbol: new SimpleLineSymbol({ color: tone.level === "low" ? [250, 204, 21, 1] : tone.ink, width: 4.5, cap: "round", join: "round" }) }));
     [slice[0], slice[slice.length - 1]].forEach((vertex) => {
       segmentLayer.add(new Graphic({
         geometry: new Point({ longitude: vertex[0], latitude: vertex[1] }),
-        symbol: new SimpleMarkerSymbol({ style: "square", size: 8, color: [250, 204, 21, 1], outline: { color: [15, 23, 42], width: 1.5 } }),
+        symbol: new SimpleMarkerSymbol({ style: "square", size: 8, color: tone.level === "low" ? [250, 204, 21, 1] : tone.ink, outline: { color: [255, 255, 255], width: 1.5 } }),
       }));
     });
     view.goTo({ target: line, padding: 60 }, { duration: 500 }).catch(() => {});
-  }, [route, segment, ready]);
+  }, [route, segment, events, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -732,33 +841,32 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     bag.route = route || null;
     bag.compareRoute = other;
     bag.applyRouteEffect?.(route, other);
-  }, [route, compareRoute, ready]);
+    bag.paintHotspots?.();
+  }, [route, compareRoute, events, ready]);
 
   useEffect(() => {
     const bag = api.current;
     if (!bag?.accidentLayer) return;
     const accidentId = LRS_LAYER_DEFS.find((def) => def.snap)?.id;
     bag.accidentLayer.removeAll();
-    const mark = (target, items) => {
-      if (!target?.vertices?.length || !items?.length || accidentId === undefined) return;
-      items.filter((item) => item.layerId === accidentId).forEach((item) => {
-        const at = pointAtMeasure(target.vertices, target.measures, item.measure);
-        if (!at) return;
-        bag.accidentLayer.add(new bag.Graphic({
-          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
-          attributes: { id: item.id },
-          symbol: new bag.SimpleMarkerSymbol({
-            style: "triangle",
-            color: item.color || [220, 38, 38, 0.95],
-            size: 14,
-            outline: { color: [255, 255, 255, 1], width: 1.5 },
-          }),
-        }));
-      });
+    const mark = (target, item) => {
+      if (!target?.vertices?.length || !item || item.layerId !== accidentId) return;
+      const at = pointAtMeasure(target.vertices, target.measures, item.measure);
+      if (!at) return;
+      bag.accidentLayer.add(new bag.Graphic({
+        geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+        attributes: { id: item.id },
+        symbol: new bag.SimpleMarkerSymbol({
+          style: "triangle",
+          color: item.color || [220, 38, 38, 0.95],
+          size: 14,
+          outline: { color: [255, 255, 255, 1], width: 1.5 },
+        }),
+      }));
     };
-    mark(route, events);
-    if (compareRoute && compareRoute.id !== route?.id) mark(compareRoute, compareEvents);
-  }, [route, events, compareRoute, compareEvents, ready]);
+    mark(route, activeEvent);
+    if (compareRoute && compareRoute.id !== route?.id) mark(compareRoute, compareEvent);
+  }, [route, activeEvent, compareRoute, compareEvent, ready]);
 
   useEffect(() => {
     const bag = api.current;

@@ -651,7 +651,92 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     point,
     distanceM,
     details: detailsOf(feature.attributes || {}, name),
+    occurred: occurredAt(feature.attributes),
   };
+}
+
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const ACCIDENT_LAYER = 17;
+
+function toMillis(value) {
+  if (typeof value === "number" && value > 1e11) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+/** Accident time from the feature, preferring the incident date over editor tracking. */
+function occurredAt(attributes) {
+  if (!attributes) return null;
+  const score = (name) => {
+    const key = name.toLowerCase();
+    if (/measure|fromdate|todate/.test(key)) return 0;
+    if (/accident|incident|occur/.test(key) && /date|time/.test(key)) return 5;
+    if (/^date$|datetime|date_time|timestamp|time_stamp/.test(key)) return 4;
+    if (/date|time/.test(key) && !/creat|edit/.test(key)) return 3;
+    if (/created_date|creationdate|createdate|create_date/.test(key)) return 2;
+    if (/editdate|edited_date|last_edited/.test(key)) return 1;
+    return 0;
+  };
+  const ranked = Object.entries(attributes)
+    .map(([name, value]) => ({ value, score: score(name) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  for (const item of ranked) {
+    const ms = toMillis(item.value);
+    if (ms) return ms;
+  }
+  return null;
+}
+
+/** Incident time in milliseconds, when the accident feature has one. */
+export function accidentTime(attributes) {
+  return occurredAt(attributes);
+}
+
+export function accidentInLastMonth(ms, now = Date.now()) {
+  return Number.isFinite(ms) && ms >= now - MONTH_MS && ms <= now;
+}
+
+function lastMonth(event, now = Date.now()) {
+  return event.layerId === ACCIDENT_LAYER && accidentInLastMonth(event.occurred, now);
+}
+
+/** Groups measures along one road into the yellow (5–15) and red (above 15) stretches. */
+export function hotspotSpans(measures) {
+  const sorted = measures.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  const spans = [];
+  let group = [];
+  const flush = () => {
+    if (group.length >= 5) {
+      const from = group[0];
+      const to = group[group.length - 1];
+      const pad = to - from < 0.12 ? 0.08 : 0.03;
+      spans.push({ from: from - pad, to: to + pad, count: group.length, ...accidentTone(group.length) });
+    }
+    group = [];
+  };
+  sorted.forEach((measure) => {
+    if (group.length && measure - group[group.length - 1] > 0.4) flush();
+    group.push(measure);
+  });
+  flush();
+  return spans;
+}
+
+/** Yellow for 5–15 last-month accidents on a stretch, red above 15. */
+export function accidentTone(count) {
+  if (count > 15) return { level: "high", label: "Above 15", color: "#dc2626", ink: [220, 38, 38, 1] };
+  if (count >= 5) return { level: "watch", label: "5 to 15", color: "#facc15", ink: [250, 204, 21, 1] };
+  return { level: "low", label: "Under 5", color: "#94a3b8", ink: [250, 204, 21, 1] };
+}
+
+/** Accidents on from–to whose date falls in the last 30 days. */
+export function segmentAccidents(events, from, to, now = Date.now()) {
+  const items = (events || []).filter((event) => lastMonth(event, now) && event.measure >= from && event.measure <= to);
+  return { count: items.length, items, ...accidentTone(items.length) };
 }
 
 export function featuresAtMeasure(events, measure, toleranceKm = 0.35) {
@@ -704,6 +789,7 @@ export function summariseSegment(events, from, to) {
   events.forEach((event) => {
     if (event.kind !== "span") {
       if (event.measure < from || event.measure > to) return;
+      if (event.layerId === ACCIDENT_LAYER && !lastMonth(event)) return;
       const layer = points.get(event.layerId) || { layerId: event.layerId, title: event.title, shape: event.shape, color: event.color, items: [] };
       layer.items.push(event);
       points.set(event.layerId, layer);
@@ -719,7 +805,11 @@ export function summariseSegment(events, from, to) {
   });
   const pointLayers = [...points.values()]
     .map((layer) => ({ ...layer, items: layer.items.sort((a, b) => a.measure - b.measure) }))
-    .sort((a, b) => order(a.layerId) - order(b.layerId));
+    .sort((a, b) => {
+      if (a.layerId === ACCIDENT_LAYER) return -1;
+      if (b.layerId === ACCIDENT_LAYER) return 1;
+      return order(a.layerId) - order(b.layerId);
+    });
   const spanLayers = [...spans.values()].map((layer) => {
     const coveredKm = [...layer.byName.values()].reduce((sum, value) => sum + value, 0);
     const values = [...layer.byName.entries()]
@@ -727,11 +817,13 @@ export function summariseSegment(events, from, to) {
       .sort((a, b) => b.km - a.km);
     return { layerId: layer.layerId, title: layer.title, color: layer.color, coveredKm, values };
   }).sort((a, b) => order(a.layerId) - order(b.layerId));
+  const accidents = segmentAccidents(events, from, to);
   return {
     lengthKm: to - from,
     pointCount: pointLayers.reduce((sum, layer) => sum + layer.items.length, 0),
     points: pointLayers,
     spans: spanLayers,
+    accidents,
   };
 }
 

@@ -1,5 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { GROUPS, LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
+import { segmentAccidents } from "../lrs/lrsService";
 
 const ROW_H = 20;
 const AXIS_H = 24;
@@ -13,7 +14,10 @@ function rowsFor() {
     const layers = LRS_LAYER_DEFS.filter((layer) => layer.group === group.id && layer.chart !== false);
     if (!layers.length && group.id !== "PLN") return;
     rows.push({ type: "group", ...group });
-    layers.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.kind === "point" ? layer.shape : "bar", layerId: layer.id, route: Boolean(layer.route), kind: layer.kind }));
+    const ordered = group.id === "POI"
+      ? [...layers].sort((a, b) => Number(b.title === "Accidents") - Number(a.title === "Accidents"))
+      : layers;
+    ordered.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.kind === "point" ? layer.shape : "bar", layerId: layer.id, route: Boolean(layer.route), kind: layer.kind }));
     if (group.id === "PLN") rows.push({ type: "layer", group: "PLN", title: "Projects", color: group.color, shape: "bar" });
   });
   ROWS.push(...rows);
@@ -502,14 +506,21 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
           if (!band || band.to < from || band.from > to) return null;
           const x1 = clampX(xOf(band.from));
           const x2 = clampX(xOf(band.to));
+          const accidents = segmentAccidents(events, band.from, band.to);
+          const tone = accidents?.level === "high"
+            ? { fill: "#dc2626", stroke: "#b91c1c", text: "#991b1b" }
+            : accidents?.level === "watch"
+              ? { fill: "#facc15", stroke: "#ca8a04", text: "#854d0e" }
+              : { fill: "#facc15", stroke: "#ca8a04", text: "#854d0e" };
+          const note = accidents && accidents.level !== "low" ? ` · ${accidents.count} accidents` : "";
           return (
             <g pointerEvents="none">
-              <rect x={x1} y={AXIS_H - 4} width={Math.max(1, x2 - x1)} height={height - AXIS_H} fill="#facc15" opacity="0.14" />
-              <line x1={x1} x2={x1} y1={AXIS_H - 4} y2={height - 4} stroke="#ca8a04" strokeWidth="1.2" strokeDasharray="3 2" />
-              <line x1={x2} x2={x2} y1={AXIS_H - 4} y2={height - 4} stroke="#ca8a04" strokeWidth="1.2" strokeDasharray="3 2" />
-              <text x={(x1 + x2) / 2} y={AXIS_H + 2} textAnchor="middle" fontSize="8" fontWeight="700" fill="#854d0e"
+              <rect x={x1} y={AXIS_H - 4} width={Math.max(1, x2 - x1)} height={height - AXIS_H} fill={tone.fill} opacity="0.18" />
+              <line x1={x1} x2={x1} y1={AXIS_H - 4} y2={height - 4} stroke={tone.stroke} strokeWidth="1.2" strokeDasharray="3 2" />
+              <line x1={x2} x2={x2} y1={AXIS_H - 4} y2={height - 4} stroke={tone.stroke} strokeWidth="1.2" strokeDasharray="3 2" />
+              <text x={(x1 + x2) / 2} y={AXIS_H + 2} textAnchor="middle" fontSize="8" fontWeight="700" fill={tone.text}
                 stroke="rgba(255,255,255,0.9)" strokeWidth="2" paintOrder="stroke">
-                {`${band.from.toFixed(2)} – ${band.to.toFixed(2)} km (${(band.to - band.from).toFixed(2)} km)`}
+                {`${band.from.toFixed(2)} – ${band.to.toFixed(2)} km (${(band.to - band.from).toFixed(2)} km)${note}`}
               </text>
             </g>
           );

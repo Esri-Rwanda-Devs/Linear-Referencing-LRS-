@@ -32,7 +32,7 @@ export const groupLabel = (id) => GROUPS.find((group) => group.id === id)?.label
 
 /** Layer ids from Road_Asset_LRS_Map FeatureServer. */
 export const LRS_LAYER_DEFS = [
-  { id: 3, title: "Road Network", group: "NET", kind: "line", route: true, shape: "bar", color: [56, 189, 248, 0.95], width: 4, swatch: "#38bdf8" },
+  { id: 3, title: "Road Network", group: "NET", kind: "line", route: true, shape: "bar", color: [186, 198, 210, 0.95], width: 1.6, swatch: "#38bdf8" },
   { id: 8, title: "Pavement Type", group: "ATT", kind: "line", shape: "bar", color: [251, 146, 60, 0.9], width: 4, swatch: "#fb923c" },
   { id: 7, title: "Drain Type", group: "ATT", kind: "line", shape: "bar", color: [34, 211, 238, 0.9], width: 2, swatch: "#22d3ee" },
   { id: 5, title: "Speed Limit", group: "ATT", kind: "line", shape: "bar", color: [74, 222, 128, 0.95], width: 2.5, swatch: "#4ade80" },
@@ -44,7 +44,7 @@ export const LRS_LAYER_DEFS = [
   { id: 9, title: "LV Supports", group: "POI", kind: "point", shape: "triangle", color: [22, 163, 74, 0.95], swatch: "#16a34a" },
   { id: 6, title: "Point Assets", group: "POI", kind: "point", shape: "circle", color: [37, 99, 235, 0.95], swatch: "#2563eb" },
   { id: 0, title: "KM Stones", group: "POI", kind: "point", shape: "diamond", color: [219, 39, 119, 0.95], swatch: "#db2777" },
-  { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", visible: true, showAll: true, snap: true },
+  { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", showAll: true, snap: true },
 ];
 
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
