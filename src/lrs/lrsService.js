@@ -317,6 +317,155 @@ export async function loadRoadsInExtent(extent) {
   return { features, routeField };
 }
 
+const EDIT_SKIP = /^(objectid|fid|globalid|shape|shape_length|shape_area|st_area|st_length|gdb_|created_user|created_date|last_edited_user|last_edited_date)$/i;
+
+/** Editable columns for a layer, taken from its table. */
+export async function layerFields(def) {
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const fields = (meta.fields || []).filter((field) => field.type !== "esriFieldTypeGeometry" && field.type !== "esriFieldTypeOID" && !EDIT_SKIP.test(field.name));
+  const oidField = (meta.fields || []).find((field) => field.type === "esriFieldTypeOID")?.name || "OBJECTID";
+  return { fields, oidField };
+}
+
+/** One feature, with every column, ready to edit. */
+export async function loadFeature(def, oid) {
+  const { oidField } = await layerFields(def);
+  const service = def.service || LRS;
+  const data = await queryFeatures(def.id, {
+    where: `${oidField} = ${Number(oid)}`,
+    outFields: "*",
+    returnGeometry: "true",
+    outSR: "4326",
+  }, 2, service);
+  return data.features[0] || null;
+}
+
+function editPayloadSummary(payload) {
+  const summary = {};
+  Object.entries(payload).forEach(([key, value]) => {
+    try {
+      const features = JSON.parse(value);
+      summary[key] = (Array.isArray(features) ? features : [features]).map((feature) => ({
+        attributes: feature.attributes || null,
+        geometry: !feature.geometry ? null : feature.geometry.x != null
+          ? { type: "point", x: feature.geometry.x, y: feature.geometry.y, wkid: feature.geometry.spatialReference?.wkid }
+          : { type: "polyline", vertices: feature.geometry.paths?.[0]?.length || 0, wkid: feature.geometry.spatialReference?.wkid },
+      }));
+    } catch {
+      summary[key] = String(value).slice(0, 500);
+    }
+  });
+  return summary;
+}
+
+function editErrorText(data, status) {
+  const lines = [];
+  const top = data?.error;
+  if (top?.message) lines.push(top.message);
+  const details = top?.details;
+  if (Array.isArray(details)) lines.push(...details.map((item) => String(item)));
+  else if (details) lines.push(String(details));
+  const results = [...(data?.addResults || []), ...(data?.updateResults || []), ...(data?.deleteResults || [])];
+  results.forEach((result, index) => {
+    if (!result || result.success !== false) return;
+    const error = result.error || {};
+    const description = error.description || error.message;
+    if (description) lines.push(`Feature ${index + 1}: ${description}`);
+    if (error.code != null) lines.push(`code ${error.code}${error.extendedCode != null ? ` (${error.extendedCode})` : ""}`);
+    if (Array.isArray(error.details)) lines.push(...error.details.map((item) => String(item)));
+  });
+  if (!lines.length) lines.push(status ? `The edit was rejected (HTTP ${status}).` : "The edit was rejected.");
+  return [...new Set(lines.filter(Boolean))].join("\n");
+}
+
+async function applyEdits(def, payload) {
+  const { token } = await signInToLrs();
+  const service = def.service || LRS;
+  const url = `${devUrl(service)}/${def.id}/applyEdits`;
+  const body = new URLSearchParams({ f: "json", token, rollbackOnFailure: "true" });
+  Object.entries(payload).forEach(([key, value]) => body.set(key, value));
+  const response = await fetch(url, { method: "POST", body });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    console.error("[LRS] applyEdits returned non-JSON", { layer: `${def.title || ""} (${def.id})`, url, status: response.status, body: text.slice(0, 2000), sent: editPayloadSummary(payload) });
+    throw new Error(`The server did not return JSON (HTTP ${response.status}).`);
+  }
+  const failed = data?.error || [...(data?.addResults || []), ...(data?.updateResults || [])].some((result) => result && result.success === false);
+  if (!response.ok || failed) {
+    let layerInfo = null;
+    try {
+      const meta = await layerMeta(def.id, service);
+      layerInfo = { geometryType: meta.geometryType, hasZ: meta.hasZ, hasM: meta.hasM, spatialReference: meta.spatialReference, capabilities: meta.capabilities };
+    } catch (error) {
+      layerInfo = { metaError: error.message };
+    }
+    const message = editErrorText(data, response.status);
+    console.error("[LRS] applyEdits failed", { layer: `${def.title || ""} (${def.id})`, url, status: response.status, message, response: data, sent: editPayloadSummary(payload), layerInfo });
+    throw new Error(message);
+  }
+  return data;
+}
+
+function measureSpan(attributes) {
+  const read = (pattern) => {
+    const entry = Object.entries(attributes || {}).find(([name]) => pattern.test(name));
+    const value = entry ? Number(entry[1]) : NaN;
+    return Number.isFinite(value) ? value : null;
+  };
+  const from = read(/^(frommeasure|from_measure|fromm|beginmeasure)$/i);
+  const to = read(/^(tomeasure|to_measure|tom|endmeasure)$/i);
+  const measure = read(/^measure$/i);
+  if (from != null || to != null) return { from: from ?? to ?? 0, to: to ?? from ?? 0 };
+  if (measure != null) return { from: measure, to: measure };
+  return { from: 0, to: 0 };
+}
+
+/** Z-aware layers reject a shape that has no z. Measures are added the same way when the layer stores them. */
+function enrichGeometry(geometry, meta, attributes) {
+  if (!geometry) return geometry;
+  const hasZ = Boolean(meta?.hasZ);
+  const hasM = Boolean(meta?.hasM);
+  if (!hasZ && !hasM) return geometry;
+  const span = measureSpan(attributes);
+  if (geometry.x != null && geometry.y != null) {
+    const point = { ...geometry };
+    if (hasZ) point.z = Number.isFinite(geometry.z) ? geometry.z : 0;
+    if (hasM) point.m = Number.isFinite(geometry.m) ? geometry.m : span.from;
+    return point;
+  }
+  if (!geometry.paths) return geometry;
+  const line = { ...geometry };
+  if (hasZ) line.hasZ = true;
+  if (hasM) line.hasM = true;
+  line.paths = geometry.paths.map((path) => {
+    const lengths = [0];
+    for (let i = 1; i < path.length; i += 1) lengths.push(lengths[i - 1] + haversineKm(path[i - 1], path[i]));
+    const total = lengths[lengths.length - 1] || 1;
+    return path.map((vertex, index) => {
+      const along = span.from + (span.to - span.from) * (lengths[index] / total);
+      const z = Number.isFinite(vertex[2]) ? vertex[2] : 0;
+      if (hasZ && hasM) return [vertex[0], vertex[1], z, along];
+      if (hasZ) return [vertex[0], vertex[1], z];
+      return [vertex[0], vertex[1], along];
+    });
+  });
+  return line;
+}
+
+/** Write attribute changes back to the feature table. */
+export function updateFeature(def, attributes) {
+  return applyEdits(def, { updates: JSON.stringify([{ attributes }]) });
+}
+
+/** Insert a new row, with a point or a line along the route. */
+export async function addFeature(def, attributes, geometry) {
+  const meta = await layerMeta(def.id, def.service || LRS);
+  return applyEdits(def, { adds: JSON.stringify([{ attributes, geometry: enrichGeometry(geometry, meta, attributes) }]) });
+}
+
 /** One visible layer inside the current view, not the whole country. */
 export async function loadLayerInExtent(def, extent) {
   const service = def.service || LRS;

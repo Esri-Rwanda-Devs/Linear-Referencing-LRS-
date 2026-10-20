@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { EditorPopup, EditorSidebar } from "./components/Editor";
 import Planner from "./components/Planner";
 import SegmentAnalysis from "./components/SegmentAnalysis";
 import RoutePicker from "./components/RoutePicker";
@@ -15,7 +16,7 @@ import {
   loadRouteCatalog,
   nearestRoads,
 } from "./lrs/lrsService";
-import { locateOnRoute } from "./lrs/geometry";
+import { locateOnRoute, pointAtMeasure, sliceVertices } from "./lrs/geometry";
 import { chartSnapshots, printMapReport, printRouteReport } from "./lrs/printReport";
 import { useRoadMap } from "./map/useRoadMap";
 
@@ -63,6 +64,12 @@ export default function App() {
   const pendingPoint = useRef(null);
   const [panelHost] = useState(() => document.createElement("div"));
   const [panelTab, setPanelTab] = useState("nearest");
+  const [viewMode, setViewMode] = useState("analyse");
+  const [placingId, setPlacingId] = useState(null);
+  const [lineAnchor, setLineAnchor] = useState(null);
+  const [placeMarks, setPlaceMarks] = useState(null);
+  const [editSelection, setEditSelection] = useState(null);
+  const editingPage = viewMode === "edit";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
   const [chartH, setChartH] = useState(
@@ -499,19 +506,116 @@ export default function App() {
   useEffect(() => {
     if (panelTab !== "segment") setSegmentStart(null);
   }, [panelTab]);
+  useEffect(() => {
+    if (!editingPage) {
+      setPlacingId(null);
+      setLineAnchor(null);
+      setPlaceMarks(null);
+      setEditSelection(null);
+    }
+    const frame = requestAnimationFrame(() => mapApi.current?.view?.resize?.());
+    return () => cancelAnimationFrame(frame);
+  }, [editingPage]);
+  const routeNameOf = (target) => {
+    if (target?.trajectory && target.trajectory !== "Road Network") return target.trajectory;
+    const item = catalog.find((entry) => entry.id === target?.id);
+    if (item?.code && item.code !== item.id && item.code !== "Road Network") return item.code;
+    const attributes = target?.features?.find((feature) => feature.attributes)?.attributes || {};
+    const key = Object.keys(attributes).find((name) => /route_?name$/i.test(name));
+    const value = key ? String(attributes[key] ?? "").trim() : "";
+    return value && value !== "Road Network" ? value : "";
+  };
+  const onEditHit = useCallback((layerId, oid) => {
+    setPlacingId(null);
+    setLineAnchor(null);
+    setPlaceMarks(null);
+    setEditSelection({ layerId, oid });
+  }, []);
+  const onEditPlace = useCallback((longitude, latitude) => {
+    const layerId = placingId;
+    const layer = LRS_LAYER_DEFS.find((item) => item.id === layerId);
+    if (!layer) return;
+    if (!route?.vertices?.length) {
+      setStatus(routeId ? `Reading ${routeId}…` : "Select the road first. Click it on the map.");
+      return;
+    }
+    const hit = locateOnRoute(route.vertices, route.measures, [longitude, latitude], 0.4);
+    if (!hit) {
+      setStatus(`Click on the active road ${route.id}.`);
+      return;
+    }
+    const onLine = pointAtMeasure(route.vertices, route.measures, hit.measure) || hit.point;
+    const target = route;
+    const named = routeNameOf(target);
+    if (layer.kind === "point") {
+      setEditSelection({
+        layerId,
+        routeId: target.id,
+        routeName: named,
+        measure: hit.measure,
+        geometry: { x: onLine[0], y: onLine[1], spatialReference: { wkid: 4326 } },
+      });
+      setPlaceMarks({ start: onLine, end: null });
+      setPlacingId(null);
+      setLineAnchor(null);
+      return;
+    }
+    if (!lineAnchor || lineAnchor.routeId !== target.id) {
+      setLineAnchor({
+        routeId: target.id,
+        routeName: named,
+        measure: hit.measure,
+        point: onLine,
+        vertices: target.vertices,
+        measures: target.measures,
+      });
+      setPlaceMarks({ start: onLine, end: null, line: true });
+      setStatus(`From ${hit.measure.toFixed(3)} km on ${target.id}. Move along the road, then click the end.`);
+      return;
+    }
+    const from = Math.min(lineAnchor.measure, hit.measure);
+    const to = Math.max(lineAnchor.measure, hit.measure);
+    const slice = sliceVertices(lineAnchor.vertices, lineAnchor.measures, from, to);
+    if (to - from < 0.001 || slice.length < 2) {
+      setStatus("Click two different places on the route.");
+      return;
+    }
+    setEditSelection({
+      layerId,
+      routeId: lineAnchor.routeId,
+      routeName: lineAnchor.routeName,
+      from,
+      to,
+      geometry: { paths: [slice], spatialReference: { wkid: 4326 } },
+    });
+    setPlaceMarks({ start: lineAnchor.point || onLine, end: onLine, path: slice });
+    setLineAnchor(null);
+    setPlacingId(null);
+    setStatus("");
+  }, [placingId, route, routeId, lineAnchor, catalog]);
 
   const onLeave = useCallback(() => {}, []);
+  const selectRoute = useCallback((id) => {
+    if (!id) return;
+    setRouteId(id);
+    setActiveId(null);
+    setActiveEvent(null);
+    setFollow(true);
+    setLineAnchor(null);
+    setPlaceMarks(null);
+    if (placingId != null) {
+      const layer = LRS_LAYER_DEFS.find((item) => item.id === placingId);
+      setStatus(layer?.kind === "point"
+        ? `${id} is active. Click that road to place the point.`
+        : `${id} is active. Click it for the start, then again for the end.`);
+    }
+  }, [placingId]);
   const [focusing, setFocusing] = useState(null);
   const mapApi = useRef(null);
   const mapRef = useRoadMap({
     mapApi,
     onFocusChange: setFocusing,
-    onPickRoute: (id) => {
-      setRouteId(id);
-      setActiveId(null);
-      setActiveEvent(null);
-      setFollow(true);
-    },
+    onPickRoute: (id) => selectRoute(id),
     route,
     events,
     cursor,
@@ -533,6 +637,12 @@ export default function App() {
     onOrigin,
     onHoverMeasure: onHoverLonLat,
     onLeave,
+    editing: editingPage,
+    placing: placingId != null,
+    onEditHit,
+    onEditPlace,
+    placeMarks,
+    placeAnchor: lineAnchor,
   });
 
   const nearby = useMemo(() => {
@@ -609,11 +719,15 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app${editingPage ? " page-edit" : ""}`}>
       <header className="topbar">
         <div>
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
           <h3>Road Location Reference Application</h3>
+        </div>
+        <div className="page-switch" role="tablist">
+          <button type="button" className={!editingPage ? "on" : ""} onClick={() => setViewMode("analyse")}>Chart</button>
+          <button type="button" className={editingPage ? "on" : ""} onClick={() => setViewMode("edit")}>Edit</button>
         </div>
         <div className="top-actions">
           <button
@@ -682,7 +796,38 @@ export default function App() {
             setActiveId(project.id);
           }}
         /> */}
-        <main ref={mainRef} style={{ gridTemplateRows: rowsFor(chartH) }}>
+        {editingPage && (
+          <EditorSidebar
+            hiddenLayerIds={hiddenLayerIds}
+            onToggle={(id) => setHiddenLayerIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
+            placingId={placingId}
+            lineAnchor={lineAnchor}
+            catalog={catalog}
+            activeRouteId={route?.id || routeId}
+            activeRouteName={route ? routeNameOf(route) : ""}
+            roadReady={Boolean(route?.vertices?.length)}
+            onSelectRoute={selectRoute}
+            onBeginAdd={(layer) => {
+              setHiddenLayerIds((current) => current.filter((id) => id !== layer.id));
+              setEditSelection(null);
+              setLineAnchor(null);
+              setPlaceMarks(null);
+              setPlacingId(layer.id);
+              setStatus(route
+                ? (layer.kind === "point"
+                  ? `${route.id} is active. Click it to place the point.`
+                  : `${route.id} is active. Click it for the start, then again for the end.`)
+                : "Select the road on the map first.");
+            }}
+            onCancelAdd={() => {
+              setPlacingId(null);
+              setLineAnchor(null);
+              setPlaceMarks(null);
+              setStatus("");
+            }}
+          />
+        )}
+        <main ref={mainRef} style={{ gridTemplateRows: editingPage ? "1fr" : rowsFor(chartH) }}>
           <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
             {(focusing ||
@@ -692,7 +837,24 @@ export default function App() {
                 {focusing || `Loading route ${routeId}…`}
               </div>
             )}
-            <div className="legend-box">
+            {editingPage && (
+              <EditorPopup
+                route={route}
+                selection={editSelection}
+                onClear={() => {
+                  setEditSelection(null);
+                  setPlaceMarks(null);
+                }}
+                onSaved={async (layerId) => {
+                  mapApi.current?.reloadLayer?.(layerId);
+                  if (!route) return;
+                  const located = await loadEvents(route);
+                  setEvents(located.events);
+                  setMapLayers(located.mapLayers);
+                }}
+              />
+            )}
+            {!editingPage && <div className="legend-box">
               <button
                 type="button"
                 className="legend-toggle"
@@ -748,8 +910,8 @@ export default function App() {
                   })}
                 </ul>
               )}
-            </div>
-            {createPortal(
+            </div>}
+            {!editingPage && createPortal(
               <div className="analysis-panel">
                 <div className="analysis-tabs" role="tablist">
                   <button
@@ -992,7 +1154,7 @@ export default function App() {
               </div>,
               panelHost,
             )}
-            <div className="cursor-card">
+            {!editingPage && <div className="cursor-card">
               <strong>
                 {cursor
                   ? `${cursor.measure.toFixed(2)} km`
@@ -1058,8 +1220,9 @@ export default function App() {
                   </ul>
                 </div>
               ))}
-            </div>
+            </div>}
           </section>
+          {!editingPage && <>
           <div
             className="chart-splitter"
             role="separator"
@@ -1319,6 +1482,7 @@ export default function App() {
               </div>
             )}
           </section>
+          </>}
         </main>
       </div>
     </div>

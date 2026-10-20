@@ -15,6 +15,7 @@ const MODULES = [
   "esri/symbols/SimpleLineSymbol",
   "esri/symbols/SimpleMarkerSymbol",
   "esri/symbols/SimpleFillSymbol",
+  "esri/symbols/TextSymbol",
   "esri/layers/support/FeatureEffect",
   "esri/layers/support/FeatureFilter",
   "esri/widgets/Search",
@@ -57,7 +58,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, editing = false, placing = false, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const originRef = useRef(onOrigin);
@@ -68,10 +69,20 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   segmentPickRef.current = segmentPicking;
   const segmentClickRef = useRef(onSegmentClick);
   segmentClickRef.current = onSegmentClick;
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const placingRef = useRef(placing);
+  placingRef.current = placing;
+  const editHitRef = useRef(onEditHit);
+  editHitRef.current = onEditHit;
+  const editPlaceRef = useRef(onEditPlace);
+  editPlaceRef.current = onEditPlace;
+  const anchorRef = useRef(null);
   const hiddenRef = useRef(hiddenLayerIds);
   hiddenRef.current = hiddenLayerIds;
   const routeRef = useRef(route);
   routeRef.current = route;
+  anchorRef.current = placeAnchor;
   const eventsRef = useRef(events);
   eventsRef.current = events;
   const ref = useRef(null);
@@ -117,7 +128,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     }
     loadModules(MODULES).then(async (mods) => {
       if (cancelled || !ref.current) return;
-      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils, esriConfig] = mods;
+      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils, esriConfig] = mods;
       esriConfig.request.interceptors.push({
         urls: /esrirw\.rw\/server\/rest\/services\/Reverse_Geocoding_Version9/i,
         before(params) {
@@ -134,7 +145,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const compareCursorLayer = new GraphicsLayer({ id: "lrs-compare-cursor", listMode: "hide" });
       const hereLayer = new GraphicsLayer({ id: "lrs-here", listMode: "hide" });
       const accidentLayer = new GraphicsLayer({ id: "lrs-accidents", listMode: "hide" });
-      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, hotspotLayer, segmentLayer, projectLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer] });
+      const placeLayer = new GraphicsLayer({ id: "lrs-place", listMode: "hide" });
+      const map = new Map({ basemap: "satellite", layers: [analysisLayer, compareLayer, overlay, hotspotLayer, segmentLayer, projectLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer] });
       view = new MapView({
         container: ref.current,
         map,
@@ -301,7 +313,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
               if (x > maxX) maxX = x;
               if (y > maxY) maxY = y;
             });
-            roadLines.push({ vertices, measures, minX, minY, maxX, maxY, route: entry.casing?.attributes?.route || "" });
+            roadLines.push({ vertices, measures, minX, minY, maxX, maxY, rid: entry.casing?.attributes?.rid || "", route: entry.casing?.attributes?.route || "" });
           });
         });
       };
@@ -574,20 +586,108 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       if (!navigator.geolocation) takeFix(null);
       else if (pendingFix !== undefined) takeFix(pendingFix);
+      const clearPlacePreview = () => {
+        const stale = placeLayer.graphics.filter((graphic) => graphic.attributes?.preview).toArray();
+        if (stale.length) placeLayer.removeMany(stale);
+      };
+      const paintPlacePreview = (longitude, latitude) => {
+        clearPlacePreview();
+        const anchor = anchorRef.current;
+        const active = routeRef.current;
+        if (!placingRef.current || !anchor?.vertices || !active?.vertices) return;
+        const hit = locateOnRoute(active.vertices, active.measures, [longitude, latitude], 0.45);
+        if (!hit) return;
+        const from = Math.min(anchor.measure, hit.measure);
+        const to = Math.max(anchor.measure, hit.measure);
+        if (to - from < 0.001) return;
+        const slice = sliceVertices(anchor.vertices, anchor.measures, from, to);
+        if (slice.length < 2) return;
+        const end = pointAtMeasure(active.vertices, active.measures, hit.measure);
+        const path = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
+        placeLayer.add(new Graphic({
+          attributes: { preview: true },
+          geometry: path,
+          symbol: new SimpleLineSymbol({ color: [255, 255, 255, 0.95], width: 7, cap: "round", join: "round" }),
+        }));
+        placeLayer.add(new Graphic({
+          attributes: { preview: true },
+          geometry: path,
+          symbol: new SimpleLineSymbol({ color: [14, 165, 233, 0.95], width: 3.5, cap: "round", join: "round" }),
+        }));
+        if (end) {
+          placeLayer.add(new Graphic({
+            attributes: { preview: true },
+            geometry: new Point({ longitude: end[0], latitude: end[1] }),
+            symbol: new SimpleMarkerSymbol({ style: "circle", color: [220, 38, 38, 0.98], size: 14, outline: { color: [255, 255, 255], width: 2 } }),
+          }));
+        }
+      };
       let hoverFrame = 0;
       view.on("pointer-move", (event) => {
         if (hoverFrame) return;
         hoverFrame = requestAnimationFrame(() => {
           hoverFrame = 0;
-          const current = api.current?.route;
-          if (!current) return;
           const mapPoint = view.toMap(event);
           if (!mapPoint) return;
-          hoverRef.current?.(mapPoint.longitude, mapPoint.latitude);
+          if (api.current?.route) hoverRef.current?.(mapPoint.longitude, mapPoint.latitude);
+          paintPlacePreview(mapPoint.longitude, mapPoint.latitude);
         });
       });
-      view.on("pointer-leave", () => leaveRef.current?.());
+      view.on("pointer-leave", () => {
+        leaveRef.current?.();
+        clearPlacePreview();
+      });
+      const nearestRoadId = (longitude, latitude) => {
+        let best = null;
+        roadLines.forEach((line) => {
+          if (!line.rid) return;
+          const pad = 0.004;
+          if (longitude < line.minX - pad || longitude > line.maxX + pad || latitude < line.minY - pad || latitude > line.maxY + pad) return;
+          const hit = locateOnRoute(line.vertices, line.measures, [longitude, latitude], 0.18);
+          if (!hit || (best && hit.distanceKm >= best.distanceKm)) return;
+          best = { id: line.rid, distanceKm: hit.distanceKm };
+        });
+        return best?.id || "";
+      };
       view.on("click", (event) => {
+        if (placingRef.current || editingRef.current) {
+          const longitude = event.mapPoint.longitude;
+          const latitude = event.mapPoint.latitude;
+          const candidates = lrsLayers.filter((layer) => layer && layer !== "pending" && layer.visible);
+          const finish = (explicitId, pointHit) => {
+            if (!placingRef.current && pointHit) {
+              editHitRef.current?.(pointHit.layerId, pointHit.oid);
+              return;
+            }
+            const routeId = explicitId || nearestRoadId(longitude, latitude);
+            const active = routeRef.current;
+            const same = Boolean(active?.vertices?.length && routeId && routeKey(active.id) === routeKey(routeId));
+            if (routeId && !same) {
+              clearPlacePreview();
+              pickRef.current?.(routeId);
+              return;
+            }
+            if (placingRef.current) editPlaceRef.current?.(longitude, latitude);
+          };
+          if (!candidates.length) {
+            finish("", null);
+            return;
+          }
+          view.hitTest(event, { include: candidates }).then((response) => {
+            const point = response.results.find((result) => {
+              const id = Number(String(result.graphic?.layer?.id || "").replace(/^lrs-/, ""));
+              const def = LRS_LAYER_DEFS.find((item) => item.id === id);
+              return def && !def.route && def.kind === "point" && result.graphic?.attributes?.oid != null;
+            });
+            const roadHit = response.results.find((result) => result.graphic?.attributes?.rid);
+            const explicitId = String(roadHit?.graphic?.attributes?.rid ?? "").trim();
+            finish(explicitId, point ? {
+              layerId: Number(String(point.graphic.layer?.id || "").replace(/^lrs-/, "")),
+              oid: point.graphic.attributes.oid,
+            } : null);
+          }).catch(() => finish("", null));
+          return;
+        }
         if (segmentPickRef.current) {
           segmentClickRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
           return;
@@ -632,7 +732,13 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             : null;
         });
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, paintHotspots, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, route: null };
+      const reloadLayer = (layerId) => {
+        const index = LRS_LAYER_DEFS.findIndex((def) => def.id === layerId);
+        if (index < 0) return;
+        covered[index].length = 0;
+        refreshExtent();
+      };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -661,20 +767,6 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       overlay.add(new Graphic({ geometry, symbol: halo }));
       overlay.add(new Graphic({ geometry, symbol: ink }));
     });
-    if (route.vertices?.length > 1) {
-      const ends = [
-        { at: route.vertices[0], color: [22, 163, 74], label: "Start" },
-        { at: route.vertices[route.vertices.length - 1], color: [220, 38, 38], label: "End" },
-      ];
-      ends.forEach(({ at, color, label }) => {
-        overlay.add(new Graphic({
-          geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
-          attributes: { end: label },
-          symbol: new bag.SimpleMarkerSymbol({ style: "circle", color, size: 13, outline: { color: [255, 255, 255], width: 2.5 } }),
-        }));
-      });
-    }
-
     const target = curved.length ? curved : line;
     const label = `${route.id}${route.trajectory && route.trajectory !== route.id ? ` · ${route.trajectory}` : ""}`;
     const started = performance.now();
@@ -785,8 +877,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     const bag = api.current;
     if (!bag?.view?.container) return;
-    bag.view.container.style.cursor = pickingOrigin || segmentPicking ? "crosshair" : "";
-  }, [pickingOrigin, segmentPicking, ready]);
+    bag.view.container.style.cursor = pickingOrigin || segmentPicking || editing || placing ? "crosshair" : "";
+  }, [pickingOrigin, segmentPicking, editing, placing, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -865,6 +957,47 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       }
     }
   }, [route, cursor, activeEvent, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.placeLayer) return;
+    bag.placeLayer.removeAll();
+    if (!placeMarks?.start) return;
+    const mark = (point, color, label) => {
+      bag.placeLayer.add(new bag.Graphic({
+        geometry: new bag.Point({ longitude: point[0], latitude: point[1] }),
+        symbol: new bag.SimpleMarkerSymbol({
+          style: "circle",
+          color,
+          size: 16,
+          outline: { color: [255, 255, 255, 1], width: 2.5 },
+        }),
+      }));
+      bag.placeLayer.add(new bag.Graphic({
+        geometry: new bag.Point({ longitude: point[0], latitude: point[1] }),
+        symbol: new bag.TextSymbol({
+          text: label,
+          color: [15, 23, 42, 1],
+          haloColor: [255, 255, 255, 1],
+          haloSize: 2,
+          font: { size: 11, weight: "bold", family: "sans-serif" },
+          yoffset: 16,
+        }),
+      }));
+    };
+    if (placeMarks.path?.length > 1) {
+      bag.placeLayer.add(new bag.Graphic({
+        geometry: new bag.Polyline({ paths: [placeMarks.path], spatialReference: { wkid: 4326 } }),
+        symbol: new bag.SimpleLineSymbol({ color: [255, 255, 255, 0.95], width: 7, cap: "round", join: "round" }),
+      }));
+      bag.placeLayer.add(new bag.Graphic({
+        geometry: new bag.Polyline({ paths: [placeMarks.path], spatialReference: { wkid: 4326 } }),
+        symbol: new bag.SimpleLineSymbol({ color: [14, 165, 233, 0.95], width: 3.5, cap: "round", join: "round" }),
+      }));
+    }
+    mark(placeMarks.start, [22, 163, 74, 0.98], placeMarks.end || placeMarks.line ? "Start" : "Point");
+    if (placeMarks.end) mark(placeMarks.end, [220, 38, 38, 0.98], "End");
+  }, [placeMarks, ready]);
 
   useEffect(() => {
     const bag = api.current;
