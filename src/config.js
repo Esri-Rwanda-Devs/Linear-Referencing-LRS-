@@ -47,7 +47,7 @@ export const LRS_LAYER_DEFS = [
   { id: 9, title: "LV Supports", group: "POI", kind: "point", shape: "triangle", color: [22, 163, 74, 0.95], swatch: "#16a34a" },
   { id: 6, title: "Point Assets", group: "POI", kind: "point", shape: "circle", color: [37, 99, 235, 0.95], swatch: "#2563eb" },
   { id: 0, title: "KM Stones", group: "POI", kind: "point", shape: "diamond", color: [219, 39, 119, 0.95], swatch: "#db2777" },
-  { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", showAll: true, snap: true },
+  { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", showAll: true, snap: true, readOnly: true },
 ];
 
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */

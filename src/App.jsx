@@ -11,10 +11,12 @@ import { exportComparison, exportRouteAssets, exportSegmentAssets } from "./lrs/
 import {
   failedLayerTitles,
   featuresAtMeasure,
+  featuresForRoute,
   loadEvents,
   loadRoute,
   loadRouteCatalog,
   nearestRoads,
+  routeKey,
 } from "./lrs/lrsService";
 import { locateOnRoute, pointAtMeasure, sliceVertices } from "./lrs/geometry";
 import { chartSnapshots, printMapReport, printRouteReport } from "./lrs/printReport";
@@ -27,6 +29,27 @@ const CHART_MIN = 40;
 const MAP_MIN = 120;
 const NO_PROJECTS = [];
 const noop = () => {};
+const EVENT_END_SNAP_KM = 0.05;
+
+/** If the click is near an existing line event end, use that measure so the new line can start where the other stops. */
+function snapMeasureToEventEnds(events, layerId, measure, toleranceKm = EVENT_END_SNAP_KM) {
+  let best = measure;
+  let bestDist = toleranceKm;
+  let snapped = false;
+  (events || []).forEach((item) => {
+    if (item.layerId !== layerId) return;
+    [item.from, item.to].forEach((end) => {
+      if (!Number.isFinite(end)) return;
+      const dist = Math.abs(end - measure);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        best = end;
+        snapped = true;
+      }
+    });
+  });
+  return { measure: best, snapped };
+}
 
 function readProjects() {
   try {
@@ -39,6 +62,9 @@ function readProjects() {
 export default function App() {
   const [catalog, setCatalog] = useState([]);
   const [routeId, setRouteId] = useState("");
+  const [routeTicket, setRouteTicket] = useState(0);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const routeLoadingRef = useRef(false);
   const [route, setRoute] = useState(null);
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState("");
@@ -69,6 +95,7 @@ export default function App() {
   const [lineAnchor, setLineAnchor] = useState(null);
   const [placeMarks, setPlaceMarks] = useState(null);
   const [editSelection, setEditSelection] = useState(null);
+  const [editNotice, setEditNotice] = useState("");
   const editingPage = viewMode === "edit";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
@@ -167,6 +194,8 @@ export default function App() {
 
   useEffect(() => {
     if (!routeId) {
+      routeLoadingRef.current = false;
+      setRouteLoading(false);
       setRoute(null);
       setEvents([]);
       setCursor(null);
@@ -174,6 +203,8 @@ export default function App() {
       return undefined;
     }
     let cancel = false;
+    routeLoadingRef.current = true;
+    setRouteLoading(true);
     setStatus(`Loading route ${routeId} …`);
     setRoute(null);
     setEvents([]);
@@ -216,11 +247,16 @@ export default function App() {
       })
       .catch((error) => {
         if (!cancel) setStatus(error.message);
+      })
+      .finally(() => {
+        if (cancel) return;
+        routeLoadingRef.current = false;
+        setRouteLoading(false);
       });
     return () => {
       cancel = true;
     };
-  }, [routeId]);
+  }, [routeId, routeTicket]);
 
   useEffect(() => {
     localStorage.setItem(STORE, JSON.stringify(projects));
@@ -526,11 +562,14 @@ export default function App() {
     return value && value !== "Road Network" ? value : "";
   };
   const onEditHit = useCallback((layerId, oid) => {
+    if (LRS_LAYER_DEFS.find((item) => item.id === layerId)?.readOnly) return;
+    const adding = placingId != null;
     setPlacingId(null);
     setLineAnchor(null);
     setPlaceMarks(null);
     setEditSelection({ layerId, oid });
-  }, []);
+    setEditNotice(adding ? "That line is already on this road, so it is open to edit. Add again on a clear part of the road." : "");
+  }, [placingId]);
   const onEditPlace = useCallback((longitude, latitude) => {
     const layerId = placingId;
     const layer = LRS_LAYER_DEFS.find((item) => item.id === layerId);
@@ -544,42 +583,74 @@ export default function App() {
       setStatus(`Click on the active road ${route.id}.`);
       return;
     }
-    const onLine = pointAtMeasure(route.vertices, route.measures, hit.measure) || hit.point;
+    const snapped = layer.kind === "line"
+      ? snapMeasureToEventEnds(events, layerId, hit.measure)
+      : { measure: hit.measure, snapped: false };
+    const measure = snapped.measure;
+    const onLine = pointAtMeasure(route.vertices, route.measures, measure) || hit.point;
     const target = route;
     const named = routeNameOf(target);
+    const shiftAside = (point, measure, meters) => {
+      const ahead = pointAtMeasure(target.vertices, target.measures, Math.min(target.lengthKm, measure + 0.05)) || point;
+      const behind = pointAtMeasure(target.vertices, target.measures, Math.max(0, measure - 0.05)) || point;
+      const dx = ahead[0] - behind[0];
+      const dy = ahead[1] - behind[1];
+      const len = Math.hypot(dx, dy) || 1;
+      const side = meters < 0 ? -1 : 1;
+      const dist = Math.abs(meters);
+      const lat = dist / 111320;
+      const lon = dist / (111320 * Math.max(0.2, Math.cos((point[1] * Math.PI) / 180)));
+      return [point[0] + (-dy / len) * lon * side, point[1] + (dx / len) * lat * side];
+    };
     if (layer.kind === "point") {
+      const crowded = events.filter((item) => item.layerId === layer.id && Math.abs(item.measure - hit.measure) < 0.04);
+      const meters = crowded.length ? 12 * crowded.length * (crowded.length % 2 ? 1 : -1) : 0;
+      const point = meters ? shiftAside(onLine, hit.measure, meters) : onLine;
+      const notice = meters
+        ? `${layer.title} already sits here.\nShifted ${Math.abs(meters)} m aside\nso they do not overlap.`
+        : "";
+      setEditNotice(notice);
       setEditSelection({
         layerId,
         routeId: target.id,
         routeName: named,
-        measure: hit.measure,
-        geometry: { x: onLine[0], y: onLine[1], spatialReference: { wkid: 4326 } },
+        measure,
+        notice,
+        geometry: { x: point[0], y: point[1], spatialReference: { wkid: 4326 } },
       });
-      setPlaceMarks({ start: onLine, end: null });
+      setPlaceMarks({ start: point, end: null, notice });
       setPlacingId(null);
       setLineAnchor(null);
       return;
     }
     if (!lineAnchor || lineAnchor.routeId !== target.id) {
+      setEditNotice("");
       setLineAnchor({
         routeId: target.id,
         routeName: named,
-        measure: hit.measure,
+        measure,
         point: onLine,
         vertices: target.vertices,
         measures: target.measures,
       });
       setPlaceMarks({ start: onLine, end: null, line: true });
-      setStatus(`From ${hit.measure.toFixed(3)} km on ${target.id}. Move along the road, then click the end.`);
+      setStatus(
+        snapped.snapped
+          ? `Start at ${measure.toFixed(3)} km, where the other ${layer.title} ends. Click the end of your new line.`
+          : `Start at ${measure.toFixed(3)} km on ${target.id}. Click the end where you want it.`
+      );
       return;
     }
-    const from = Math.min(lineAnchor.measure, hit.measure);
-    const to = Math.max(lineAnchor.measure, hit.measure);
+    const from = Math.min(lineAnchor.measure, measure);
+    const to = Math.max(lineAnchor.measure, measure);
     const slice = sliceVertices(lineAnchor.vertices, lineAnchor.measures, from, to);
     if (to - from < 0.001 || slice.length < 2) {
-      setStatus("Click two different places on the route.");
+      const message = "Click a different point for the end of the line.";
+      setEditNotice(message);
+      setStatus(message);
       return;
     }
+    setEditNotice("");
     setEditSelection({
       layerId,
       routeId: lineAnchor.routeId,
@@ -588,34 +659,43 @@ export default function App() {
       to,
       geometry: { paths: [slice], spatialReference: { wkid: 4326 } },
     });
-    setPlaceMarks({ start: lineAnchor.point || onLine, end: onLine, path: slice });
+    setPlaceMarks({ start: pointAtMeasure(lineAnchor.vertices, lineAnchor.measures, from) || lineAnchor.point, end: pointAtMeasure(lineAnchor.vertices, lineAnchor.measures, to) || onLine, path: slice });
     setLineAnchor(null);
     setPlacingId(null);
-    setStatus("");
-  }, [placingId, route, routeId, lineAnchor, catalog]);
+    setEditNotice("");
+    setStatus(`Line from ${from.toFixed(3)} to ${to.toFixed(3)} km on ${lineAnchor.routeId}.`);
+  }, [placingId, route, routeId, lineAnchor, catalog, events]);
 
   const onLeave = useCallback(() => {}, []);
   const selectRoute = useCallback((id) => {
-    if (!id) return;
+    if (!id || routeLoadingRef.current || placingId != null) return;
+    const loaded = Boolean(route?.vertices?.length && routeKey(route.id) === routeKey(id));
+    if (!loaded) {
+      routeLoadingRef.current = true;
+      setRouteLoading(true);
+      if (String(routeId) === String(id)) setRouteTicket((ticket) => ticket + 1);
+    }
     setRouteId(id);
     setActiveId(null);
     setActiveEvent(null);
     setFollow(true);
     setLineAnchor(null);
     setPlaceMarks(null);
+    setEditNotice("");
     if (placingId != null) {
       const layer = LRS_LAYER_DEFS.find((item) => item.id === placingId);
       setStatus(layer?.kind === "point"
         ? `${id} is active. Click that road to place the point.`
-        : `${id} is active. Click it for the start, then again for the end.`);
+        : `${id} is active. Click the start yourself, then click the end.`);
     }
-  }, [placingId]);
+  }, [placingId, route, routeId]);
   const [focusing, setFocusing] = useState(null);
   const mapApi = useRef(null);
   const mapRef = useRoadMap({
     mapApi,
     onFocusChange: setFocusing,
     onPickRoute: (id) => selectRoute(id),
+    routeLoadingRef,
     route,
     events,
     cursor,
@@ -807,22 +887,26 @@ export default function App() {
             activeRouteName={route ? routeNameOf(route) : ""}
             roadReady={Boolean(route?.vertices?.length)}
             onSelectRoute={selectRoute}
+            notice={editNotice}
             onBeginAdd={(layer) => {
+              if (layer.readOnly) return;
               setHiddenLayerIds((current) => current.filter((id) => id !== layer.id));
               setEditSelection(null);
               setLineAnchor(null);
               setPlaceMarks(null);
+              setEditNotice("");
               setPlacingId(layer.id);
               setStatus(route
                 ? (layer.kind === "point"
                   ? `${route.id} is active. Click it to place the point.`
-                  : `${route.id} is active. Click it for the start, then again for the end.`)
+                  : `${route.id} is active. Click the start yourself, then click the end.`)
                 : "Select the road on the map first.");
             }}
             onCancelAdd={() => {
               setPlacingId(null);
               setLineAnchor(null);
               setPlaceMarks(null);
+              setEditNotice("");
               setStatus("");
             }}
           />
@@ -830,27 +914,40 @@ export default function App() {
         <main ref={mainRef} style={{ gridTemplateRows: editingPage ? "1fr" : rowsFor(chartH) }}>
           <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
-            {(focusing ||
-              (routeId && !route && status.startsWith("Signing in"))) && (
-              <div className="map-loader" role="status">
-                <span className="spinner" />
-                {focusing || `Loading route ${routeId}…`}
+            {(routeLoading || focusing) && (
+              <div className="map-loader" role="status" aria-live="polite">
+                <div className="map-loader-card">
+                  <span className="spinner" />
+                  {routeLoading ? `Loading route ${routeId}…` : focusing}
+                </div>
               </div>
             )}
             {editingPage && (
               <EditorPopup
                 route={route}
+                events={events}
                 selection={editSelection}
-                onClear={() => {
+                onClear={(note) => {
                   setEditSelection(null);
                   setPlaceMarks(null);
+                  if (note?.sidebar) setEditNotice(note.sidebar);
                 }}
                 onSaved={async (layerId) => {
-                  mapApi.current?.reloadLayer?.(layerId);
                   if (!route) return;
                   const located = await loadEvents(route);
                   setEvents(located.events);
                   setMapLayers(located.mapLayers);
+                  const def = LRS_LAYER_DEFS.find((item) => item.id === layerId);
+                  if (!def) return;
+                  const layer = await featuresForRoute(def, route);
+                  await mapApi.current?.showRouteLayer?.(def, layer.features || []);
+                  const view = mapApi.current?.view;
+                  const geometry = editSelection?.geometry;
+                  if (!view || !geometry) return;
+                  const target = geometry.x != null
+                    ? new mapApi.current.Point({ longitude: geometry.x, latitude: geometry.y })
+                    : new mapApi.current.Polyline({ paths: geometry.paths, spatialReference: { wkid: 4326 } });
+                  view.goTo(geometry.x != null ? { target, zoom: 17 } : { target, padding: 72 }, { duration: 650 }).catch(() => {});
                 }}
               />
             )}

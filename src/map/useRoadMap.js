@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS } from "../config";
+import { GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
-import { accidentInLastMonth, accidentTime, hotspotSpans, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
+import { accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
 
 const MODULES = [
   "esri/Map",
@@ -58,9 +58,11 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, editing = false, placing = false, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
+  const busyRef = useRef(routeLoadingRef);
+  busyRef.current = routeLoadingRef;
   const originRef = useRef(onOrigin);
   originRef.current = onOrigin;
   const pickingRef = useRef(pickingOrigin);
@@ -82,6 +84,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   hiddenRef.current = hiddenLayerIds;
   const routeRef = useRef(route);
   routeRef.current = route;
+  const zoomedRoute = useRef("");
   anchorRef.current = placeAnchor;
   const eventsRef = useRef(events);
   eventsRef.current = events;
@@ -258,8 +261,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       map.add(roadLayer, 0);
       const roadCasing = new SimpleLineSymbol({ color: [120, 128, 138, 0.95], width: 4.2, cap: "round", join: "round" });
       const roadCenter = new SimpleLineSymbol({ color: [255, 255, 255, 0.98], width: 1.8, cap: "round", join: "round" });
+      const roadCasingEdit = new SimpleLineSymbol({ color: [146, 84, 24, 0.55], width: 5.5, cap: "round", join: "round" });
+      const roadCenterEdit = new SimpleLineSymbol({ color: [255, 196, 92, 0.9], width: 2.6, cap: "round", join: "round" });
       const roadCasingDim = new SimpleLineSymbol({ color: [148, 163, 184, 0.4], width: 4.2, cap: "round", join: "round" });
       const roadCenterDim = new SimpleLineSymbol({ color: [255, 255, 255, 0.35], width: 1.8, cap: "round", join: "round" });
+      const roadCasingOff = new SimpleLineSymbol({ color: [148, 163, 184, 0.16], width: 2, cap: "round", join: "round" });
+      const roadCenterOff = new SimpleLineSymbol({ color: [255, 255, 255, 0.1], width: 0.8, cap: "round", join: "round" });
       const segmentCasing = new SimpleLineSymbol({ color: [255, 255, 255, 1], width: 8, cap: "round", join: "round" });
       const drawnRoads = new globalThis.Map();
       const roadLines = [];
@@ -269,6 +276,18 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const effectFor = () => (routeWhere.value
         ? new FeatureEffect({ filter: new FeatureFilter({ where: routeWhere.value }), excludedEffect: "opacity(16%) grayscale(60%)" })
         : null);
+      const rendererFor = (def) => {
+        const rule = VALUE_COLORS[def.id];
+        if (!rule || def.kind !== "line") return { type: "simple", symbol: symbolFor(def) };
+        const width = Math.max(def.width || 3, 5);
+        const line = (color) => ({ type: "simple-line", color, width, cap: "round", join: "round" });
+        return {
+          type: "unique-value",
+          field: "tone",
+          defaultSymbol: line(def.color),
+          uniqueValueInfos: Object.entries(rule.colors).map(([value, color]) => ({ value: String(value), symbol: line(color) })),
+        };
+      };
       const symbolFor = (def) => (def.kind === "point"
         ? (def.shape === "x"
           ? { type: "simple-marker", style: "x", color: def.color, size: 6, outline: { color: def.color, width: 1.6 } }
@@ -440,11 +459,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           title: def.title,
           source: [],
           objectIdField: "oid",
-          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }, { name: "rid", type: "string" }],
+          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }, { name: "rid", type: "string" }, { name: "tone", type: "string" }],
           geometryType: def.kind === "point" ? "point" : "polyline",
           spatialReference: { wkid: 4326 },
-          renderer: { type: "simple", symbol: symbolFor(def) },
-          outFields: ["route", "rid"],
+          renderer: rendererFor(def),
+          outFields: ["route", "rid", "tone"],
           popupEnabled: false,
           listMode: "hide",
           visible: !(hiddenRef.current || []).includes(def.id),
@@ -484,7 +503,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const rid = routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "";
           const graphic = new Graphic({
             geometry,
-            attributes: { oid, route: rid ? routeKey(rid) : "", rid },
+            attributes: { oid, route: rid ? routeKey(rid) : "", rid, tone: lineTone(LRS_LAYER_DEFS[index].id, feature.attributes) },
           });
           if (previous === undefined) add.push(graphic);
           else update.push(graphic);
@@ -510,6 +529,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             await pause();
           }
           if (add.length || update.length) console.info(`[LRS] ${def.title}: added ${add.length}, updated ${update.length} (${seen[index].size} total)`);
+          raiseEditLayers();
         }).catch((error) => console.warn(`[LRS] Could not draw ${def.title}`, error));
         return chains[index];
       };
@@ -520,6 +540,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const faithful = Math.abs(box.xmax - box.xmin) < 0.05;
         const jobs = [];
         LRS_LAYER_DEFS.forEach((def, index) => {
+          if (!def.route && editingRef.current) return;
           if (def.route) {
             if (hidden.has(def.id) || covers(index, box, faithful)) return;
             const record = { ...box, faithful };
@@ -590,37 +611,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const stale = placeLayer.graphics.filter((graphic) => graphic.attributes?.preview).toArray();
         if (stale.length) placeLayer.removeMany(stale);
       };
-      const paintPlacePreview = (longitude, latitude) => {
+      const paintPlacePreview = () => {
         clearPlacePreview();
-        const anchor = anchorRef.current;
-        const active = routeRef.current;
-        if (!placingRef.current || !anchor?.vertices || !active?.vertices) return;
-        const hit = locateOnRoute(active.vertices, active.measures, [longitude, latitude], 0.45);
-        if (!hit) return;
-        const from = Math.min(anchor.measure, hit.measure);
-        const to = Math.max(anchor.measure, hit.measure);
-        if (to - from < 0.001) return;
-        const slice = sliceVertices(anchor.vertices, anchor.measures, from, to);
-        if (slice.length < 2) return;
-        const end = pointAtMeasure(active.vertices, active.measures, hit.measure);
-        const path = new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } });
-        placeLayer.add(new Graphic({
-          attributes: { preview: true },
-          geometry: path,
-          symbol: new SimpleLineSymbol({ color: [255, 255, 255, 0.95], width: 7, cap: "round", join: "round" }),
-        }));
-        placeLayer.add(new Graphic({
-          attributes: { preview: true },
-          geometry: path,
-          symbol: new SimpleLineSymbol({ color: [14, 165, 233, 0.95], width: 3.5, cap: "round", join: "round" }),
-        }));
-        if (end) {
-          placeLayer.add(new Graphic({
-            attributes: { preview: true },
-            geometry: new Point({ longitude: end[0], latitude: end[1] }),
-            symbol: new SimpleMarkerSymbol({ style: "circle", color: [220, 38, 38, 0.98], size: 14, outline: { color: [255, 255, 255], width: 2 } }),
-          }));
-        }
       };
       let hoverFrame = 0;
       view.on("pointer-move", (event) => {
@@ -650,19 +642,25 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         return best?.id || "";
       };
       view.on("click", (event) => {
+        if (busyRef.current?.current) return;
         if (placingRef.current || editingRef.current) {
           const longitude = event.mapPoint.longitude;
           const latitude = event.mapPoint.latitude;
           const candidates = lrsLayers.filter((layer) => layer && layer !== "pending" && layer.visible);
-          const finish = (explicitId, pointHit) => {
-            if (!placingRef.current && pointHit) {
-              editHitRef.current?.(pointHit.layerId, pointHit.oid);
+          const finish = (explicitId, featureHit) => {
+            // While adding, a click on an existing line is a start/end, not an edit.
+            if (featureHit && !placingRef.current) {
+              editHitRef.current?.(featureHit.layerId, featureHit.oid);
               return;
             }
             const routeId = explicitId || nearestRoadId(longitude, latitude);
             const active = routeRef.current;
             const same = Boolean(active?.vertices?.length && routeId && routeKey(active.id) === routeKey(routeId));
             if (routeId && !same) {
+              if (editingRef.current && active?.vertices?.length) {
+                if (placingRef.current) editPlaceRef.current?.(longitude, latitude);
+                return;
+              }
               clearPlacePreview();
               pickRef.current?.(routeId);
               return;
@@ -674,16 +672,20 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             return;
           }
           view.hitTest(event, { include: candidates }).then((response) => {
-            const point = response.results.find((result) => {
+            const assetHit = (kind) => response.results.find((result) => {
               const id = Number(String(result.graphic?.layer?.id || "").replace(/^lrs-/, ""));
               const def = LRS_LAYER_DEFS.find((item) => item.id === id);
-              return def && !def.route && def.kind === "point" && result.graphic?.attributes?.oid != null;
+              return def && !def.route && !def.readOnly && def.kind === kind && result.graphic?.attributes?.oid != null;
             });
+            const picked = assetHit("point") || assetHit("line");
             const roadHit = response.results.find((result) => result.graphic?.attributes?.rid);
             const explicitId = String(roadHit?.graphic?.attributes?.rid ?? "").trim();
-            finish(explicitId, point ? {
-              layerId: Number(String(point.graphic.layer?.id || "").replace(/^lrs-/, "")),
-              oid: point.graphic.attributes.oid,
+            const pickedId = picked ? Number(String(picked.graphic.layer?.id || "").replace(/^lrs-/, "")) : null;
+            const pickedKind = LRS_LAYER_DEFS.find((item) => item.id === pickedId)?.kind;
+            finish(explicitId, picked ? {
+              layerId: pickedId,
+              oid: picked.graphic.attributes.oid,
+              kind: pickedKind,
             } : null);
           }).catch(() => finish("", null));
           return;
@@ -715,11 +717,16 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         roadLayer.graphics.forEach((graphic) => {
           const on = !keys.size || keys.has(graphic.attributes?.route);
           const center = graphic.attributes?.part === "center";
-          graphic.symbol = center ? (on ? roadCenter : roadCenterDim) : (on ? roadCasing : roadCasingDim);
+          const quiet = editingRef.current && on;
+          const off = editingRef.current && !on;
+          graphic.symbol = center
+            ? (on ? (quiet ? roadCenterEdit : roadCenter) : (off ? roadCenterOff : roadCenterDim))
+            : (on ? (quiet ? roadCasingEdit : roadCasing) : (off ? roadCasingOff : roadCasingDim));
         });
         lrsLayers.forEach((layer, index) => {
           if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
-          if (LRS_LAYER_DEFS[index].showAll) {
+          const lockRoute = editingRef.current;
+          if (LRS_LAYER_DEFS[index].showAll && !lockRoute) {
             layer.featureEffect = null;
             return;
           }
@@ -727,7 +734,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           layer.featureEffect = routeWhere.value
             ? new FeatureEffect({
               filter: new FeatureFilter({ where: routeWhere.value }),
-              excludedEffect: lineEvent ? "opacity(0%)" : "opacity(16%) grayscale(60%)",
+              excludedEffect: lockRoute || lineEvent ? "opacity(0%)" : "opacity(16%) grayscale(60%)",
             })
             : null;
         });
@@ -738,7 +745,59 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         covered[index].length = 0;
         refreshExtent();
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      const raiseEditLayers = () => {
+        const lineAt = map.layers.indexOf(overlay) + 1;
+        lrsLayers.forEach((layer, index) => {
+          const def = LRS_LAYER_DEFS[index];
+          if (!layer || layer === "pending" || !def || def.route || def.kind !== "line") return;
+          const colored = Boolean(VALUE_COLORS[def.id]);
+          map.reorder(layer, layer.visible && (editingRef.current || colored) ? lineAt : 0);
+        });
+        lrsLayers.forEach((layer, index) => {
+          const def = LRS_LAYER_DEFS[index];
+          if (!layer || layer === "pending" || !def || def.route || def.kind === "line") return;
+          const base = symbolFor(def);
+          layer.renderer = {
+            type: "simple",
+            symbol: editingRef.current
+              ? { ...base, size: (base.size || 6) + 4, outline: { color: [255, 255, 255, 1], width: 1.5 } }
+              : base,
+          };
+          if (!editingRef.current || !layer.visible) return;
+          const cap = map.layers.indexOf(placeLayer);
+          map.reorder(layer, cap < 0 ? map.layers.length - 1 : cap);
+        });
+      };
+      const drawFeatures = (def, features) => {
+        const id = routeRef.current?.id || "";
+        const stamped = (features || []).map((feature) => ({
+          ...feature,
+          attributes: { ...(feature.attributes || {}), __route: id },
+        }));
+        return addFeatures(def, stamped, "__route").then(() => raiseEditLayers());
+      };
+      const showRouteLayer = (def, features, onlyRoute = false) => {
+        const index = LRS_LAYER_DEFS.findIndex((item) => item.id === def.id);
+        if (index < 0) return Promise.resolve();
+        const layer = ensureLayer(def);
+        chains[index] = chains[index].then(async () => {
+          if (cancelled || !layer) return;
+          if (!layer.loaded) await layer.load();
+          const key = routeKey(routeRef.current?.id || "");
+          const result = await layer.queryFeatures();
+          const drop = onlyRoute
+            ? (result.features || [])
+            : (result.features || []).filter((feature) => {
+              const value = feature.attributes?.route;
+              return !key || value === key || !value;
+            });
+          if (onlyRoute) seen[index].clear();
+          else drop.forEach((feature) => seen[index].delete(Number(feature.attributes?.oid)));
+          if (drop.length) await layer.applyEdits({ deleteFeatures: drop });
+        }).catch((error) => console.warn(`[LRS] Could not refresh ${def.title}`, error));
+        return chains[index].then(() => drawFeatures(def, features || []));
+      };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, raiseEditLayers, drawFeatures, showRouteLayer, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -753,7 +812,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     const bag = api.current;
     if (!bag || !route) return;
     bag.route = route;
-    const { view, overlay, Graphic, Polyline, geometryEngine, SimpleFillSymbol, SimpleLineSymbol } = bag;
+    const { view, overlay, Graphic, Polyline, Point, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = bag;
     overlay.removeAll();
     const curved = (route.geometries || []).map((geom) => {
       const rawX = geom.curvePaths?.[0]?.[0]?.[0] ?? geom.paths?.[0]?.[0]?.[0];
@@ -761,13 +820,49 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       return new Polyline(geom.curvePaths ? { curvePaths: geom.curvePaths, spatialReference } : { paths: geom.paths, spatialReference });
     });
     const line = curved[0] || new Polyline({ paths: [route.vertices], spatialReference: { wkid: 4326 } });
-    const halo = new SimpleLineSymbol({ color: [0, 255, 255, 0.35], width: 14, cap: "round", join: "round" });
-    const ink = new SimpleLineSymbol({ color: [0, 255, 255, 1], width: 5, cap: "round", join: "round" });
+    const halo = new SimpleLineSymbol({
+      color: editing ? [180, 83, 9, 0.28] : [0, 255, 255, 0.35],
+      width: editing ? 8 : 14,
+      cap: "round",
+      join: "round",
+    });
+    const ink = new SimpleLineSymbol({
+      color: editing ? [251, 191, 36, 0.82] : [0, 255, 255, 1],
+      width: editing ? 3.2 : 5,
+      cap: "round",
+      join: "round",
+    });
     curved.forEach((geometry) => {
       overlay.add(new Graphic({ geometry, symbol: halo }));
       overlay.add(new Graphic({ geometry, symbol: ink }));
     });
+    const markTerminus = (measure, color, label) => {
+      const at = pointAtMeasure(route.vertices, route.measures, measure)
+        || (measure === 0 ? route.vertices?.[0] : route.vertices?.[route.vertices.length - 1]);
+      if (!at) return;
+      const geometry = new Point({ longitude: at[0], latitude: at[1] });
+      overlay.add(new Graphic({
+        geometry,
+        symbol: new SimpleMarkerSymbol({ style: "circle", color, size: 14, outline: { color: [255, 255, 255], width: 2 } }),
+      }));
+      overlay.add(new Graphic({
+        geometry,
+        symbol: new TextSymbol({
+          text: label,
+          color: [15, 23, 42, 1],
+          haloColor: [255, 255, 255, 1],
+          haloSize: 2,
+          font: { size: 11, weight: "bold", family: "sans-serif" },
+          yoffset: 16,
+        }),
+      }));
+    };
+    markTerminus(0, [22, 163, 74, 0.98], "Start");
+    markTerminus(route.lengthKm || 0, [220, 38, 38, 0.98], "End");
     const target = curved.length ? curved : line;
+    const zoomKey = `${route.id}:${editing ? "edit" : "chart"}`;
+    if (zoomedRoute.current === zoomKey) return;
+    zoomedRoute.current = zoomKey;
     const label = `${route.id}${route.trajectory && route.trajectory !== route.id ? ` · ${route.trajectory}` : ""}`;
     const started = performance.now();
     console.info(`[LRS] Zooming to route ${label}…`);
@@ -780,7 +875,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         if (error?.name !== "AbortError") console.warn(`[LRS] Could not zoom to route ${label}`, error);
       })
       .finally(() => focusRef.current?.(null));
-  }, [route, ready]);
+  }, [route, ready, editing]);
 
   useEffect(() => {
     const bag = api.current;
@@ -997,6 +1092,22 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     }
     mark(placeMarks.start, [22, 163, 74, 0.98], placeMarks.end || placeMarks.line ? "Start" : "Point");
     if (placeMarks.end) mark(placeMarks.end, [220, 38, 38, 0.98], "End");
+    if (placeMarks.notice) {
+      const at = placeMarks.end || placeMarks.start;
+      bag.placeLayer.add(new bag.Graphic({
+        geometry: new bag.Point({ longitude: at[0], latitude: at[1] }),
+        symbol: new bag.TextSymbol({
+          text: placeMarks.notice,
+          color: [154, 52, 18, 1],
+          haloColor: [255, 247, 237, 1],
+          haloSize: 3,
+          horizontalAlignment: "left",
+          font: { size: 12, weight: "bold", family: "sans-serif" },
+          xoffset: 16,
+          yoffset: 28,
+        }),
+      }));
+    }
   }, [placeMarks, ready]);
 
   useEffect(() => {
@@ -1020,7 +1131,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     bag.compareRoute = other;
     bag.applyRouteEffect?.(route, other);
     bag.paintHotspots?.();
-  }, [route, compareRoute, events, ready]);
+  }, [route, compareRoute, events, editing, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -1098,8 +1209,23 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     bag.lrsLayers.forEach((layer, index) => {
       if (layer && layer !== "pending") layer.visible = !hidden.has(LRS_LAYER_DEFS[index].id);
     });
+    bag.raiseEditLayers?.();
     bag.refreshExtent?.();
-  }, [hiddenLayerIds, ready]);
+  }, [hiddenLayerIds, editing, ready]);
+
+  useEffect(() => {
+    const bag = api.current;
+    if (!ready || !editing || !route || !bag?.drawFeatures) return undefined;
+    let cancel = false;
+    const hidden = new Set(hiddenLayerIds || []);
+    LRS_LAYER_DEFS.forEach((def) => {
+      if (def.route || hidden.has(def.id)) return;
+      featuresForRoute(def, route).then((layer) => {
+        if (!cancel) bag.showRouteLayer?.(def, layer.features || [], true);
+      }).catch((error) => console.warn(`[LRS] ${def.title} on ${route.id}`, error));
+    });
+    return () => { cancel = true; };
+  }, [editing, route, hiddenLayerIds, ready]);
 
   return ref;
 }

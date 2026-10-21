@@ -1,5 +1,5 @@
-import { LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../config";
-import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, toLonLat } from "./geometry";
+import { ADMIN, LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../config";
+import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "./geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
@@ -327,6 +327,30 @@ export async function layerFields(def) {
   return { fields, oidField };
 }
 
+/** Province through village for a point, from the village boundary that contains it. */
+export async function adminAt(longitude, latitude) {
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+  const data = await queryFeatures(4, {
+    geometry: JSON.stringify({ x: longitude, y: latitude, spatialReference: { wkid: 4326 } }),
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: "province,district,sector,cell,village",
+    returnGeometry: "false",
+    resultRecordCount: "1",
+  }, 2, ADMIN);
+  const attributes = data.features[0]?.attributes;
+  if (!attributes) return null;
+  const text = (name) => String(attributes[name] ?? "").trim();
+  return {
+    province: text("province"),
+    district: text("district"),
+    sector: text("sector"),
+    cell: text("cell"),
+    village: text("village"),
+  };
+}
+
 /** One feature, with every column, ready to edit. */
 export async function loadFeature(def, oid) {
   const { oidField } = await layerFields(def);
@@ -393,7 +417,7 @@ async function applyEdits(def, payload) {
     console.error("[LRS] applyEdits returned non-JSON", { layer: `${def.title || ""} (${def.id})`, url, status: response.status, body: text.slice(0, 2000), sent: editPayloadSummary(payload) });
     throw new Error(`The server did not return JSON (HTTP ${response.status}).`);
   }
-  const failed = data?.error || [...(data?.addResults || []), ...(data?.updateResults || [])].some((result) => result && result.success === false);
+  const failed = data?.error || [...(data?.addResults || []), ...(data?.updateResults || []), ...(data?.deleteResults || [])].some((result) => result && result.success === false);
   if (!response.ok || failed) {
     let layerInfo = null;
     try {
@@ -458,6 +482,100 @@ function enrichGeometry(geometry, meta, attributes) {
 /** Write attribute changes back to the feature table. */
 export function updateFeature(def, attributes) {
   return applyEdits(def, { updates: JSON.stringify([{ attributes }]) });
+}
+
+const MERGE_GAP_KM = 0.05;
+
+function featureOid(attributes) {
+  const entry = Object.entries(attributes || {}).find(([name]) => /^objectid$|^oid$/i.test(name));
+  const value = entry ? Number(entry[1]) : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+function eventTypeKey(layerId, attributes) {
+  const rule = VALUE_COLORS[layerId];
+  if (!rule || !attributes) return "";
+  const wanted = normName(rule.field);
+  const field = Object.keys(attributes).find((key) => normName(key) === wanted);
+  if (!field || attributes[field] == null || String(attributes[field]).trim() === "") return "";
+  return colorKey(attributes[field]);
+}
+
+function typeTokens(raw, field) {
+  const tokens = new Set();
+  const add = (value) => {
+    const token = colorKey(value);
+    if (token) tokens.add(token);
+  };
+  add(raw);
+  const match = (field?.domain?.codedValues || []).find((item) => String(item.code) === String(raw) || colorKey(item.name) === colorKey(raw) || colorKey(item.code) === colorKey(raw));
+  if (match) {
+    add(match.code);
+    add(match.name);
+  }
+  return tokens;
+}
+
+function typeLabel(raw, field) {
+  const match = (field?.domain?.codedValues || []).find((item) => String(item.code) === String(raw) || colorKey(item.name) === colorKey(raw) || colorKey(item.code) === colorKey(raw));
+  return match?.name ? String(match.name) : String(raw ?? "").trim();
+}
+
+/** Same-value line events that touch this new stretch, ready to become one segment. */
+export function lineMergePlan(def, attributes, events, typeField, from, to) {
+  const rule = VALUE_COLORS[def?.id];
+  if (!rule || def.kind !== "line" || def.route) return null;
+  if (!(Number(to) > Number(from))) return null;
+  const raw = typeField ? attributes?.[typeField.name] : null;
+  if (raw == null || String(raw).trim() === "") return null;
+  const tokens = typeTokens(raw, typeField);
+  if (!tokens.size) return null;
+  const candidates = (events || []).filter((item) => item.layerId === def.id && item.oid != null && item.to - item.from > 0.02 && tokens.has(colorKey(item.typeKey || item.name)));
+  const taken = [];
+  let lo = Number(from);
+  let hi = Number(to);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    candidates.forEach((item) => {
+      if (taken.includes(item)) return;
+      if (item.to < lo - MERGE_GAP_KM || item.from > hi + MERGE_GAP_KM) return;
+      taken.push(item);
+      lo = Math.min(lo, item.from);
+      hi = Math.max(hi, item.to);
+      grew = true;
+    });
+  }
+  if (!taken.length) return null;
+  const keeper = [...taken].sort((a, b) => (b.to - b.from) - (a.to - a.from) || a.oid - b.oid)[0];
+  return {
+    from: lo,
+    to: hi,
+    keeper,
+    remove: taken.filter((item) => item.oid !== keeper.oid),
+    label: typeLabel(raw, typeField),
+  };
+}
+
+/** Extend the existing same-value line and drop the extra pieces. */
+export async function mergeMatchingLine(def, attributes, route, events, typeField) {
+  const span = measureSpan(attributes);
+  const plan = lineMergePlan(def, attributes, events, typeField, span.from, span.to);
+  if (!plan || !route?.vertices?.length) return null;
+  const slice = sliceVertices(route.vertices, route.measures, plan.from, plan.to);
+  if (slice.length < 2) return null;
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const oidField = (meta.fields || []).find((field) => field.type === "esriFieldTypeOID")?.name || "OBJECTID";
+  const fromName = Object.keys(attributes).find((name) => /^(frommeasure|from_measure|fromm|beginmeasure)$/i.test(name));
+  const toName = Object.keys(attributes).find((name) => /^(tomeasure|to_measure|tom|endmeasure)$/i.test(name));
+  const next = { [oidField]: plan.keeper.oid };
+  if (fromName) next[fromName] = Number(plan.from.toFixed(3));
+  if (toName) next[toName] = Number(plan.to.toFixed(3));
+  const geometry = enrichGeometry({ paths: [slice], spatialReference: { wkid: 4326 } }, meta, { ...attributes, ...next });
+  const payload = { updates: JSON.stringify([{ attributes: next, geometry }]) };
+  if (plan.remove.length) payload.deletes = plan.remove.map((item) => item.oid).join(",");
+  await applyEdits(def, payload);
+  return plan;
 }
 
 /** Insert a new row, with a point or a line along the route. */
@@ -572,7 +690,7 @@ function pointOnRoute(feature, route) {
   return Boolean(at && locateOnRoute(route.vertices, route.measures, at, 0.15));
 }
 
-async function featuresForRoute(def, route) {
+export async function featuresForRoute(def, route) {
   const service = def.service || LRS;
   const meta = await layerMeta(def.id, service);
   const fields = meta.fields || [];
@@ -766,6 +884,24 @@ function paletteColor(seed) {
   return VALUE_PALETTE[hash % VALUE_PALETTE.length];
 }
 
+/** Chart colour key for a line event, such as "40" or "paved". */
+export function lineTone(layerId, attributes) {
+  const rule = VALUE_COLORS[layerId];
+  if (!rule || !attributes) return "";
+  const keys = Object.keys(attributes);
+  const wanted = normName(rule.field);
+  const field = keys.find((key) => normName(key) === wanted)
+    || keys.find((key) => normName(key).length > 4 && (normName(key).includes(wanted) || wanted.includes(normName(key))));
+  if (field && attributes[field] != null && String(attributes[field]).trim() !== "") return colorKey(attributes[field]);
+  const numeric = Object.keys(rule.colors).every((key) => /^\d/.test(key));
+  const candidates = numeric ? keys.filter((key) => /speed/i.test(key)) : keys;
+  for (const key of candidates) {
+    const tone = colorKey(attributes[key]);
+    if (rule.colors[tone]) return tone;
+  }
+  return "";
+}
+
 function valueColor(layerId, attributes) {
   const rule = VALUE_COLORS[layerId];
   if (!rule || !attributes) return null;
@@ -788,7 +924,9 @@ function valueColor(layerId, attributes) {
 
 function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0) {
   return {
-    id: `${layer.id}-${feature.attributes.OBJECTID || feature.attributes.objectid || index}`,
+    id: `${layer.id}-${featureOid(feature.attributes) || index}`,
+    oid: featureOid(feature.attributes),
+    typeKey: eventTypeKey(layer.id, feature.attributes),
     layerId: layer.id,
     group: layer.def.group,
     title: layer.def.title,

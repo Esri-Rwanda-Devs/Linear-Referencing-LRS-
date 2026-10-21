@@ -4,7 +4,7 @@ const MAX_SHOWN = 200;
 const labelOf = (item) => (item.code && item.code !== item.id ? `${item.id} · ${item.code}` : item.id);
 const squash = (text) => String(text).toLowerCase().replace(/[\s_-]+/g, "");
 
-export default function RoutePicker({ catalog, value, onChange, placeholder = "Search routes…", emptyLabel = "", className = "" }) {
+export default function RoutePicker({ catalog, value, onChange, placeholder = "Search routes…", emptyLabel = "", className = "", disabled = false }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -31,6 +31,7 @@ export default function RoutePicker({ catalog, value, onChange, placeholder = "S
   }, [open]);
 
   useEffect(() => { setActive(0); }, [query, open]);
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -90,8 +91,9 @@ export default function RoutePicker({ catalog, value, onChange, placeholder = "S
         ref={inputRef}
         value={open ? query : (selected ? labelOf(selected) : (value ? value : ""))}
         placeholder={selected ? labelOf(selected) : (emptyLabel || placeholder)}
-        onFocus={() => { setOpen(true); setQuery(""); }}
-        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        disabled={disabled}
+        onFocus={() => { if (disabled) return; setOpen(true); setQuery(""); }}
+        onChange={(event) => { if (disabled) return; setQuery(event.target.value); setOpen(true); }}
         onKeyDown={onKeyDown}
         role="combobox"
         aria-expanded={open}
