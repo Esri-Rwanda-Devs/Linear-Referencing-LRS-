@@ -1,4 +1,6 @@
-node_modules
+node_modules/
+package-lock.json
+lock.json
 .env
 .env.local
 .env.development.local
