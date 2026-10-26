@@ -32,6 +32,69 @@ function geometryPoint(geometry) {
   return path[Math.floor((path.length - 1) / 2)];
 }
 
+const normName = (name) => String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const ROUTE_ALIAS = {
+  roadcategory: ["roadclass", "roadclassification", "category", "rdcategory", "roadcat", "funcclass", "functionalclass"],
+  roadclass: ["roadcategory", "classification", "funcclass"],
+  routecode: ["roadcode", "code", "routenumber"],
+  roadcode: ["routecode", "code", "routenumber"],
+  routename: ["roadname", "name"],
+  roadname: ["routename", "name"],
+};
+
+function routeRecord(route) {
+  const record = {};
+  (route?.features || []).forEach((feature) => {
+    Object.entries(feature.attributes || {}).forEach(([name, value]) => {
+      if (value == null || String(value).trim() === "") return;
+      const key = normName(name);
+      if (key && record[key] == null) record[key] = value;
+    });
+  });
+  const code = route?.trajectory && route.trajectory !== "Road Network" ? String(route.trajectory).trim() : "";
+  if (code) ["routecode", "roadcode", "code"].forEach((key) => { if (record[key] == null) record[key] = code; });
+  if (route?.id) ["routeid", "roadid"].forEach((key) => { if (record[key] == null) record[key] = route.id; });
+  return record;
+}
+
+function filled(record, key) {
+  return record[key] != null && String(record[key]).trim() !== "" ? record[key] : null;
+}
+
+function lookupRoute(record, key, route) {
+  const direct = filled(record, key);
+  if (direct != null) return direct;
+  const alias = (ROUTE_ALIAS[key] || []).find((name) => filled(record, name) != null);
+  if (alias) return record[alias];
+  const code = filled(record, "routecode") || filled(record, "roadcode") || filled(record, "code")
+    || (route?.trajectory && route.trajectory !== "Road Network" ? route.trajectory : "");
+  const id = filled(record, "routeid") || filled(record, "roadid") || route?.id || "";
+  const name = filled(record, "routename") || filled(record, "roadname") || code;
+  const category = filled(record, "roadcategory") || filled(record, "roadclass") || filled(record, "category")
+    || filled(record, "classification")
+    || Object.entries(record).find(([field]) => /categor|class|func/.test(field))?.[1];
+  if (/routeid|roadid|routeidentifier/.test(key) || key === "route" || key === "road") return id || null;
+  if (/routecode|roadcode|routenumber|roadnumber/.test(key)) return code || null;
+  if (/routename|roadname/.test(key)) return name || null;
+  if (/roadcategor|roadclass|funclass|functionalclass|classification/.test(key)) return category || null;
+  return null;
+}
+
+/** Copy the selected route onto any new asset. The asset's own value, such as speed or carriageway, stays blank. */
+function applyRoute(fields, values, route, skipNames) {
+  const record = routeRecord(route);
+  const skip = new Set((skipNames || []).map(normName));
+  fields.forEach((field) => {
+    if (values[field.name]) return;
+    const key = normName(field.name);
+    if (!key || skip.has(key) || /objectid|globalid|^fid$|shape|created|edited|date/.test(key)) return;
+    if (isFrom(field.name) || isTo(field.name) || isMeasure(field.name) || isEventId(field.name) || isLocError(field.name)) return;
+    const raw = lookupRoute(record, key, route);
+    if (raw == null || String(raw).trim() === "") return;
+    values[field.name] = placeValue(field, String(raw));
+  });
+}
+
 function applyPlace(fields, values, place, onlyEmpty) {
   if (!place) return;
   fields.forEach((field) => {
@@ -216,6 +279,8 @@ export function EditorPopup({ selection, route, events = [], onClear, onSaved })
         const here = geometryPoint(feature.geometry);
         const place = here ? await adminAt(here[0], here[1]).catch(() => null) : null;
         if (cancel) return;
+        const typeField = typeFieldOf(schema.fields, layer.id);
+        applyRoute(schema.fields, next, route, typeField ? [typeField.name] : []);
         applyPlace(schema.fields, next, place, true);
         setValues(next);
         setOid(feature.attributes?.[schema.oidField] ?? selection.oid);
@@ -234,6 +299,8 @@ export function EditorPopup({ selection, route, events = [], onClear, onSaved })
         if (isTo(field.name)) next[field.name] = measureText(selection.to);
         if (isEventId(field.name)) next[field.name] = newEventId();
       });
+      const typeField = typeFieldOf(schema.fields, layer.id);
+      applyRoute(schema.fields, next, route, typeField ? [typeField.name] : []);
       const here = geometryPoint(selection.geometry);
       const place = here ? await adminAt(here[0], here[1]).catch(() => null) : null;
       if (cancel) return;
