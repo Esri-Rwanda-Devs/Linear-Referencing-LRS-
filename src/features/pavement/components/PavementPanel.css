@@ -1,0 +1,91 @@
+.pms-side {
+  width: 320px;
+  flex: none;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-right: 8px;
+  padding: 12px;
+  color: #0f172a;
+}
+.pms-side h2 { margin: 0 0 4px; font-size: 16px; }
+.pms-side h3 { margin: 14px 0 6px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: #64748b; }
+.pms-note { margin: 0 0 10px; font-size: 11px; color: #475569; line-height: 1.4; }
+.pms-toggle { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 2px; background: #f1f5f9; border-radius: 8px; }
+.pms-toggle button { border: 0; background: transparent; color: #334155; border-radius: 6px; padding: 6px 0; font-size: 12px; font-weight: 700; }
+.pms-toggle button.on { background: #0f172a; color: #fff; }
+.pms-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  width: 188px;
+  padding: 10px;
+  background: rgba(255, 251, 245, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+  color: #1c1917;
+}
+.pms-legend-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #78716c;
+}
+.pms-legend-head strong {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #0f172a;
+}
+.pms-legend .pms-toggle { background: #f5f0e8; }
+.pms-legend .pms-toggle button { padding: 5px 0; font-size: 11px; }
+.pms-legend .pms-toggle button.on { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }
+.pms-legend-list { list-style: none; margin: 8px 2px 0; padding: 0; display: grid; gap: 7px; }
+.pms-legend-list li { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; }
+.pms-swatch { width: 26px; height: 4px; border-radius: 999px; flex: none; }
+.pms-swatch.good, .pms-bar i.good { background: #16a34a; }
+.pms-swatch.fair, .pms-bar i.fair { background: #f59e0b; }
+.pms-swatch.poor, .pms-bar i.poor { background: #dc2626; }
+.pms-swatch.unknown, .pms-bar i.unknown { background: #94a3b8; }
+.pms-status { margin: 8px 0 0; font-size: 11px; color: #64748b; }
+.pms-status.error { color: #b91c1c; }
+.pms-road { margin: 10px 0 0; }
+.pms-road strong { display: block; font-size: 14px; }
+.pms-road span { display: block; font-size: 11px; color: #64748b; }
+.pms-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; font-weight: 700; }
+.pms-badge.good { color: #166534; }
+.pms-badge.fair { color: #b45309; }
+.pms-badge.poor { color: #b91c1c; }
+.pms-badge.unknown { color: #475569; }
+.pms-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.pms-stats div { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 8px; }
+.pms-stats span { display: block; font-size: 10px; color: #64748b; }
+.pms-stats b { font-size: 16px; }
+.pms-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: #e2e8f0; }
+.pms-bar i { display: block; height: 100%; }
+.pms-split { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.pms-split li, .pms-list button { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+.pms-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.pms-list button { width: 100%; border: 0; background: transparent; text-align: left; padding: 4px 6px; border-radius: 6px; color: inherit; }
+.pms-list button.on, .pms-list button:hover { background: #f0f9ff; }
+.pms-list em { font-style: normal; color: #64748b; white-space: nowrap; }
+.pms-facts { margin: 0; display: grid; gap: 4px; }
+.pms-facts div { display: grid; grid-template-columns: 92px 1fr; gap: 6px; font-size: 11px; }
+.pms-facts dt { color: #64748b; }
+.pms-facts dd { margin: 0; }
+.pms-treatment { margin: 6px 0 0; font-size: 12px; }
+@media (max-width: 980px) {
+  .pms-side { width: min(320px, 46vw); }
+}
+@media (max-width: 700px) {
+  .pms-side { width: 100%; max-height: 42vh; margin: 0 0 8px; }
+}

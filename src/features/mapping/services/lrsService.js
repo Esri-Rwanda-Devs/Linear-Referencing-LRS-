@@ -1,4 +1,4 @@
-import { ADMIN, LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
+import { ACCIDENTS, ADMIN, LRS, LRS_LAYER_DEFS, PAVEMENT_LAYER_ID, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
 import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
@@ -397,6 +397,51 @@ export async function loadRoadsInExtent(extent) {
   if (!local) params.maxAllowableOffset = String(Math.min(0.0004, Math.max(0.00003, width / 8000)));
   const features = await queryPages(ROAD_ID, params, local ? 2 : 1);
   return { features, routeField };
+}
+
+const PAVEMENT_FIELDS = [
+  "objectid", "fromrouteid", "routename", "frommeasure", "tomeasure", "road_code", "road_category",
+  "road_length_km", "link_name", "pavement_category", "pavement_type", "surface_type", "roughness",
+  "roughness_range", "cracking", "patholes", "ravelling", "edgebreak", "bleeding", "depression",
+  "shoving", "shoulder", "rutting", "pci_value", "pci_range", "survey_year",
+].join(",");
+
+function pavementQuery(extra) {
+  return {
+    where: "1=1",
+    outFields: PAVEMENT_FIELDS,
+    returnGeometry: "true",
+    returnZ: "false",
+    returnM: "false",
+    outSR: "4326",
+    geometryPrecision: "5",
+    ...extra,
+  };
+}
+
+/** Pavement segments that cross a longitude/latitude box. */
+export async function loadPavementInExtent(extent) {
+  const width = Math.abs(extent.xmax - extent.xmin);
+  const pageSize = 400;
+  const pages = width < 0.15 ? 4 : 2;
+  const params = pavementQuery({
+    geometry: JSON.stringify({ xmin: extent.xmin, ymin: extent.ymin, xmax: extent.xmax, ymax: extent.ymax, spatialReference: { wkid: 4326 } }),
+    geometryType: "esriGeometryEnvelope",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    resultRecordCount: String(pageSize),
+  });
+  if (width >= 0.08) params.maxAllowableOffset = String(Math.min(0.001, Math.max(0.00004, width / 6000)));
+  const features = await queryPages(PAVEMENT_LAYER_ID, params, pages, ACCIDENTS);
+  return { features, truncated: features.length >= pageSize * pages };
+}
+
+/** Every pavement segment for one road code, route id, or route name. */
+export async function loadPavementRoad(key) {
+  const value = String(key ?? "").trim().replace(/'/g, "''");
+  if (!value) return [];
+  const where = `road_code = '${value}' OR fromrouteid = '${value}' OR routename = '${value}'`;
+  return queryPages(PAVEMENT_LAYER_ID, pavementQuery({ where, resultRecordCount: "500" }), 8, ACCIDENTS);
 }
 
 const EDIT_SKIP = /^(objectid|fid|globalid|shape|shape_length|shape_area|st_area|st_length|gdb_|created_user|created_date|last_edited_user|last_edited_date)$/i;

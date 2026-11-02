@@ -25,6 +25,7 @@ import Sidebar from "../components/layout/Sidebar";
 import ProfileMenu from "../components/layout/ProfileMenu";
 import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
+import PavementPanel from "../features/pavement/components/PavementPanel";
 import { appendVertex, applyRates } from "../features/cost/utils/corridor";
 
 const STORE = "rwanda-lrs-projects";
@@ -104,6 +105,7 @@ export default function App() {
   const chartPage = viewMode === "analyse";
   const editingPage = viewMode === "edit";
   const costPage = viewMode === "cost";
+  const pavementPage = viewMode === "pavement";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
   const [chartH, setChartH] = useState(
@@ -779,6 +781,7 @@ export default function App() {
     onHoverMeasure: onHoverLonLat,
     onLeave,
     editing: editingPage,
+    pavement: pavementPage,
     planning: costPage && parcelsOn,
     planDraw,
     planEdit,
@@ -1068,6 +1071,7 @@ export default function App() {
             onExportFail={(message) => setStatus(message || "Could not export the budget.")}
           />
         )}
+        {pavementPage && <PavementPanel mapApi={mapApi} />}
         {editingPage && (
           <EditorSidebar
             hiddenLayerIds={hiddenLayerIds}
