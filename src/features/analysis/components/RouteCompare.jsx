@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { LRS_LAYER_DEFS } from "../config";
-import { exportComparison } from "../lrs/excel";
-import { averageMaxSpeed, loadEvents, loadRoute, summariseSegment } from "../lrs/lrsService";
+import { LRS_LAYER_DEFS } from "../../../config";
+import { exportComparison } from "../../../utils/excel";
+import { averageMaxSpeed, loadEvents, loadRoute, summariseSegment } from "../../mapping/services/lrsService";
 import RoutePicker from "./RoutePicker";
 import { ChartSymbol } from "./StripChart";
 

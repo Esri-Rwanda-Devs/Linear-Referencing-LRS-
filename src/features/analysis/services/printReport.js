@@ -1,5 +1,5 @@
-import { LRS_LAYER_DEFS } from "../config";
-import { averageMaxSpeed, summariseSegment } from "./lrsService";
+import { LRS_LAYER_DEFS } from "../../../config";
+import { averageMaxSpeed, summariseSegment } from "../../mapping/services/lrsService";
 
 const PRINT_URL = "https://utility.arcgisonline.com/arcgis/rest/services/Utilities/PrintingTools/GPServer/Export%20Web%20Map%20Task";
 

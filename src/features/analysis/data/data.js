@@ -1,5 +1,5 @@
-import { ADMIN, EVENT_LAYERS, ROAD, SNAP_METERS, WATER } from "../config";
-import { buildRoute, flattenPaths, lineMeasureSpan, locateOnRoute, polygonCrossings } from "./geometry";
+import { ADMIN, EVENT_LAYERS, ROAD, SNAP_METERS, WATER } from "../../../config";
+import { buildRoute, flattenPaths, lineMeasureSpan, locateOnRoute, polygonCrossings } from "../utils/geometry";
 
 const SERVICE = { road: ROAD, water: WATER };
 

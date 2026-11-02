@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { EditorPopup, EditorSidebar } from "./components/Editor";
-import Planner from "./components/Planner";
-import SegmentAnalysis from "./components/SegmentAnalysis";
-import RoutePicker from "./components/RoutePicker";
-import RouteCompare from "./components/RouteCompare";
-import StripChart, { ChartSymbol } from "./components/StripChart";
-import { BUILDING_RATE_RWF, COMPENSATION_PERCENT, groupLabel, LRS_LAYER_DEFS, PARCEL_RATE_RWF, REQUESTED_ITEM, WINDOW_KM } from "./config";
-import { exportComparison, exportRouteAssets, exportSegmentAssets } from "./lrs/excel";
+import { EditorPopup, EditorSidebar } from "../features/editing/components/Editor";
+import Planner from "../features/analysis/components/Planner";
+import SegmentAnalysis from "../features/analysis/components/SegmentAnalysis";
+import RoutePicker from "../features/analysis/components/RoutePicker";
+import RouteCompare from "../features/analysis/components/RouteCompare";
+import StripChart, { ChartSymbol } from "../features/analysis/components/StripChart";
+import { BUILDING_RATE_RWF, COMPENSATION_PERCENT, groupLabel, LRS_LAYER_DEFS, PARCEL_RATE_RWF, REQUESTED_ITEM, WINDOW_KM } from "../config";
+import { exportComparison, exportRouteAssets, exportSegmentAssets } from "../utils/excel";
 import {
   failedLayerTitles,
   featuresAtMeasure,
@@ -17,13 +17,13 @@ import {
   loadRouteCatalog,
   nearestRoads,
   routeKey,
-} from "./lrs/lrsService";
-import { locateOnRoute, pointAtMeasure, sliceVertices } from "./lrs/geometry";
-import { chartSnapshots, printMapReport, printRouteReport } from "./lrs/printReport";
-import { useRoadMap } from "./map/useRoadMap";
-import Sidebar from "./components/Sidebar";
-import CostPlan from "./components/CostPlan";
-import { appendVertex, applyRates } from "./cost/corridor";
+} from "../features/mapping/services/lrsService";
+import { locateOnRoute, pointAtMeasure, sliceVertices } from "../features/analysis/utils/geometry";
+import { chartSnapshots, printMapReport, printRouteReport } from "../features/analysis/services/printReport";
+import { useRoadMap } from "../features/mapping/hooks/useRoadMap";
+import Sidebar from "../components/layout/Sidebar";
+import CostPlan from "../features/road-reserve/components/CostPlan";
+import { appendVertex, applyRates } from "../features/cost/utils/corridor";
 
 const STORE = "rwanda-lrs-projects";
 const CHART_STORE = "rwanda-lrs-chart-height";

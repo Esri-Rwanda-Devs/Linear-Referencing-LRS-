@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { exportSegmentAssets } from "../lrs/excel";
-import { summariseSegment } from "../lrs/lrsService";
+import { exportSegmentAssets } from "../../../utils/excel";
+import { summariseSegment } from "../../mapping/services/lrsService";
 import { ChartSymbol } from "./StripChart";
 
 const km = (value) => `${value.toFixed(value < 10 ? 3 : 2)} km`;

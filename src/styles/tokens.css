@@ -1,0 +1,35 @@
+:root {
+  --color-primary: #c2410c;
+  --color-primary-hover: #7c2d12;
+  --color-secondary: #64748b;
+  --color-background: #f9f7f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f5f4;
+  --color-text: #1c1917;
+  --color-text-muted: #57534e;
+  --color-border: #e7e5e4;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #b91c1c;
+  --color-info: #208dba;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+
+  --font-family: "Avenir Next", "Segoe UI", sans-serif;
+
+  color: var(--color-text);
+  background: var(--color-background);
+  font-family: var(--font-family);
+  font-size: 14px;
+}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
-import { addFeature, adminAt, layerFields, lineMergePlan, loadFeature, mergeMatchingLine, updateFeature } from "../lrs/lrsService";
-import RoutePicker from "./RoutePicker";
-import { ChartSymbol } from "./StripChart";
+import { LRS_LAYER_DEFS, VALUE_COLORS } from "../../../config";
+import { addFeature, adminAt, layerFields, lineMergePlan, loadFeature, mergeMatchingLine, updateFeature } from "../../mapping/services/lrsService";
+import RoutePicker from "../../analysis/components/RoutePicker";
+import { ChartSymbol } from "../../analysis/components/StripChart";
 
 const isFrom = (name) => /^(frommeasure|from_measure|fromm|beginmeasure)$/i.test(name);
 const isTo = (name) => /^(tomeasure|to_measure|tom|endmeasure)$/i.test(name);

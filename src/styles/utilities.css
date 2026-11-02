@@ -1,0 +1,6 @@
+.crash {
+  margin: var(--spacing-lg);
+  white-space: pre-wrap;
+  color: var(--color-danger);
+  font-family: ui-monospace, monospace;
+}

@@ -1,5 +1,5 @@
-import { ADMIN, LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../config";
-import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "./geometry";
+import { ADMIN, LRS, LRS_LAYER_DEFS, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
+import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];

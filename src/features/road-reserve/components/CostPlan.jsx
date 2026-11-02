@@ -1,6 +1,6 @@
 import { createPortal } from "react-dom";
-import { exportBudgetReport } from "../lrs/excel";
-import { formatMetre, formatRwf, formatSqm } from "../cost/corridor";
+import { exportBudgetReport } from "../../../utils/excel";
+import { formatMetre, formatRwf, formatSqm } from "../../cost/utils/corridor";
 
 function money(value) {
   return formatRwf(value);

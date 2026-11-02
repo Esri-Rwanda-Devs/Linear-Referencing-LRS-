@@ -1,6 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
-import { GROUPS, LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
-import { segmentAccidents } from "../lrs/lrsService";
+import { GROUPS, LRS_LAYER_DEFS, VALUE_COLORS } from "../../../config";
+import { segmentAccidents } from "../../mapping/services/lrsService";
 
 const ROW_H = 20;
 const AXIS_H = 24;

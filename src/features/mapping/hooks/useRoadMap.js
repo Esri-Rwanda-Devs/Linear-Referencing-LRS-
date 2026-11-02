@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../config";
-import { insertOnPath, pathLengthM, rectangleRing } from "../cost/corridor";
-import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
-import { accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
+import { BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
+import { insertOnPath, pathLengthM, rectangleRing } from "../../cost/utils/corridor";
+import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
+import { accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
 
 const MODULES = [
   "esri/Map",

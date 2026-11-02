@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { TEMPLATES } from "../config";
+import { TEMPLATES } from "../../../config";
 import { ChartSymbol } from "./StripChart";
 
 const EMPTY = {

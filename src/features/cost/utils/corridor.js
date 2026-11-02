@@ -1,5 +1,5 @@
-import { PARCEL_RATE_RWF } from "../config";
-import { haversineKm } from "../lrs/geometry";
+import { PARCEL_RATE_RWF } from "../../../config";
+import { haversineKm } from "../../analysis/utils/geometry";
 
 const EARTH_M = 6378137;
 
