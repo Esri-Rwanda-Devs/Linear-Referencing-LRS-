@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, VALUE_COLORS } from "../config";
+import { BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../config";
+import { insertOnPath, pathLengthM, rectangleRing } from "../cost/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../lrs/geometry";
 import { accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../lrs/lrsService";
 
@@ -11,6 +12,7 @@ const MODULES = [
   "esri/Graphic",
   "esri/geometry/Polyline",
   "esri/geometry/Point",
+  "esri/geometry/Polygon",
   "esri/geometry/geometryEngine",
   "esri/symbols/SimpleLineSymbol",
   "esri/symbols/SimpleMarkerSymbol",
@@ -58,7 +60,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, planDraw = false, planVertices = null, planEdit = false, planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const busyRef = useRef(routeLoadingRef);
@@ -75,6 +77,20 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   editingRef.current = editing;
   const placingRef = useRef(placing);
   placingRef.current = placing;
+  const planDrawRef = useRef(planDraw);
+  const planEditRef = useRef(planEdit);
+  const planClickRef = useRef(onPlanClick);
+  const planFinishRef = useRef(onPlanFinish);
+  const planCommitRef = useRef(onPlanCommit);
+  const planVerticesRef = useRef(planVertices);
+  const planWidthRef = useRef(planWidth);
+  planDrawRef.current = planDraw;
+  planEditRef.current = planEdit;
+  planClickRef.current = onPlanClick;
+  planFinishRef.current = onPlanFinish;
+  planCommitRef.current = onPlanCommit;
+  planVerticesRef.current = planVertices;
+  planWidthRef.current = planWidth;
   const editHitRef = useRef(onEditHit);
   editHitRef.current = onEditHit;
   const editPlaceRef = useRef(onEditPlace);
@@ -131,7 +147,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     }
     loadModules(MODULES).then(async (mods) => {
       if (cancelled || !ref.current) return;
-      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils, esriConfig] = mods;
+      const [Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Polyline, Point, Polygon, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, FeatureEffect, FeatureFilter, Search, Locate, webMercatorUtils, esriConfig] = mods;
       esriConfig.request.interceptors.push({
         urls: /esrirw\.rw\/server\/rest\/services\/Reverse_Geocoding_Version9/i,
         before(params) {
@@ -615,6 +631,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         clearPlacePreview();
       };
       let hoverFrame = 0;
+      let paintPlanPreview = () => {};
       view.on("pointer-move", (event) => {
         if (hoverFrame) return;
         hoverFrame = requestAnimationFrame(() => {
@@ -623,6 +640,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!mapPoint) return;
           if (api.current?.route) hoverRef.current?.(mapPoint.longitude, mapPoint.latitude);
           paintPlacePreview(mapPoint.longitude, mapPoint.latitude);
+          paintPlanPreview(mapPoint.longitude, mapPoint.latitude);
         });
       });
       view.on("pointer-leave", () => {
@@ -641,7 +659,62 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         });
         return best?.id || "";
       };
+      let dragIndex = -1;
+      let dragVertices = null;
+      let suppressPlanClick = false;
+      const vertexAt = (event) => {
+        const vertices = dragVertices || planVerticesRef.current || [];
+        let best = -1;
+        let bestPx = 16;
+        vertices.forEach((vertex, index) => {
+          const screen = view.toScreen(new Point({ longitude: vertex[0], latitude: vertex[1] }));
+          if (!screen) return;
+          const distance = Math.hypot(screen.x - event.x, screen.y - event.y);
+          if (distance < bestPx) {
+            best = index;
+            bestPx = distance;
+          }
+        });
+        return best;
+      };
+      view.on("pointer-down", (event) => {
+        if (!planEditRef.current || planDrawRef.current) return;
+        const index = vertexAt(event);
+        if (index < 0) return;
+        event.stopPropagation();
+        dragIndex = index;
+        dragVertices = (planVerticesRef.current || []).map((vertex) => [...vertex]);
+        suppressPlanClick = true;
+      });
+      view.on("pointer-up", () => {
+        if (dragIndex < 0 || !dragVertices) return;
+        const next = dragVertices.map((vertex) => [...vertex]);
+        dragIndex = -1;
+        dragVertices = null;
+        planCommitRef.current?.(next);
+      });
+      view.on("double-click", (event) => {
+        if (!planDrawRef.current) return;
+        event.stopPropagation();
+        planFinishRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
+      });
       view.on("click", (event) => {
+        if (planDrawRef.current || planEditRef.current) {
+          event.stopPropagation();
+          if (suppressPlanClick) {
+            suppressPlanClick = false;
+            return;
+          }
+          const longitude = event.mapPoint.longitude;
+          const latitude = event.mapPoint.latitude;
+          if (planDrawRef.current) {
+            planClickRef.current?.(longitude, latitude);
+            return;
+          }
+          const next = insertOnPath(planVerticesRef.current, [longitude, latitude]);
+          if (next) planCommitRef.current?.(next);
+          return;
+        }
         if (busyRef.current?.current) return;
         if (placingRef.current || editingRef.current) {
           const longitude = event.mapPoint.longitude;
@@ -797,7 +870,408 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         }).catch((error) => console.warn(`[LRS] Could not refresh ${def.title}`, error));
         return chains[index].then(() => drawFeatures(def, features || []));
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, raiseEditLayers, drawFeatures, showRouteLayer, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      const parcelLayer = new GraphicsLayer({ id: "lrs-parcels", listMode: "hide" });
+      map.add(parcelLayer, map.layers.indexOf(roadLayer) + 1);
+      const parcelSymbol = new SimpleFillSymbol({
+        color: [250, 204, 21, 0.28],
+        outline: { color: [120, 53, 15, 1], width: 1.4 },
+      });
+      const parcelPopup = {
+        title: "{district} · {parcel_number}",
+        content: [{
+          type: "fields",
+          fieldInfos: [
+            { fieldName: "upi", label: "UPI" },
+            { fieldName: "parcel_number", label: "Parcel number" },
+            { fieldName: "size", label: "Size" },
+            { fieldName: "province", label: "Province" },
+            { fieldName: "district", label: "District" },
+            { fieldName: "sector", label: "Sector" },
+            { fieldName: "cell", label: "Cell" },
+            { fieldName: "village", label: "Village" },
+          ],
+        }],
+      };
+      const parcelIds = new globalThis.Map();
+      const parcelLayerId = async (name) => {
+        if (parcelIds.has(name)) return parcelIds.get(name);
+        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer?f=json`).then((response) => response.json());
+        const layers = data.layers || [];
+        const match = layers.find((layer) => /parcel/i.test(layer.name || "")) || layers[0];
+        const id = match ? match.id : 0;
+        parcelIds.set(name, id);
+        return id;
+      };
+      const parcelBoxParams = (box) => ({
+        f: "json",
+        where: "1=1",
+        geometry: `${box.xmin},${box.ymin},${box.xmax},${box.ymax}`,
+        geometryType: "esriGeometryEnvelope",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+      });
+      const parcelCount = async (name, box) => {
+        const id = await parcelLayerId(name);
+        const params = new URLSearchParams({ ...parcelBoxParams(box), returnCountOnly: "true" });
+        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`).then((response) => response.json());
+        if (data.error) return null;
+        return Number(data.count) || 0;
+      };
+      const parcelFeatures = async (name, box) => {
+        const id = await parcelLayerId(name);
+        const features = [];
+        let offset = 0;
+        for (let page = 0; page < 3; page += 1) {
+          const params = new URLSearchParams({
+            ...parcelBoxParams(box),
+            outSR: "4326",
+            outFields: "OBJECTID,upi,province,district,sector,cell,village,parcel_number,size",
+            returnGeometry: "true",
+            orderByFields: "OBJECTID",
+            resultOffset: String(offset),
+            resultRecordCount: "2000",
+          });
+          const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`).then((response) => response.json());
+          if (data.error) throw new Error(data.error.message || `Could not load ${name}`);
+          const pageFeatures = data.features || [];
+          features.push(...pageFeatures);
+          if (!data.exceededTransferLimit || !pageFeatures.length) break;
+          offset += pageFeatures.length;
+        }
+        return features;
+      };
+      let parcelsOn = false;
+      let parcelToken = 0;
+      let parcelKey = "";
+      const refreshParcels = async () => {
+        const box = geographicExtent();
+        const key = !parcelsOn || !box || view.scale > PARCEL_MIN_SCALE
+          ? "off"
+          : [box.xmin, box.ymin, box.xmax, box.ymax].map((value) => value.toFixed(4)).join(",");
+        if (key === parcelKey) return;
+        parcelKey = key;
+        const token = ++parcelToken;
+        if (key === "off") {
+          parcelLayer.removeAll();
+          return;
+        }
+        try {
+          const counts = await Promise.all(PARCEL_SERVICES.map(async (name) => {
+            try {
+              return [name, await parcelCount(name, box)];
+            } catch (error) {
+              console.warn(`[LRS] Parcel count failed for ${name}`, error);
+              return [name, null];
+            }
+          }));
+          if (token !== parcelToken) return;
+          const names = counts.filter(([, count]) => count == null || count > 0).map(([name]) => name);
+          const batches = await Promise.all(names.map(async (name) => {
+            try {
+              return await parcelFeatures(name, box);
+            } catch (error) {
+              console.warn(`[LRS] Parcels failed for ${name}`, error);
+              return [];
+            }
+          }));
+          if (token !== parcelToken) return;
+          const graphics = batches.flat().flatMap((feature) => {
+            const rings = feature.geometry?.rings;
+            if (!rings?.length) return [];
+            return [new Graphic({
+              geometry: new Polygon({ rings, spatialReference: { wkid: 4326 } }),
+              attributes: feature.attributes,
+              symbol: parcelSymbol,
+              popupTemplate: parcelPopup,
+            })];
+          });
+          parcelLayer.removeAll();
+          if (graphics.length) parcelLayer.addMany(graphics);
+        } catch (error) {
+          if (token === parcelToken) parcelKey = "";
+          console.warn("[LRS] Could not draw parcels", error);
+        }
+      };
+      const setParcels = (on) => {
+        parcelsOn = on;
+        refreshParcels();
+      };
+      const planLayer = new GraphicsLayer({ id: "lrs-plan", listMode: "hide" });
+      map.add(planLayer, Math.max(map.layers.indexOf(placeLayer), 0));
+      const planFill = new SimpleFillSymbol({ color: [37, 99, 235, 0.16], outline: { color: [29, 78, 216, 1], width: 2 } });
+      const planLineSymbol = new SimpleLineSymbol({ color: [15, 23, 42, 1], width: 2.2, style: "short-dash" });
+      const planHit = new SimpleFillSymbol({ color: [234, 88, 12, 0.4], outline: { color: [154, 52, 18, 1], width: 1 } });
+      const planMark = (color) => new SimpleMarkerSymbol({ style: "circle", color, size: 11, outline: { color: [255, 255, 255], width: 2 } });
+      const planBuildingFill = new SimpleFillSymbol({ color: [124, 58, 237, 0.35], outline: { color: [91, 33, 182, 1], width: 1 } });
+      const planBuildingMark = new SimpleMarkerSymbol({ style: "square", color: [124, 58, 237, 0.95], size: 8, outline: { color: [255, 255, 255], width: 1 } });
+      const reservePolygon = (vertices, widthM) => {
+        if (!vertices || vertices.length < 2) return null;
+        const width = Math.max(Number(widthM) || 0, 1);
+        const line = new Polyline({ paths: [vertices], spatialReference: { wkid: 4326 } });
+        try {
+          const buffered = geometryEngine.geodesicBuffer(line, width / 2, "meters");
+          const polygon = Array.isArray(buffered) ? buffered[0] : buffered;
+          if (polygon?.rings?.length) return polygon;
+        } catch {
+          /* fall through to a straight rectangle */
+        }
+        if (vertices.length !== 2) return null;
+        return new Polygon({ rings: [rectangleRing(vertices[0], vertices[1], width)], spatialReference: { wkid: 4326 } });
+      };
+      const drawReserve = (vertices, widthM) => {
+        planLayer.removeAll();
+        if (!vertices?.length) return null;
+        const polygon = reservePolygon(vertices, widthM);
+        if (polygon) planLayer.add(new Graphic({ geometry: polygon, symbol: planFill }));
+        if (vertices.length > 1) {
+          planLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [vertices], spatialReference: { wkid: 4326 } }),
+            symbol: planLineSymbol,
+          }));
+        }
+        vertices.forEach((point, index) => {
+          const color = index === 0 ? [22, 163, 74, 1] : index === vertices.length - 1 ? [220, 38, 38, 1] : [255, 255, 255, 1];
+          planLayer.add(new Graphic({
+            geometry: new Point({ longitude: point[0], latitude: point[1] }),
+            attributes: { planVertex: index },
+            symbol: planMark(color),
+          }));
+        });
+        return polygon;
+      };
+      let planSettled = false;
+      paintPlanPreview = (longitude, latitude) => {
+        if (dragIndex >= 0 && dragVertices) {
+          dragVertices[dragIndex] = [longitude, latitude];
+          drawReserve(dragVertices, planWidthRef.current);
+          return;
+        }
+        if (planSettled || !planDrawRef.current) return;
+        const base = planVerticesRef.current || [];
+        if (!base.length) return;
+        drawReserve([...base, [longitude, latitude]], planWidthRef.current);
+      };
+      const assetInside = (geometry, polygon) => {
+        if (!geometry) return false;
+        try {
+          return geometryEngine.intersects(geometry, polygon);
+        } catch {
+          return false;
+        }
+      };
+      const serviceCount = async (name, layerId, box) => {
+        const params = new URLSearchParams({ ...parcelBoxParams(box), returnCountOnly: "true" });
+        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${layerId}/query?${params}`).then((response) => response.json());
+        if (data.error) return null;
+        return Number(data.count) || 0;
+      };
+      const serviceFeatures = async (name, layerId, box) => {
+        const features = [];
+        let offset = 0;
+        for (let page = 0; page < 3; page += 1) {
+          const params = new URLSearchParams({
+            ...parcelBoxParams(box),
+            outSR: "4326",
+            outFields: "*",
+            returnGeometry: "true",
+            resultOffset: String(offset),
+            resultRecordCount: "2000",
+          });
+          const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${layerId}/query?${params}`).then((response) => response.json());
+          if (data.error) throw new Error(data.error.message || `Could not load ${name}`);
+          const pageFeatures = data.features || [];
+          features.push(...pageFeatures);
+          if (!data.exceededTransferLimit || !pageFeatures.length) break;
+          offset += pageFeatures.length;
+        }
+        return features;
+      };
+      const recordedFootprint = (attr) => [attr.area_new, attr.area, attr.size].map(Number).find((value) => value > 1 && value < 100000) || 0;
+      const estimatePlan = async (vertices, widthM) => {
+        planSettled = true;
+        const path = (vertices || []).filter((point) => point?.length === 2);
+        const polygon = drawReserve(path, widthM);
+        if (!polygon) throw new Error("Draw at least two points, then finish the line.");
+        const lengthM = pathLengthM(path);
+        const width = Math.max(Number(widthM) || 0, 1);
+        let corridorSqm = lengthM * width;
+        try {
+          corridorSqm = Math.abs(geometryEngine.geodesicArea(polygon, "square-meters")) || corridorSqm;
+        } catch {
+          /* length × width stays as the corridor area */
+        }
+        const ring = polygon.rings[0];
+        const pad = 0.0003;
+        const box = {
+          xmin: Math.min(...ring.map((point) => point[0])) - pad,
+          ymin: Math.min(...ring.map((point) => point[1])) - pad,
+          xmax: Math.max(...ring.map((point) => point[0])) + pad,
+          ymax: Math.max(...ring.map((point) => point[1])) + pad,
+        };
+        const counts = await Promise.all(PARCEL_SERVICES.map(async (name) => {
+          try {
+            return [name, await parcelCount(name, box)];
+          } catch (error) {
+            console.warn(`[LRS] Parcel count failed for ${name}`, error);
+            return [name, null];
+          }
+        }));
+        const names = counts.filter(([, count]) => count == null || count > 0).map(([name]) => name);
+        const batches = await Promise.all(names.map(async (name) => {
+          try {
+            return await parcelFeatures(name, box);
+          } catch (error) {
+            console.warn(`[LRS] Parcels failed for ${name}`, error);
+            return [];
+          }
+        }));
+        const parcels = [];
+        batches.flat().forEach((feature) => {
+          const rings = feature.geometry?.rings;
+          if (!rings?.length) return;
+          const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
+          let hit = null;
+          try {
+            if (!geometryEngine.intersects(geom, polygon)) return;
+            hit = geometryEngine.intersect(geom, polygon);
+          } catch {
+            return;
+          }
+          let sqm = 0;
+          try {
+            sqm = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
+          } catch {
+            return;
+          }
+          if (!sqm || sqm < 0.05) return;
+          const attr = feature.attributes || {};
+          parcels.push({
+            key: `${attr.district || "parcel"}-${attr.OBJECTID || attr.upi || parcels.length}`,
+            upi: attr.upi || "",
+            parcelNumber: attr.parcel_number ?? "",
+            province: attr.province || "",
+            district: attr.district || "",
+            sector: attr.sector || "",
+            cell: attr.cell || "",
+            village: attr.village || "",
+            recordedSize: attr.size ?? "",
+            sqm,
+            cost: 0,
+          });
+          planLayer.add(new Graphic({ geometry: hit, symbol: planHit }));
+        });
+        parcels.sort((a, b) => b.sqm - a.sqm);
+        const buildingCounts = await Promise.all(BUILDING_SERVICES.map(async (service) => {
+          try {
+            return [service, await serviceCount(service.name, service.layerId, box)];
+          } catch (error) {
+            console.warn(`[LRS] Building count failed for ${service.name}`, error);
+            return [service, null];
+          }
+        }));
+        const buildingServices = buildingCounts.filter(([, count]) => count == null || count > 0).map(([service]) => service);
+        const buildingBatches = await Promise.all(buildingServices.map(async (service) => {
+          try {
+            const features = await serviceFeatures(service.name, service.layerId, box);
+            return features.map((feature) => ({ feature, service }));
+          } catch (error) {
+            console.warn(`[LRS] Buildings failed for ${service.name}`, error);
+            return [];
+          }
+        }));
+        const buildings = [];
+        buildingBatches.flat().forEach(({ feature, service }) => {
+          const attr = feature.attributes || {};
+          const rings = feature.geometry?.rings;
+          const pointGeom = feature.geometry?.x != null ? new Point({ longitude: feature.geometry.x, latitude: feature.geometry.y }) : null;
+          let sqm = 0;
+          let hit = null;
+          try {
+            if (rings?.length) {
+              const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
+              if (!geometryEngine.intersects(geom, polygon)) return;
+              hit = geometryEngine.intersect(geom, polygon);
+              sqm = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
+              if (!sqm || sqm < 0.05) return;
+            } else if (pointGeom) {
+              if (!geometryEngine.intersects(polygon, pointGeom)) return;
+              sqm = recordedFootprint(attr);
+              hit = pointGeom;
+            } else return;
+          } catch {
+            return;
+          }
+          const name = attr.Name_Of_Project || attr.name_of_project || attr.Predicted_Use || attr.Building_Type || attr.building_type || "";
+          buildings.push({
+            key: `${service.name}-${attr.OBJECTID || attr.objectid || attr.upi || buildings.length}`,
+            upi: attr.upi || "",
+            name,
+            use: attr.Predicted_Use || attr.Building_Type || attr.building_type || "",
+            district: attr.district || attr.district_1 || "",
+            kind: rings?.length ? "polygon" : "point",
+            sqm,
+            cost: 0,
+          });
+          if (hit?.rings) planLayer.add(new Graphic({ geometry: hit, symbol: planBuildingFill }));
+          else if (pointGeom) planLayer.add(new Graphic({ geometry: pointGeom, symbol: planBuildingMark }));
+        });
+        buildings.sort((a, b) => b.sqm - a.sqm);
+        const hidden = new Set(hiddenRef.current || []);
+        const assets = [];
+        const seenAsset = new Set();
+        const eventOf = (layerId, oid) => (eventsRef.current || []).find((item) => item.layerId === layerId && String(item.oid) === String(oid));
+        for (let index = 0; index < lrsLayers.length; index += 1) {
+          const layer = lrsLayers[index];
+          const def = LRS_LAYER_DEFS[index];
+          if (!layer || layer === "pending" || !def || !layer.visible || hidden.has(def.id)) continue;
+          const graphics = layer.queryFeatures
+            ? (await layer.queryFeatures({ where: "1=1", outFields: ["*"], returnGeometry: true }).catch(() => null))?.features || []
+            : layer.graphics?.toArray?.() || [];
+          graphics.forEach((graphic) => {
+            if (def.route && graphic.attributes?.part === "casing") return;
+            if (!assetInside(graphic.geometry, polygon)) return;
+            const oid = graphic.attributes?.oid ?? graphic.attributes?.OBJECTID ?? "";
+            const routeId = graphic.attributes?.rid || "";
+            const key = def.route ? `road-${routeId}` : `${def.id}-${oid}`;
+            if (seenAsset.has(key)) return;
+            seenAsset.add(key);
+            const event = eventOf(def.id, oid);
+            assets.push({
+              key,
+              layer: def.title,
+              layerId: def.id,
+              oid,
+              route: routeId || "",
+              value: graphic.attributes?.tone || event?.typeKey || "",
+              name: event?.name || (def.route ? routeId : ""),
+              measure: event?.measure ?? null,
+              details: (event?.details || []).map((pair) => pair.join(": ")).join(" · "),
+            });
+          });
+        }
+        const parcelSqm = parcels.reduce((sum, parcel) => sum + parcel.sqm, 0);
+        const buildingSqm = buildings.reduce((sum, building) => sum + (building.sqm || 0), 0);
+        return {
+          lengthM,
+          widthM: width,
+          corridorSqm,
+          parcels,
+          buildings,
+          assets,
+          parcelSqm,
+          buildingSqm,
+        };
+      };
+      view.watch("stationary", (isStationary) => {
+        if (isStationary) refreshParcels();
+      });
+      const clearPlan = () => {
+        planSettled = false;
+        dragIndex = -1;
+        dragVertices = null;
+        planLayer.removeAll();
+      };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -972,8 +1446,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     const bag = api.current;
     if (!bag?.view?.container) return;
-    bag.view.container.style.cursor = pickingOrigin || segmentPicking || editing || placing ? "crosshair" : "";
-  }, [pickingOrigin, segmentPicking, editing, placing, ready]);
+    bag.view.container.style.cursor = planDraw || planEdit || pickingOrigin || segmentPicking || editing || placing ? "crosshair" : "";
+  }, [planDraw, planEdit, pickingOrigin, segmentPicking, editing, placing, ready]);
 
   useEffect(() => {
     const bag = api.current;
@@ -1201,6 +1675,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     if (!at) return;
     bag.view.goTo({ target: new bag.Point({ longitude: at[0], latitude: at[1] }), zoom: 17 }, { duration: 650 }).catch(() => {});
   }, [compareEvent, compareRoute, route, ready]);
+
+  useEffect(() => {
+    api.current?.setParcels?.(planning);
+  }, [planning, ready]);
 
   useEffect(() => {
     const bag = api.current;

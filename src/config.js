@@ -50,6 +50,39 @@ export const LRS_LAYER_DEFS = [
   { id: 17, service: ACCIDENTS, title: "Accidents", group: "POI", kind: "point", shape: "triangle", color: [220, 38, 38, 0.95], swatch: "#dc2626", showAll: true, snap: true, readOnly: true },
 ];
 
+/** Hosted district cadastral layers. Each service is `{name}/FeatureServer/0`. */
+export const PARCELS_ROOT = "https://services7.arcgis.com/htgaiKX6RV2DDGgK/ArcGIS/rest/services";
+export const PARCEL_MIN_SCALE = 20000;
+export const PARCEL_SERVICES = [
+  "Bugesera_Parcels",
+  "Burera_Parcels",
+  "Gakenke_Parcels",
+  "Gatsibo_Parcels",
+  "Gicumbi_Parcels",
+  "Gisagara_Parcels",
+  "Huye_Parcels",
+  "Kamonyi_Parcels",
+  "Karongi_Parcels",
+  "Kayonza_Parcels",
+  "Kigali_Parcels",
+  "Kirehe_Parcels",
+  "Muhanga_Parcels",
+  "Ngoma_Parcels",
+  "Ngororero_Parcels",
+  "Nyabihu_Parcels",
+  "Nyagatare_Parcels",
+  "Nyamagabe_Parcels",
+  "Nyamasheke_Parcels",
+  "Nyanza_Parcels",
+  "Nyaruguru_Parcels",
+  "Rubavu_Parcels",
+  "Ruhango_Parcels",
+  "Rulindo_Parcels",
+  "Rusizi_Parcels",
+  "Rutsiro_Parcels",
+  "Rwamagana_Parcels",
+];
+
 /** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
 export const VALUE_COLORS = {
   17: { field: "severity", colors: { fatal: "#7f1d1d", serious: "#dc2626", minor: "#f59e0b" } },
@@ -78,3 +111,23 @@ export const TEMPLATES = [
 
 export const SNAP_METERS = 80;
 export const WINDOW_KM = 8;
+/** Land inside the reserve, per square metre of parcel overlap. */
+export const PARCEL_RATE_RWF = 800;
+/** Building footprint inside the reserve, per square metre. Editable in the budgeting panel. */
+export const BUILDING_RATE_RWF = 15000;
+/** Disturbance compensation, as a percent of land plus building cost. */
+export const COMPENSATION_PERCENT = 5;
+
+/** Building layers on the same host as the parcels. Polygon layers are measured by overlap; point layers are counted when the point falls in the reserve. */
+export const BUILDING_SERVICES = [
+  { name: "Kigali_Buildings_2023_2025", layerId: 0 },
+  { name: "Buildings_Huye_Cities", layerId: 0 },
+  { name: "Buildings_Rubavu_Cities", layerId: 0 },
+  { name: "Buildings_Rusizi_Cities", layerId: 0 },
+  { name: "Building_Kayonza_urban", layerId: 0 },
+  { name: "Building_Musanze_Cities", layerId: 0 },
+  { name: "Bugesera_Constructions_2023", layerId: 1 },
+  { name: "Rwamagana_Constructions_2023", layerId: 0 },
+  { name: "Construction_Kirehe_Cities", layerId: 0 },
+  { name: "Construction_Nyagatare_Cities", layerId: 0 },
+];

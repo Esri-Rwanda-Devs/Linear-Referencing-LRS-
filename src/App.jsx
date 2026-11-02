@@ -6,7 +6,7 @@ import SegmentAnalysis from "./components/SegmentAnalysis";
 import RoutePicker from "./components/RoutePicker";
 import RouteCompare from "./components/RouteCompare";
 import StripChart, { ChartSymbol } from "./components/StripChart";
-import { groupLabel, LRS_LAYER_DEFS, REQUESTED_ITEM, WINDOW_KM } from "./config";
+import { BUILDING_RATE_RWF, COMPENSATION_PERCENT, groupLabel, LRS_LAYER_DEFS, PARCEL_RATE_RWF, REQUESTED_ITEM, WINDOW_KM } from "./config";
 import { exportComparison, exportRouteAssets, exportSegmentAssets } from "./lrs/excel";
 import {
   failedLayerTitles,
@@ -21,6 +21,9 @@ import {
 import { locateOnRoute, pointAtMeasure, sliceVertices } from "./lrs/geometry";
 import { chartSnapshots, printMapReport, printRouteReport } from "./lrs/printReport";
 import { useRoadMap } from "./map/useRoadMap";
+import Sidebar from "./components/Sidebar";
+import CostPlan from "./components/CostPlan";
+import { appendVertex, applyRates } from "./cost/corridor";
 
 const STORE = "rwanda-lrs-projects";
 const CHART_STORE = "rwanda-lrs-chart-height";
@@ -96,7 +99,9 @@ export default function App() {
   const [placeMarks, setPlaceMarks] = useState(null);
   const [editSelection, setEditSelection] = useState(null);
   const [editNotice, setEditNotice] = useState("");
+  const chartPage = viewMode === "analyse";
   const editingPage = viewMode === "edit";
+  const costPage = viewMode === "cost";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
   const [chartH, setChartH] = useState(
@@ -175,6 +180,25 @@ export default function App() {
   const [printing, setPrinting] = useState(false);
   const segmentStartRef = useRef(null);
   segmentStartRef.current = segmentStart;
+  const [parcelsOn, setParcelsOn] = useState(true);
+  const [planDraw, setPlanDraw] = useState(false);
+  const [planEdit, setPlanEdit] = useState(false);
+  const [planVertices, setPlanVertices] = useState([]);
+  const [planWidth, setPlanWidth] = useState(20);
+  const [landRate, setLandRate] = useState(PARCEL_RATE_RWF);
+  const [buildingRate, setBuildingRate] = useState(BUILDING_RATE_RWF);
+  const [compensationPct, setCompensationPct] = useState(COMPENSATION_PERCENT);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planReport, setPlanReport] = useState(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planOptions, setPlanOptions] = useState([]);
+  const [planActive, setPlanActive] = useState(null);
+  const planVerticesRef = useRef([]);
+  const planWidthRef = useRef(20);
+  const planRatesRef = useRef({ land: PARCEL_RATE_RWF, building: BUILDING_RATE_RWF, compensation: COMPENSATION_PERCENT });
+  planVerticesRef.current = planVertices;
+  planWidthRef.current = planWidth;
+  planRatesRef.current = { land: landRate, building: buildingRate, compensation: compensationPct };
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() =>
     LRS_LAYER_DEFS.filter((layer) => !layer.route && !layer.visible).map((layer) => layer.id),
   );
@@ -691,6 +715,40 @@ export default function App() {
   }, [placingId, route, routeId]);
   const [focusing, setFocusing] = useState(null);
   const mapApi = useRef(null);
+  useEffect(() => {
+    const rates = { land: landRate, building: buildingRate, compensation: compensationPct };
+    setPlanReport((current) => applyRates(current, rates));
+    setPlanOptions((current) => {
+      let changed = false;
+      const next = current.map((option) => {
+        const report = applyRates(option.report, rates);
+        if (report === option.report) return option;
+        changed = true;
+        return { ...option, report };
+      });
+      return changed ? next : current;
+    });
+  }, [landRate, buildingRate, compensationPct]);
+  useEffect(() => {
+    if (costPage) return;
+    setPlanDraw(false);
+    setPlanEdit(false);
+    planVerticesRef.current = [];
+    setPlanVertices([]);
+    setPlanReport(null);
+    setPlanOpen(false);
+    mapApi.current?.clearPlan?.();
+  }, [costPage]);
+  const measurePlan = (vertices, width) => {
+    setPlanReport(null);
+    setPlanOpen(true);
+    setPlanBusy(true);
+    const rates = planRatesRef.current;
+    mapApi.current.estimatePlan(vertices, width)
+      .then((report) => setPlanReport(applyRates(report, rates)))
+      .catch((error) => setPlanReport({ error: error.message || "Could not measure this reserve.", parcels: [], buildings: [], assets: [] }))
+      .finally(() => setPlanBusy(false));
+  };
   const mapRef = useRoadMap({
     mapApi,
     onFocusChange: setFocusing,
@@ -718,6 +776,34 @@ export default function App() {
     onHoverMeasure: onHoverLonLat,
     onLeave,
     editing: editingPage,
+    planning: costPage && parcelsOn,
+    planDraw,
+    planEdit,
+    planVertices,
+    planWidth,
+    onPlanClick: (longitude, latitude) => {
+      const next = appendVertex(planVerticesRef.current, [longitude, latitude]);
+      planVerticesRef.current = next;
+      setPlanVertices(next);
+    },
+    onPlanFinish: (longitude, latitude) => {
+      const next = appendVertex(planVerticesRef.current, [longitude, latitude]);
+      if (next.length < 2) return;
+      planVerticesRef.current = next;
+      setPlanVertices(next);
+      setPlanDraw(false);
+      setPlanEdit(false);
+      setPlanActive(null);
+      measurePlan(next, planWidthRef.current);
+    },
+    onPlanCommit: (vertices) => {
+      planVerticesRef.current = vertices;
+      setPlanVertices(vertices);
+      setPlanDraw(false);
+      setPlanEdit(true);
+      setPlanActive(null);
+      measurePlan(vertices, planWidthRef.current);
+    },
     placing: placingId != null,
     onEditHit,
     onEditPlace,
@@ -799,15 +885,13 @@ export default function App() {
   };
 
   return (
-    <div className={`app${editingPage ? " page-edit" : ""}`}>
+   <div className="app-container">
+    <Sidebar viewMode={viewMode} onChange={setViewMode} />
+        <div className={`app${editingPage ? " page-edit" : ""}`}>
       <header className="topbar">
         <div>
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
           <h3>Road Location Reference Application</h3>
-        </div>
-        <div className="page-switch" role="tablist">
-          <button type="button" className={!editingPage ? "on" : ""} onClick={() => setViewMode("analyse")}>Chart</button>
-          <button type="button" className={editingPage ? "on" : ""} onClick={() => setViewMode("edit")}>Edit</button>
         </div>
         <div className="top-actions">
           <button
@@ -876,6 +960,108 @@ export default function App() {
             setActiveId(project.id);
           }}
         /> */}
+        {costPage && (
+          <CostPlan
+            drawing={planDraw}
+            editing={planEdit}
+            vertices={planVertices}
+            width={planWidth}
+            landRate={landRate}
+            buildingRate={buildingRate}
+            compensationPct={compensationPct}
+            busy={planBusy}
+            report={planReport}
+            open={planOpen}
+            options={planOptions}
+            activeId={planActive}
+            onWidth={(value) => {
+              const next = Number(value);
+              if (Number.isFinite(next)) setPlanWidth(Math.max(1, Math.min(2000, next)));
+            }}
+            onLand={(value) => {
+              const next = Number(value);
+              if (Number.isFinite(next)) setLandRate(Math.max(0, next));
+            }}
+            onBuilding={(value) => {
+              const next = Number(value);
+              if (Number.isFinite(next)) setBuildingRate(Math.max(0, next));
+            }}
+            onCompensation={(value) => {
+              const next = Number(value);
+              if (Number.isFinite(next)) setCompensationPct(Math.max(0, Math.min(100, next)));
+            }}
+            onDraw={() => {
+              setPlanDraw(true);
+              setPlanEdit(false);
+              setPlanActive(null);
+              planVerticesRef.current = [];
+              setPlanVertices([]);
+              setPlanReport(null);
+              setPlanOpen(false);
+              mapApi.current?.clearPlan?.();
+            }}
+            onFinish={() => {
+              if (planVerticesRef.current.length < 2) return;
+              setPlanDraw(false);
+              setPlanEdit(false);
+              setPlanActive(null);
+              measurePlan(planVerticesRef.current, planWidthRef.current);
+            }}
+            onReshape={() => {
+              if (planVerticesRef.current.length < 2) return;
+              setPlanDraw(false);
+              setPlanEdit(true);
+              mapApi.current?.drawReserve?.(planVerticesRef.current, planWidthRef.current);
+            }}
+            onApply={() => {
+              if (planVerticesRef.current.length < 2) return;
+              setPlanActive(null);
+              measurePlan(planVerticesRef.current, planWidthRef.current);
+            }}
+            onKeep={() => {
+              if (!planReport || planReport.error) return;
+              const id = `opt-${Date.now()}`;
+              setPlanOptions((current) => [...current, {
+                id,
+                label: `Option ${current.length + 1}`,
+                vertices: planVertices.map((point) => [...point]),
+                width: planWidth,
+                report: planReport,
+              }]);
+              setPlanActive(id);
+            }}
+            onShowOption={(id) => {
+              const option = planOptions.find((item) => item.id === id);
+              if (!option) return;
+              planVerticesRef.current = option.vertices;
+              setPlanVertices(option.vertices);
+              setPlanWidth(option.width);
+              setPlanReport(applyRates(option.report, planRatesRef.current));
+              setPlanDraw(false);
+              setPlanEdit(false);
+              setPlanActive(id);
+              setPlanOpen(true);
+              mapApi.current?.drawReserve?.(option.vertices, option.width);
+            }}
+            onRemoveOption={(id) => {
+              setPlanOptions((current) => current.filter((item) => item.id !== id));
+              setPlanActive((current) => (current === id ? null : current));
+            }}
+            onOpen={() => setPlanOpen(true)}
+            onClear={() => {
+              setPlanDraw(false);
+              setPlanEdit(false);
+              setPlanActive(null);
+              planVerticesRef.current = [];
+              setPlanVertices([]);
+              setPlanReport(null);
+              setPlanOpen(false);
+              mapApi.current?.clearPlan?.();
+            }}
+            onClose={() => setPlanOpen(false)}
+            onExportFail={(message) => setStatus(message || "Could not export the budget.")}
+          />
+        )}
         {editingPage && (
           <EditorSidebar
             hiddenLayerIds={hiddenLayerIds}
@@ -911,7 +1097,7 @@ export default function App() {
             }}
           />
         )}
-        <main ref={mainRef} style={{ gridTemplateRows: editingPage ? "1fr" : rowsFor(chartH) }}>
+        <main ref={mainRef} style={{ gridTemplateRows: chartPage ? rowsFor(chartH) : "1fr" }}>
           <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
             {(routeLoading || focusing) && (
@@ -951,7 +1137,7 @@ export default function App() {
                 }}
               />
             )}
-            {!editingPage && <div className="legend-box">
+            {(chartPage || costPage) && <div className="legend-box">
               <button
                 type="button"
                 className="legend-toggle"
@@ -1004,11 +1190,28 @@ export default function App() {
                         </button>
                       </li>
                     );
-                  })}
+                    })}
+                  {costPage && (
+                    <li className="legend-parcels">
+                      <button
+                        type="button"
+                        className={parcelsOn ? "" : "off"}
+                        aria-pressed={parcelsOn}
+                        onClick={() => setParcelsOn((value) => !value)}
+                      >
+                        <input type="checkbox" readOnly checked={parcelsOn} />
+                        <svg className="legend-symbol" width="14" height="14" viewBox="0 0 14 14">
+                          <rect x="2" y="3" width="10" height="8" fill="none" stroke="#facc15" strokeWidth="1.4" />
+                        </svg>
+                        Parcels
+                        <em>zoom in</em>
+                      </button>
+                    </li>
+                  )}
                 </ul>
               )}
             </div>}
-            {!editingPage && createPortal(
+            {chartPage && createPortal(
               <div className="analysis-panel">
                 <div className="analysis-tabs" role="tablist">
                   <button
@@ -1251,7 +1454,7 @@ export default function App() {
               </div>,
               panelHost,
             )}
-            {!editingPage && <div className="cursor-card">
+            {chartPage && <div className="cursor-card">
               <strong>
                 {cursor
                   ? `${cursor.measure.toFixed(2)} km`
@@ -1319,7 +1522,7 @@ export default function App() {
               ))}
             </div>}
           </section>
-          {!editingPage && <>
+          {chartPage && <>
           <div
             className="chart-splitter"
             role="separator"
@@ -1583,5 +1786,6 @@ export default function App() {
         </main>
       </div>
     </div>
+   </div>
   );
 }

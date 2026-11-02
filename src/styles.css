@@ -123,6 +123,7 @@ main { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: 
 body.resizing-chart { cursor: row-resize; user-select: none; }
 body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none; }
 .map { position: absolute; inset: 0; }
+.esri-view .esri-view-surface:focus::after { outline: none !important; }
 .legend-box {
   position: absolute;
   left: 12px;
@@ -164,6 +165,8 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
   z-index: 2;
 }
 .legend li { display: flex; }
+.legend li.legend-parcels { grid-column: 1 / -1; }
+.legend-parcels em { margin-left: auto; color: #94a3b8; font-style: normal; font-size: 10px; }
 .legend button {
   display: flex;
   align-items: center;
@@ -460,6 +463,32 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .page-switch { display: flex; padding: 2px; background: #e2e8f0; border-radius: 8px; }
 .page-switch button { border: 0; background: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 650; color: #475569; cursor: pointer; }
 .page-switch button.on { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }
+.cost-side { width: 280px; flex: none; overflow: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; margin-right: 8px; padding: 12px; }
+.cost-side h3 { margin: 12px 0 6px; font-size: 12px; }
+.cost-side .cost-table button { border: 0; background: none; padding: 0; color: #9a3412; font-weight: 650; }
+.cost-side .cost-table tr.on td { background: #fff7ed; }
+.cost-apply.on { background: #ffedd5; }
+.cost-side h2 { margin: 0 0 6px; font-size: 14px; }
+.cost-side p { margin: 0 0 8px; font-size: 11px; color: #475569; line-height: 1.4; }
+.cost-side label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: #334155; }
+.cost-side input { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 8px; }
+.cost-actions { display: flex; gap: 6px; margin-bottom: 8px; }
+.cost-actions button { border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; padding: 8px 10px; }
+.cost-actions .primary { flex: 1; border: 0; background: #c2410c; color: #fff; font-weight: 700; }
+.cost-apply, .cost-open { width: 100%; margin-top: 6px; border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412; border-radius: 8px; padding: 8px; font-weight: 650; text-align: left; }
+.cost-modal { position: fixed; inset: 0; z-index: 10000; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.cost-modal .print-pdf { background: #0f172a; color: #fff; border: 0; }
+.cost-modal .print-pdf:disabled { opacity: 0.45; cursor: not-allowed; }
+.cost-modal-card { width: min(980px, 100%); max-height: min(86vh, 900px); overflow: auto; background: #fff; border-radius: 12px; padding: 16px 18px 20px; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25); }
+.cost-modal-card header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.cost-modal-card h2 { margin: 0 0 4px; font-size: 18px; }
+.cost-modal-card h3 { margin: 16px 0 8px; font-size: 14px; }
+.cost-modal-card header p { margin: 0; color: #57534e; font-size: 12px; }
+.cost-summary, .cost-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cost-summary th, .cost-summary td, .cost-table th, .cost-table td { border: 1px solid #e7e5e4; padding: 6px 8px; text-align: left; vertical-align: top; }
+.cost-summary th, .cost-table th { background: #fafaf9; font-weight: 650; }
+.cost-summary th { width: 180px; }
+.cost-table { margin-top: 4px; }
 .edit-side { width: 250px; flex: none; overflow: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; margin-right: 8px; padding: 12px; }
 .edit-side h2 { margin: 0 0 6px; font-size: 14px; }
 .editor-route { display: grid; gap: 3px; margin: 0 0 8px; font-size: 10px; color: #475569; }
@@ -575,3 +604,37 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
   opacity: 0.6;
   cursor: wait;
 }
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 176px;
+  flex: none;
+  height: 100%;
+  padding: 16px 10px;
+  background: #f4f1ea;
+  color: #0284c7;
+}
+.sidebar-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 650;
+}
+.sidebar-item.on {
+  background: #fff;
+  color: #0284c7;
+}
+.app-container {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  min-height: 0;
+}
+.app { flex: 1; min-width: 0; }

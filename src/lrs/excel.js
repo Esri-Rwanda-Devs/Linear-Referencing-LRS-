@@ -343,3 +343,58 @@ export function exportComparison(a, b) {
     { name: "Summary", rows: summaryRows(rows) },
   ]);
 }
+
+const metres = (value) => Math.round((Number(value) || 0) * 10) / 10;
+const francs = (value) => Math.round(Number(value) || 0);
+
+export function exportBudgetReport(report, options = []) {
+  const summary = [
+    ["Item", "Value"],
+    ["Line length m", metres(report.lengthM)],
+    ["Reserve width m", metres(report.widthM)],
+    ["Reserve area m2", metres(report.corridorSqm)],
+    ["Parcels", report.parcels?.length || 0],
+    ["Parcel area taken m2", metres(report.parcelSqm)],
+    ["Buildings", report.buildings?.length || 0],
+    ["Building area m2", metres(report.buildingSqm)],
+    ["Land rate RWF per m2", francs(report.landRate)],
+    ["Land cost RWF", francs(report.landCost)],
+    ["Building rate RWF per m2", francs(report.buildingRate)],
+    ["Building cost RWF", francs(report.buildingCost)],
+    ["Compensation percent", report.compensationPct || 0],
+    ["Compensation RWF", francs(report.compensation)],
+    ["Estimated total RWF", francs(report.totalCost)],
+    ["Mapped assets", report.assets?.length || 0],
+  ];
+  const parcels = [[
+    "UPI", "Parcel", "Province", "District", "Sector", "Cell", "Village", "Recorded size", "Area taken m2", "Cost RWF",
+  ]];
+  (report.parcels || []).forEach((parcel) => parcels.push([
+    parcel.upi || "", parcel.parcelNumber || "", parcel.province || "", parcel.district || "",
+    parcel.sector || "", parcel.cell || "", parcel.village || "", parcel.recordedSize ?? "",
+    metres(parcel.sqm), francs(parcel.cost),
+  ]));
+  if (parcels.length === 1) parcels.push(["", "", "", "", "", "", "", "", 0, 0]);
+  const buildings = [["UPI", "Name", "Use", "District", "Kind", "Area m2", "Cost RWF"]];
+  (report.buildings || []).forEach((building) => buildings.push([
+    building.upi || "", building.name || "", building.use || "", building.district || "",
+    building.kind || "", metres(building.sqm), francs(building.cost),
+  ]));
+  if (buildings.length === 1) buildings.push(["", "", "", "", "", 0, 0]);
+  const compared = [["Option", "Width m", "Length m", "Parcels", "Buildings", "Reserve m2", "Parcel m2", "Building m2", "Total RWF"]];
+  options.forEach((option) => {
+    const item = option.report || {};
+    compared.push([
+      option.label || "", metres(option.width), metres(item.lengthM),
+      item.parcels?.length || 0, item.buildings?.length || 0,
+      metres(item.corridorSqm), metres(item.parcelSqm), metres(item.buildingSqm), francs(item.totalCost),
+    ]);
+  });
+  if (compared.length === 1) compared.push(["Current", metres(report.widthM), metres(report.lengthM), report.parcels?.length || 0, report.buildings?.length || 0, metres(report.corridorSqm), metres(report.parcelSqm), metres(report.buildingSqm), francs(report.totalCost)]);
+  downloadWorkbook("road-reserve-budget", [
+    { name: "Summary", rows: summary },
+    { name: "Parcels", rows: parcels },
+    { name: "Buildings", rows: buildings },
+    { name: "Options", rows: compared },
+  ]);
+}
