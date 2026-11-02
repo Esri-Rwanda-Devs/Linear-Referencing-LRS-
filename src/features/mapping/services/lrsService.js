@@ -10,6 +10,81 @@ const SKIP_LABEL = /globalid|objectid|guid|date|created|edited|user|shape|routei
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
 
 let session = null;
+let loginRequired = false;
+const USER_STORE = "rwanda-lrs-user";
+const userListeners = new Set();
+const loginListeners = new Set();
+
+function setLoginRequired(value) {
+  loginRequired = value;
+  loginListeners.forEach((listener) => listener(value));
+}
+
+export function loginIsRequired() {
+  return loginRequired;
+}
+
+export function watchLoginRequired(listener) {
+  loginListeners.add(listener);
+  return () => loginListeners.delete(listener);
+}
+
+export function readStoredUser() {
+  try {
+    const raw = localStorage.getItem(USER_STORE);
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    if (!user || typeof user !== "object" || !user.username) return null;
+    return {
+      username: String(user.username),
+      fullName: String(user.fullName || user.username),
+      email: String(user.email || ""),
+      role: String(user.role || ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rememberUser(profile) {
+  const user = {
+    username: profile.username || "",
+    fullName: profile.fullName || profile.username || "",
+    email: profile.email || "",
+    role: profile.role || "",
+  };
+  if (!user.username) return null;
+  try {
+    localStorage.setItem(USER_STORE, JSON.stringify(user));
+  } catch {
+    // The header can still show the profile for this visit.
+  }
+  userListeners.forEach((listener) => listener(user));
+  setLoginRequired(false);
+  return user;
+}
+
+export function watchStoredUser(listener) {
+  userListeners.add(listener);
+  return () => userListeners.delete(listener);
+}
+
+export async function signOutOfLrs() {
+  session = null;
+  try {
+    localStorage.removeItem(USER_STORE);
+  } catch {
+    // Storage can be blocked; the in-memory session is already cleared.
+  }
+  userListeners.forEach((listener) => listener(null));
+  try {
+    const [IdentityManager] = await loadModules(["esri/identity/IdentityManager"]);
+    IdentityManager.destroyCredentials();
+  } catch {
+    // ArcGIS may not be loaded yet. The stored profile is already gone.
+  }
+  setLoginRequired(true);
+}
 
 function loadModules(names) {
   return new Promise((resolve, reject) => {
@@ -65,7 +140,14 @@ export function signInToLrs() {
       portal.authMode = "immediate";
       await portal.load();
       const credential = await IdentityManager.getCredential(LRS);
-      return { token: credential.token, user: portal.user?.username || credential.userId || "" };
+      const account = portal.user;
+      const profile = rememberUser({
+        username: account?.username || credential.userId || "",
+        fullName: account?.fullName || account?.username || credential.userId || "",
+        email: account?.email || "",
+        role: account?.role || "",
+      });
+      return { token: credential.token, user: profile?.username || "", profile };
     })().catch((error) => {
       session = null;
       throw error;

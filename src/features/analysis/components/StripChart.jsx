@@ -264,6 +264,9 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
     const node = svgRef.current;
     if (!node) return undefined;
     const onWheel = (event) => {
+      const zoomIn = event.deltaY < 0;
+      const atMaximum = span <= 0.51;
+      if (zoomIn && atMaximum) return;
       event.preventDefault();
       const delta = event.deltaY > 0 ? span * 0.08 : -span * 0.08;
       const mid = (from + to) / 2;
@@ -557,7 +560,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         <RoadSlider lengthKm={route.lengthKm} from={from} to={to} cursor={cursor} events={events} onWindow={onWindow} />
       )}
       <ValueLegend />
-      <div className="chart-help">Scroll to zoom the station window. Click a symbol to show it on the map. Measures are kilometres from the route origin.</div>
+      <div className="chart-help">Scroll to zoom the station window. At the closest zoom, scroll moves the chart. Click a symbol to show it on the map. Measures are kilometres from the route origin.</div>
     </div>
   );
 }

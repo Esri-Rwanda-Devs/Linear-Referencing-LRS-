@@ -22,6 +22,8 @@ import { locateOnRoute, pointAtMeasure, sliceVertices } from "../features/analys
 import { chartSnapshots, printMapReport, printRouteReport } from "../features/analysis/services/printReport";
 import { useRoadMap } from "../features/mapping/hooks/useRoadMap";
 import Sidebar from "../components/layout/Sidebar";
+import ProfileMenu from "../components/layout/ProfileMenu";
+import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import { appendVertex, applyRates } from "../features/cost/utils/corridor";
 
@@ -164,6 +166,7 @@ export default function App() {
     setChartH((height) => clampChart(height + direction * total * 0.2));
   };
   useEffect(() => {
+    setChartH((height) => clampChart(height));
     const onResize = () => setChartH((height) => clampChart(height));
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -886,6 +889,7 @@ export default function App() {
 
   return (
    <div className="app-container">
+    <LoginGate />
     <Sidebar viewMode={viewMode} onChange={setViewMode} />
         <div className={`app${editingPage ? " page-edit" : ""}`}>
       <header className="topbar">
@@ -934,7 +938,9 @@ export default function App() {
           >
             {printing ? "Printing…" : "Print"}
           </button>
+          <ProfileMenu />
         </div>
+    
       </header>
       <div className="workspace">
         {/* <Planner
@@ -1475,7 +1481,7 @@ export default function App() {
                 <div key={group}>
                   <b>{groupLabel(group)}</b>
                   <ul>
-                    {items.slice(0, group === "POI" ? 4 : 6).map((item) => (
+                    {items.map((item) => (
                       <li key={item.id} className="hover-item">
                         <div className="hover-title">
                           <svg width="12" height="12" viewBox="0 0 12 12">
@@ -1511,12 +1517,6 @@ export default function App() {
                         )}
                       </li>
                     ))}
-                    {items.length > (group === "POI" ? 4 : 6) && (
-                      <li className="hover-more">
-                        +{items.length - (group === "POI" ? 4 : 6)} more in the
-                        chart
-                      </li>
-                    )}
                   </ul>
                 </div>
               ))}

@@ -1,4 +1,4 @@
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
