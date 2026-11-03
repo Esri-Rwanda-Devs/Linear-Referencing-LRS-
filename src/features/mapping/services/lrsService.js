@@ -5,7 +5,7 @@ const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid"
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
 const TO_FIELDS = ["tomeasure", "to_measure", "endmeasure", "tom", "tokm", "endmeasure"];
 const CODE_FIELDS = ["routecode", "route_code", "roadcode", "road_code", "routename", "route_name"];
-const LABEL_FIELDS = ["accident_id", "name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drain_type", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "severity", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
+const LABEL_FIELDS = ["accident_id", "name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drainage_type_lhs", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "severity", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
 const SKIP_LABEL = /globalid|objectid|guid|date|created|edited|user|shape|routeid|route_id|measure|^fid$/i;
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
 
@@ -184,7 +184,7 @@ function usableLabel(value) {
 
 function carriagewayType(attributes) {
   const keys = Object.keys(attributes || {});
-  const key = ["cway_type", "cwaytype", "carriageway_type", "carriagewaytype"]
+  const key = ["cway", "cwaytype", "carriageway_type", "carriagewaytype"]
     .map((wanted) => keys.find((name) => name.toLowerCase() === wanted))
     .find(Boolean);
   const text = key ? usableLabel(attributes[key]) : "";

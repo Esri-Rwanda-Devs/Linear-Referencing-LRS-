@@ -400,8 +400,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
           <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
           <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
           <g clipPath={`url(#${clipId})`}>
-            {row.layerId === 5 && (
-              <rect x={labelW} y={y + 1} width={Math.max(0, right - labelW)} height={Math.max(4, layerH - 2)} fill={VALUE_COLORS[5].colors[0]} />
+            {row.layerId === 14 && (
+              <rect x={labelW} y={y + 1} width={Math.max(0, right - labelW)} height={Math.max(4, layerH - 2)} fill={VALUE_COLORS[14].colors[0]} />
             )}
             {runs.map((run, runIndex) => {
               const x1 = clampX(xOf(run.from));

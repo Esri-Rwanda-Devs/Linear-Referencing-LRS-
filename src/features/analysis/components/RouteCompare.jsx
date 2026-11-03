@@ -118,11 +118,11 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
                   <dl>
                     <dt>Length</dt><dd>{item.route.lengthKm.toFixed(2)} km</dd>
                     <dt>Assets</dt><dd>{item.summary.pointCount} ({perKm(item.summary.pointCount, item.route.lengthKm).toFixed(1)}/km)</dd>
-                    <dt>Pavement</dt><dd title={dominant(8)}>{dominant(8)}</dd>
-                    <dt>Drain</dt><dd title={dominant(7)}>{dominant(7)}</dd>
+                    <dt>Pavement</dt><dd title={dominant(10)}>{dominant(10)}</dd>
+                    <dt>Drain</dt><dd title={dominant(14)}>{dominant(14)}</dd>
                     <dt>Speed</dt><dd title="Average max speed, weighted by segment length. Stretches with no max speed count as 0.">{formatSpeed(side === "a" ? speedA : speedB)}</dd>
-                    <dt>Culverts</dt><dd>{count(10)}</dd>
-                    <dt>Bridges</dt><dd>{count(13)}</dd>
+                    <dt>Culverts</dt><dd>{count(5)}</dd>
+                    <dt>Bridges</dt><dd>{count(2)}</dd>
                   </dl>
                 </div>
               );
