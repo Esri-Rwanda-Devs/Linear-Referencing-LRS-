@@ -3,7 +3,7 @@ import { flattenPaths, haversineKm } from "../analysis/utils/geometry";
 export const INDICATORS = [
   { id: "pci", label: "PCI", title: "PCI range" },
   { id: "iri", label: "IRI", title: "Roughness range" },
-  { id: "crack", label: "Cracking", title: "Cracking" },
+  // { id: "crack", label: "Cracking", title: "Cracking" },
 ];
 
 export const CLASS_LABEL = { good: "Good", fair: "Fair", poor: "Poor", unknown: "No class" };
@@ -96,7 +96,7 @@ function rated(indicator, label, numeric) {
 
 export function conditionClass(segment, indicator) {
   if (indicator === "iri") return rated("iri", segment.iriRange, segment.iri);
-  if (indicator === "crack") return rated("crack", segment.cracking, numberOf(segment.cracking));
+  // if (indicator === "crack") return rated("crack", segment.cracking, numberOf(segment.cracking));
   return rated("pci", segment.pciRange, segment.pci);
 }
 
