@@ -72,6 +72,7 @@ export default function PavementPanel({ mapApi }) {
   const pickRef = useRef(null);
   pickRef.current = (id) => setPickedId(id);
 
+  
   useEffect(() => {
     setPane(document.querySelector(".map-pane"));
     let dead = false;

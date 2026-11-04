@@ -159,8 +159,8 @@ function printReport(report) {
       <tr><th>Building area</th><td>${esc(formatSqm(report.buildingSqm))}</td></tr>
       <tr><th>Land cost</th><td>${esc(money(report.landCost))}</td></tr>
       <tr><th>Building cost</th><td>${esc(money(report.buildingCost))}</td></tr>
-      <tr><th>Compensation</th><td>${esc(money(report.compensation))}</td></tr>
-      <tr><th>Estimated total</th><td>${esc(money(report.totalCost))}</td></tr>
+      <tr><th>Compensation</th><td>${esc(money(report.compensation))}</td></tr> 
+     <tr><th>Estimated total</th><td>${esc(money(report.totalCost))}</td></tr>
       <tr><th>Mapped assets</th><td>${report.assets.length}</td></tr>
     </table>
     <h2>Summary</h2>

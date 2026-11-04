@@ -9,8 +9,8 @@ export const ADMIN =
   "https://gh.space.gov.rw/server/rest/services/Admin_Boundaries/FeatureServer";
 export const ACCIDENTS =
   "https://gh.space.gov.rw/server/rest/services/Road_Asset_LRS/FeatureServer";
-/** Pavement condition segments on Road_Asset_Network. */
-export const PAVEMENT_LAYER_ID = 19;
+/** Pavement condition segments on Road_Asset_LRS. */
+export const PAVEMENT_LAYER_ID = 10;
 export const GEOCODE_URL =
   "https://esrirw.rw/server/rest/services/Reverse_Geocoding_Version9/GeocodeServer";
 export const GEOCODE_KEY =

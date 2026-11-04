@@ -138,7 +138,7 @@ export function toSegment(feature) {
   const to = numberOf(field(attributes, "tomeasure"));
   return {
     id,
-    routeId: textOf(field(attributes, "fromrouteid")),
+    routeId: textOf(field(attributes, "routeid") ?? field(attributes, "fromrouteid")),
     routeName: textOf(field(attributes, "routename")),
     roadCode: textOf(field(attributes, "road_code")),
     roadCategory: textOf(field(attributes, "road_category")),
@@ -154,7 +154,7 @@ export function toSegment(feature) {
     iri: numberOf(field(attributes, "roughness")),
     iriRange: textOf(field(attributes, "roughness_range")),
     cracking: textOf(field(attributes, "cracking")),
-    potholes: textOf(field(attributes, "patholes")),
+    potholes: textOf(field(attributes, "potholes") ?? field(attributes, "patholes")),
     surveyYear: textOf(field(attributes, "survey_year")),
     defects: [
       ["Ravelling", field(attributes, "ravelling")],

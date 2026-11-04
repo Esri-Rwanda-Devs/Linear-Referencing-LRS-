@@ -1,4 +1,4 @@
-import { ACCIDENTS, ADMIN, LRS, LRS_LAYER_DEFS, PAVEMENT_LAYER_ID, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
+import { ADMIN, LRS, LRS_LAYER_DEFS, PAVEMENT_LAYER_ID, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
 import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
@@ -400,9 +400,9 @@ export async function loadRoadsInExtent(extent) {
 }
 
 const PAVEMENT_FIELDS = [
-  "objectid", "fromrouteid", "routename", "frommeasure", "tomeasure", "road_code", "road_category",
-  "road_length_km", "link_name", "pavement_category", "pavement_type", "surface_type", "roughness",
-  "roughness_range", "cracking", "patholes", "ravelling", "edgebreak", "bleeding", "depression",
+  "objectid", "routeid", "routename", "frommeasure", "tomeasure", "road_code", "road_category",
+  "lenght_km", "link_name", "pavement_category", "pavement_type", "surface_type", "roughness",
+  "roughness_range", "cracking", "potholes", "ravelling", "edgebreak", "bleeding", "depression",
   "shoving", "shoulder", "rutting", "pci_value", "pci_range", "survey_year",
 ].join(",");
 
@@ -432,7 +432,7 @@ export async function loadPavementInExtent(extent) {
     resultRecordCount: String(pageSize),
   });
   if (width >= 0.08) params.maxAllowableOffset = String(Math.min(0.001, Math.max(0.00004, width / 6000)));
-  const features = await queryPages(PAVEMENT_LAYER_ID, params, pages, ACCIDENTS);
+  const features = await queryPages(PAVEMENT_LAYER_ID, params, pages, LRS);
   return { features, truncated: features.length >= pageSize * pages };
 }
 
@@ -440,8 +440,8 @@ export async function loadPavementInExtent(extent) {
 export async function loadPavementRoad(key) {
   const value = String(key ?? "").trim().replace(/'/g, "''");
   if (!value) return [];
-  const where = `road_code = '${value}' OR fromrouteid = '${value}' OR routename = '${value}'`;
-  return queryPages(PAVEMENT_LAYER_ID, pavementQuery({ where, resultRecordCount: "500" }), 8, ACCIDENTS);
+  const where = `road_code = '${value}' OR routeid = '${value}' OR routename = '${value}'`;
+  return queryPages(PAVEMENT_LAYER_ID, pavementQuery({ where, resultRecordCount: "500" }), 8, LRS);
 }
 
 const EDIT_SKIP = /^(objectid|fid|globalid|shape|shape_length|shape_area|st_area|st_length|gdb_|created_user|created_date|last_edited_user|last_edited_date)$/i;
@@ -901,11 +901,11 @@ export async function loadEvents(route) {
     const features = layer.features;
     mapLayers.push({ id: layer.id, title: layer.name });
     features.forEach((feature, index) => {
-      const name = layer.id === 5
+      const name = layer.id === 14
         ? String(maxSpeedValue(feature.attributes))
-        : layer.id === 2
+        : layer.id === 3
           ? (carriagewayType(feature.attributes) || "Carriageway")
-          : layer.id === 18
+          : layer.id === 20
             ? (usableLabel(feature.attributes?.road) || usableLabel(feature.attributes?.cell) || "Camera")
             : titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
