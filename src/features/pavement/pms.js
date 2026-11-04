@@ -104,6 +104,31 @@ export function roadKeyOf(segment) {
   return segment?.roadCode || segment?.routeId || segment?.routeName || "";
 }
 
+/** One row per road, so search can match a name or a code. */
+export function pavementIndex(features) {
+  const byKey = new Map();
+  (features || []).forEach((feature) => {
+    const attributes = feature?.attributes || {};
+    const routeId = textOf(field(attributes, "routeid") ?? field(attributes, "fromrouteid"));
+    const routeName = textOf(field(attributes, "routename"));
+    const roadCode = textOf(field(attributes, "road_code"));
+    const linkName = textOf(field(attributes, "link_name"));
+    const roadCategory = textOf(field(attributes, "road_category"));
+    const key = roadCode || routeId || routeName;
+    if (!key) return;
+    const current = byKey.get(key) || { key, routeId, routeName, roadCode, linkName, roadCategory };
+    if (!current.routeName && routeName) current.routeName = routeName;
+    if (!current.routeId && routeId) current.routeId = routeId;
+    if (!current.roadCode && roadCode) current.roadCode = roadCode;
+    if (!current.linkName && linkName) current.linkName = linkName;
+    if (!current.roadCategory && roadCategory) current.roadCategory = roadCategory;
+    byKey.set(key, current);
+  });
+  return [...byKey.values()].sort((left, right) =>
+    (left.routeName || left.roadCode || left.key).localeCompare(right.routeName || right.roadCode || right.key, undefined, { numeric: true }),
+  );
+}
+
 export function hasPotholes(value) {
   const text = textOf(value).toLowerCase();
   if (!text) return false;

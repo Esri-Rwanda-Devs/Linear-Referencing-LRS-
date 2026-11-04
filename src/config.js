@@ -9,14 +9,12 @@ export const ADMIN =
   "https://gh.space.gov.rw/server/rest/services/Admin_Boundaries/FeatureServer";
 export const ACCIDENTS =
   "https://gh.space.gov.rw/server/rest/services/Road_Asset_LRS/FeatureServer";
-/** Pavement condition segments on Road_Asset_LRS. */
 export const PAVEMENT_LAYER_ID = 10;
 export const GEOCODE_URL =
   "https://esrirw.rw/server/rest/services/Reverse_Geocoding_Version9/GeocodeServer";
 export const GEOCODE_KEY =
   "AAPTanqtJT0rEf5TE3yrpnIPgcw..4IBpIq6EgJTOS4dz_BXG1eN1AJDbS7nxET6TuSqeqpBJJwrJRN1EBi8h-YFVGciBND387FCtx8kUi8nr7TxSZqz8WVGlH-r3k2ELkPa4q1l3F9QdEZvSV8AJe22G8Td2kNTDU_ln4a-VNug5l5V0GY01WpMb5uRunKro3xNVvdF-9i8yHApELMnVNCntEICYUHzqGUh8EqDCpvQxJze6mMArsItZe0kp6mn6AT1_ZSbuCYoi";
 
-/** Map Viewer item from the request. It is not public; the app uses the open Road service on the same server. */
 export const REQUESTED_ITEM = "44f8c12876dc4751b3ec8c4116c4202f";
 
 export const EVENT_LAYERS = [

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   loadPavementInExtent,
+  loadPavementIndex,
   loadPavementRoad,
 } from "../../mapping/services/lrsService";
 import {
@@ -11,6 +12,7 @@ import {
   conditionClass,
   conditionSummary,
   hasPotholes,
+  pavementIndex,
   priorityIds,
   rankSegments,
   roadKeyOf,
@@ -28,6 +30,12 @@ const measureText = (segment) =>
   Number.isFinite(segment.from) && Number.isFinite(segment.to)
     ? `${segment.from.toFixed(2)} – ${segment.to.toFixed(2)} km`
     : kmText(segment.lengthKm);
+const squash = (text) => String(text || "").toLowerCase().replace(/[\s_-]+/g, "");
+const routeTitle = (route) => route?.routeName || route?.roadCode || route?.routeId || route?.key || "Route";
+const routeHint = (route) =>
+  [route?.roadCode, route?.routeId && route.routeId !== route.roadCode ? route.routeId : "", route?.linkName, route?.roadCategory]
+    .filter(Boolean)
+    .join(" · ");
 
 function Toggle({ indicator, onChange }) {
   return (
@@ -67,6 +75,12 @@ export default function PavementPanel({ mapApi }) {
   const [truncated, setTruncated] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [pane, setPane] = useState(null);
+  const [catalog, setCatalog] = useState([]);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [query, setQuery] = useState("");
+  const [openedRoute, setOpenedRoute] = useState(null);
+  const [roadLoading, setRoadLoading] = useState(false);
+  const [zoomToken, setZoomToken] = useState(0);
   const extentKey = useRef("");
   const requestId = useRef(0);
   const pickRef = useRef(null);
@@ -129,6 +143,23 @@ export default function PavementPanel({ mapApi }) {
   }, [mapApi]);
 
   useEffect(() => {
+    let dead = false;
+    loadPavementIndex()
+      .then((features) => {
+        if (!dead) setCatalog(pavementIndex(features));
+      })
+      .catch(() => {
+        if (!dead) setCatalog([]);
+      })
+      .finally(() => {
+        if (!dead) setCatalogReady(true);
+      });
+    return () => {
+      dead = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (pickedId == null) return undefined;
     const hit =
       viewSegments.find((segment) => segment.id === pickedId) ||
@@ -145,6 +176,8 @@ export default function PavementPanel({ mapApi }) {
       return undefined;
     }
     let dead = false;
+    setRoadLoading(true);
+    setRoadSegments([]);
     loadPavementRoad(activeKey)
       .then((features) => {
         if (!dead)
@@ -152,6 +185,9 @@ export default function PavementPanel({ mapApi }) {
       })
       .catch(() => {
         if (!dead) setRoadSegments([]);
+      })
+      .finally(() => {
+        if (!dead) setRoadLoading(false);
       });
     return () => {
       dead = true;
@@ -204,10 +240,21 @@ export default function PavementPanel({ mapApi }) {
         paths: segment.paths,
         className: conditionClass(segment, indicator),
         selected: segment.id === pickedId,
-        priority: highlighted.has(segment.id),
+        onRoute: Boolean(activeKey) && roadKeyOf(segment) === activeKey,
+        priority: (Boolean(activeKey) && roadKeyOf(segment) === activeKey) || highlighted.has(segment.id),
       })),
     );
-  }, [drawn, indicator, pickedId, highlighted, mapApi]);
+  }, [drawn, indicator, pickedId, highlighted, activeKey, mapApi]);
+
+  const matches = useMemo(() => {
+    const wanted = squash(query.trim());
+    if (!wanted) return [];
+    return catalog
+      .filter((route) =>
+        [route.routeName, route.roadCode, route.routeId, route.linkName].some((value) => squash(value).includes(wanted)),
+      )
+      .slice(0, 8);
+  }, [catalog, query]);
 
   const openSegment = (segment) => {
     setPickedId(segment.id);
@@ -215,6 +262,25 @@ export default function PavementPanel({ mapApi }) {
     if (key) setActiveKey(key);
     mapApi.current?.focusPavement?.(segment.paths);
   };
+
+  const openRoute = (route) => {
+    setQuery("");
+    setPickedId(null);
+    setOpenedRoute(route);
+    setZoomToken((token) => token + 1);
+    if (route.key === activeKey) return;
+    setRoadLoading(true);
+    setRoadSegments([]);
+    setActiveKey(route.key);
+  };
+
+  useEffect(() => {
+    if (!zoomToken || roadLoading || !road.length) return undefined;
+    if (!road.some((segment) => roadKeyOf(segment) === activeKey)) return undefined;
+    const paths = road.flatMap((segment) => segment.paths || []);
+    mapApi.current?.focusPavement?.(paths);
+    return undefined;
+  }, [zoomToken, road, roadLoading, activeKey, mapApi]);
 
   const legend = (
     <div className="pms-legend">
@@ -239,10 +305,38 @@ export default function PavementPanel({ mapApi }) {
       {pane ? createPortal(legend, pane) : null}
       <aside className="pms-side">
         <h2>Pavement</h2>
-        <p className="pms-note">
+        <label className="pms-search">
+          <span>Search route</span>
+          <input
+            value={query}
+            placeholder="Name or code"
+            aria-label="Search routes by name or code"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && matches[0]) openRoute(matches[0]);
+              if (event.key === "Escape") setQuery("");
+            }}
+          />
+        </label>
+        {query.trim() && (
+          <ul className="pms-search-list">
+            {matches.map((route) => (
+              <li key={route.key}>
+                <button type="button" onClick={() => openRoute(route)}>
+                  <strong>{routeTitle(route)}</strong>
+                  <span>{routeHint(route) || route.key}</span>
+                </button>
+              </li>
+            ))}
+            {!catalogReady && <li className="pms-search-empty">Loading routes…</li>}
+            {catalogReady && matches.length === 0 && <li className="pms-search-empty">No route matches “{query.trim()}”</li>}
+          </ul>
+        )}
+        {/* <p className="pms-note">
           Colour the network by {indicatorMeta.title}. Good is green, Fair is
           yellow, and Poor is red. Click a segment for its record.
-        </p>
+        </p> */}
+        <div style={{ marginTop: "10px" }}></div>
         <Toggle indicator={indicator} onChange={setIndicator} />
         <p className={`pms-status${loadError ? " error" : ""}`}>
           {loadError ||
@@ -250,22 +344,19 @@ export default function PavementPanel({ mapApi }) {
               ? "Loading pavement in this view…"
               : `${viewSegments.length} segments in view${truncated ? ". Zoom in to load the rest." : "."}`)}
         </p>
-        {!selected && (
-          <p className="pms-note">Click a coloured segment to open the road.</p>
+        {!activeKey && (
+          <p className="pms-note">Search a route, or click a coloured segment.</p>
         )}
-        {selected && (
+        {activeKey && (
           <>
             <div className="pms-road">
               <strong>
-                {selected.routeName ||
-                  selected.roadCode ||
-                  selected.routeId ||
+                {(selected && (selected.routeName || selected.roadCode || selected.routeId)) ||
+                  routeTitle(openedRoute) ||
                   "Selected road"}
               </strong>
               <span>
-                {[selected.roadCode, selected.linkName, selected.roadCategory]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {routeHint(selected || road[0] || openedRoute)}
               </span>
               <span className={`pms-badge ${summary.overall}`}>
                 {CLASS_LABEL[summary.overall]} overall
@@ -301,8 +392,12 @@ export default function PavementPanel({ mapApi }) {
                 </li>
               ))}
             </ul>
-            <h3>Selected segment</h3>
-            <dl className="pms-facts">
+            {roadLoading && <p className="pms-note">Loading this route…</p>}
+            {!roadLoading && road.length === 0 && (
+              <p className="pms-note">No pavement segments were found for this route.</p>
+            )}
+            {selected && <h3>Selected segment</h3>}
+            {selected && <dl className="pms-facts">
               <Fact label="Measure" value={measureText(selected)} />
               <Fact
                 label="PCI"
@@ -335,11 +430,13 @@ export default function PavementPanel({ mapApi }) {
               {selected.defects.map(([label, value]) => (
                 <Fact key={label} label={label} value={value} />
               ))}
-            </dl>
-            <p className="pms-treatment">
-              {CLASS_LABEL[conditionClass(selected, indicator)]} ·{" "}
-              {TREATMENT[conditionClass(selected, indicator)]}
-            </p>
+            </dl>}
+            {selected && (
+              <p className="pms-treatment">
+                {CLASS_LABEL[conditionClass(selected, indicator)]} ·{" "}
+                {TREATMENT[conditionClass(selected, indicator)]}
+              </p>
+            )}
             <h3>Potholes</h3>
             {potholes.length === 0 && (
               <p className="pms-note">No potholes recorded on this road.</p>

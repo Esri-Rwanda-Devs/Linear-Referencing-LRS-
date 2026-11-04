@@ -436,6 +436,15 @@ export async function loadPavementInExtent(extent) {
   return { features, truncated: features.length >= pageSize * pages };
 }
 
+/** Route name and code for every pavement road, without geometry. */
+export async function loadPavementIndex() {
+  return queryPages(PAVEMENT_LAYER_ID, pavementQuery({
+    returnGeometry: "false",
+    outFields: "routeid,routename,road_code,link_name,road_category",
+    resultRecordCount: "500",
+  }), 4, LRS);
+}
+
 /** Every pavement segment for one road code, route id, or route name. */
 export async function loadPavementRoad(key) {
   const value = String(key ?? "").trim().replace(/'/g, "''");

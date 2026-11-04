@@ -1343,13 +1343,26 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!paths.length) return;
           const color = PMS_COLORS[segment.className] || PMS_COLORS.unknown;
           const line = new Polyline({ paths, spatialReference: { wkid: 4326 } });
-          if (segment.selected || segment.priority) {
+          const onRoute = Boolean(segment.onRoute || segment.priority);
+          if (onRoute) {
             graphics.push(new Graphic({
               geometry: line,
               attributes: { pid: segment.id },
               symbol: new SimpleLineSymbol({
-                color: segment.selected ? [255, 255, 255, 0.95] : [15, 23, 42, 0.35],
-                width: segment.selected ? 4.8 : 3.8,
+                color: [255, 255, 255, 0.9],
+                width: 5.2,
+                cap: "round",
+                join: "round",
+              }),
+            }));
+          }
+          if (segment.selected) {
+            graphics.push(new Graphic({
+              geometry: line,
+              attributes: { pid: segment.id },
+              symbol: new SimpleLineSymbol({
+                color: [250, 204, 21, 0.98],
+                width: 7.4,
                 cap: "round",
                 join: "round",
               }),
@@ -1360,7 +1373,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             attributes: { pid: segment.id },
             symbol: new SimpleLineSymbol({
               color,
-              width: segment.selected ? 2.8 : segment.priority ? 2.4 : 2,
+              width: segment.selected ? 3.2 : 2,
               cap: "round",
               join: "round",
             }),
