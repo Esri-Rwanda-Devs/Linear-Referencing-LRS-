@@ -39,6 +39,64 @@ function Bars({ items }) {
   );
 }
 
+const kmText = (value) => {
+  if (!Number.isFinite(value)) return "—";
+  const digits = value > 0 && value < 10 ? 2 : 1;
+  return value.toLocaleString(undefined, { maximumFractionDigits: digits });
+};
+
+function niceStep(max) {
+  const raw = max / 4;
+  const power = 10 ** Math.floor(Math.log10(raw || 1));
+  const scaled = raw / power;
+  return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power;
+}
+
+function LengthChart({ title, items, loading, caption }) {
+  const measured = items.filter((item) => Number.isFinite(item.km));
+  const max = Math.max(0, ...measured.map((item) => item.km));
+  const step = niceStep(max || 1);
+  const top = Math.max(step, Math.ceil(max / step) * step);
+  const ticks = [];
+  for (let value = top; value >= 0; value -= step) ticks.push(value);
+  const total = measured.reduce((sum, item) => sum + item.km, 0);
+  return (
+    <article className="ov-asset ov-chart">
+      <header>
+        <span>Length per {title}</span>
+        <b>{measured.length ? `${kmText(total)} km` : ""}</b>
+      </header>
+      {caption && <em>{caption}</em>}
+      {loading && <p className="ov-empty">Measuring…</p>}
+      {!loading && !measured.length && <p className="ov-empty">{items.length ? "Length is not available for this layer." : "No types match the filters."}</p>}
+      {!loading && measured.length > 0 && (
+        <div className="ov-chart-body">
+          <div className="ov-chart-axis">
+            {ticks.map((value) => <span key={value}>{kmText(value)}</span>)}
+          </div>
+          <div className="ov-chart-plot" style={{ "--ov-ticks": ticks.length - 1 }}>
+            {measured.map((item) => (
+              <div
+                key={item.name}
+                className="ov-col"
+                style={{ "--ov-bar": `${Math.max(1, (item.km / top) * 100)}%` }}
+                title={`${item.name}: ${kmText(item.km)} km · ${numberText(item.count)} events`}
+              >
+                <b>{kmText(item.km)}</b>
+                <i style={{ background: item.color }} />
+              </div>
+            ))}
+          </div>
+          <div />
+          <div className="ov-chart-labels">
+            {measured.map((item) => <span key={item.name} title={item.name}>{item.name}</span>)}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function CountCard({ item, count, caption, loading }) {
   return (
     <article className="ov-asset ov-compact">
@@ -139,6 +197,7 @@ export default function Overview({ query = "", onQuery }) {
       return undefined;
     }
     let dead = false;
+    setTypeGroups(null);
     groupOverviewTypes(active.id, selected[active.id])
       .then((result) => {
         if (dead) return;
@@ -203,6 +262,19 @@ export default function Overview({ query = "", onQuery }) {
     if (!areaCounts || !Object.prototype.hasOwnProperty.call(areaCounts, item.id)) return null;
     return areaCounts[item.id];
   };
+
+  const typesPending = Boolean(active) && typeGroups == null;
+  const lineCards = shownLines.map((item) => {
+    const count = figure(item);
+    const missing = Boolean(active) && areaCounts && count == null;
+    const scoped = typeGroups && Object.prototype.hasOwnProperty.call(typeGroups, item.id) && typeGroups[item.id] != null;
+    const source = scoped ? typeGroups[item.id] : (item.groups || []);
+    const titleHit = !needle || item.title.toLowerCase().includes(needle);
+    const groups = source
+      .filter((group) => titleHit || group.name.toLowerCase().includes(needle))
+      .map((group) => ({ ...group, color: typeColor(item.id, group.name, item.swatch) }));
+    return { item, count, missing, groups, national: Boolean(active) && !scoped };
+  });
 
   return (
     <section className="overview">
@@ -291,13 +363,7 @@ export default function Overview({ query = "", onQuery }) {
           <section>
             <h3>By type</h3>
             <div className="ov-types">
-              {shownLines.map((item) => {
-                const count = figure(item);
-                const missing = Boolean(active) && areaCounts && count == null;
-                const source = typeGroups && Object.prototype.hasOwnProperty.call(typeGroups, item.id) && typeGroups[item.id] != null
-                  ? typeGroups[item.id]
-                  : (item.groups || []);
-                const groups = source.map((group) => ({ ...group, color: typeColor(item.id, group.name, item.swatch) }));
+              {lineCards.map(({ item, count, missing, groups }) => {
                 return (
                   <article key={item.id} className="ov-asset">
                     <header>
@@ -312,6 +378,22 @@ export default function Overview({ query = "", onQuery }) {
                   </article>
                 );
               })}
+            </div>
+          </section>
+        )}
+        {lineCards.length > 0 && (
+          <section>
+            <h3>Length by type (km){place ? ` · ${place}` : ""}</h3>
+            <div className="ov-charts">
+              {lineCards.map(({ item, groups, national }) => (
+                <LengthChart
+                  key={item.id}
+                  title={item.title}
+                  items={groups}
+                  loading={loading || typesPending}
+                  caption={national ? `National · no ${active.label.toLowerCase()} field` : ""}
+                />
+              ))}
             </div>
           </section>
         )}

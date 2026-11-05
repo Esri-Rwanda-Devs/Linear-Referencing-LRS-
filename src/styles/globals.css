@@ -48,26 +48,27 @@
   flex-wrap: wrap;
 }
 
-.export-excel {
-  border: 0;
-  border-radius: 8px;
-  padding: 6px 14px;
-  background: #16a34a;
-  color: var(--color-on-accent);
-  font-weight: 700;
-  white-space: nowrap;
-}
-.export-excel:disabled { background: #86efac; color: #14532d; cursor: not-allowed; }
+.export-excel,
 .print-pdf {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 0;
   border-radius: 8px;
-  padding: 6px 14px;
-  background: #0f172a;
+  padding: 6px 12px;
   color: var(--color-on-accent);
   font-weight: 700;
   white-space: nowrap;
+  cursor: pointer;
 }
-.print-pdf:disabled { background: #94a3b8; color: #f8fafc; cursor: not-allowed; }
+.export-excel { background: var(--color-excel); }
+.print-pdf { background: var(--color-pdf); }
+.export-excel:hover:not(:disabled) { background: var(--color-excel-hover); }
+.print-pdf:hover:not(:disabled) { background: var(--color-pdf-hover); }
+.export-excel:disabled,
+.print-pdf:disabled { opacity: 0.5; cursor: not-allowed; }
+.file-logo { flex: none; font-size: 16px; }
 .top-actions { display: flex; gap: 8px; align-items: center; }
 .theme-toggle {
   display: inline-flex;
@@ -81,8 +82,8 @@
   font-weight: 700;
 }
 .theme-toggle svg { font-size: 14px; }
-.segment-actions button.export-excel { background: #16a34a; border-color: #16a34a; color: var(--color-on-accent); font-weight: 700; }
-.segment-actions button.print-pdf { background: #0f172a; border-color: #0f172a; color: var(--color-on-accent); font-weight: 700; }
+.segment-actions button.export-excel { background: var(--color-excel); border-color: var(--color-excel); color: var(--color-on-accent); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.segment-actions button.print-pdf { background: var(--color-pdf); border-color: var(--color-pdf); color: var(--color-on-accent); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .segment-actions button.print-pdf:disabled { opacity: 0.65; cursor: wait; }
 .eyebrow { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; opacity: 0.85; }
 h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
@@ -374,14 +375,16 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 }
 .cursor-card > strong { display: block; font-size: 15px; }
 .cursor-card > span, .cursor-card > em { display: block; color: var(--color-text-muted); font-size: 12px; }
-.cursor-card b { color: #c2410c; font-size: 11px; letter-spacing: 0.06em; }
+.cursor-card b { display: block; margin-top: 6px; color: var(--color-primary); font-size: 11px; letter-spacing: 0.06em; }
 .cursor-card ul { margin: 2px 0 8px; padding: 0; list-style: none; }
 .hover-item { padding: 4px 0; border-bottom: 1px dashed var(--color-warm-border); }
 .hover-item:last-child { border-bottom: 0; }
 .hover-title { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-text-strong); }
 .hover-title svg { flex: none; }
 .hover-title strong { font-weight: 700; }
-.hover-km { margin-left: 17px; font-size: 10px; color: #c2410c; font-weight: 600; }
+.hover-km { margin-left: 17px; font-size: 10px; color: var(--color-primary); font-weight: 600; }
+.hover-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hover-summary .hover-km { margin-left: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hover-details { margin: 2px 0 0 17px; display: grid; gap: 1px; }
 .hover-details div { display: grid; grid-template-columns: 64px 1fr; gap: 6px; font-size: 10px; }
 .hover-details dt { color: var(--color-text-muted); }
@@ -612,8 +615,10 @@ body.resizing-chart .map, body.resizing-chart .chart-pane { pointer-events: none
 .cost-actions .primary { flex: 1; border: 0; background: #c2410c; color: var(--color-on-accent); font-weight: 700; }
 .cost-apply, .cost-open { width: 100%; margin-top: 6px; border: 1px solid var(--color-warm-border); background: var(--color-warm-bg); color: var(--color-warm-text); border-radius: 8px; padding: 8px; font-weight: 650; text-align: left; }
 .cost-modal { position: fixed; inset: 0; z-index: 10000; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.cost-modal .print-pdf { background: #0f172a; color: var(--color-on-accent); border: 0; }
-.cost-modal .print-pdf:disabled { opacity: 0.45; cursor: not-allowed; }
+.cost-modal .print-pdf { background: var(--color-pdf); color: var(--color-on-accent); border: 0; }
+.cost-modal .export-excel { background: var(--color-excel); color: var(--color-on-accent); border: 0; }
+.cost-modal .print-pdf:disabled,
+.cost-modal .export-excel:disabled { opacity: 0.45; cursor: not-allowed; }
 .cost-modal-card { width: min(980px, 100%); max-height: min(86vh, 900px); overflow: auto; background: var(--color-surface); border-radius: 12px; padding: 16px 18px 20px; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25); }
 .cost-modal-card header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .cost-modal-card h2 { margin: 0 0 4px; font-size: 18px; }

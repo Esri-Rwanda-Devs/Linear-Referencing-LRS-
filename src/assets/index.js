@@ -7,6 +7,7 @@ import { GiTakeMyMoney } from "react-icons/gi";
 import { RiAccountCircleFill, RiLogoutCircleFill } from "react-icons/ri";
 import { FiLogOut } from "react-icons/fi";
 import { BsDash } from "react-icons/bs";
+import { PiFilePdfFill, PiMicrosoftExcelLogoFill } from "react-icons/pi";
 
 
 
@@ -25,4 +26,6 @@ export const assetIcons = {
   RiLogoutCircleFill,
   FiLogOut,
   BsDash,
+  ExcelLogo: PiMicrosoftExcelLogoFill,
+  PdfLogo: PiFilePdfFill,
 };

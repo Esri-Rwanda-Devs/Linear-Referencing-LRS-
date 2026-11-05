@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LRS_LAYER_DEFS } from "../../../config";
+import { assetIcons } from "../../../assets";
 import { exportComparison } from "../../../utils/excel";
 import { averageMaxSpeed, loadEvents, loadRoute, summariseSegment } from "../../mapping/services/lrsService";
 import RoutePicker from "./RoutePicker";
@@ -78,7 +79,12 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
       </div>
       <div className="segment-actions">
         <button type="button" className="primary" onClick={compare} disabled={state.loading}>{state.loading ? "Loading routes…" : "Compare"}</button>
-        {a && b && <button type="button" className="export-excel" onClick={() => exportComparison(a, b)}>Export</button>}
+        {a && b && (
+          <button type="button" className="export-excel" title="Export comparison to Excel" onClick={() => exportComparison(a, b)}>
+            <assetIcons.ExcelLogo className="file-logo" aria-hidden="true" />
+            <span>Excel</span>
+          </button>
+        )}
         {a && b && (
           <button
             type="button"
@@ -96,7 +102,8 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
               }
             }}
           >
-            {printing ? "Printing…" : "Print"}
+            <assetIcons.PdfLogo className="file-logo" aria-hidden="true" />
+            <span>{printing ? "Printing…" : "PDF"}</span>
           </button>
         )}
         {a && b && <button type="button" className="link" onClick={clear}>Clear</button>}

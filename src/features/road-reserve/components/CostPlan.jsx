@@ -1,4 +1,5 @@
 import { createPortal } from "react-dom";
+import { assetIcons } from "../../../assets";
 import { exportBudgetReport } from "../../../utils/excel";
 import { formatMetre, formatRwf, formatSqm } from "../../cost/utils/corridor";
 
@@ -255,15 +256,22 @@ export default function CostPlan({
                 <p>Land, buildings, and compensation inside the reserve.</p>
               </div>
               <div className="cost-actions">
-                <button type="button" className="print-pdf" disabled={!ready || busy} onClick={() => { if (!printReport(report)) onExportFail?.(); }}>PDF</button>
+                <button type="button" className="print-pdf" disabled={!ready || busy} onClick={() => { if (!printReport(report)) onExportFail?.(); }}>
+                  <assetIcons.PdfLogo className="file-logo" aria-hidden="true" />
+                  <span>PDF</span>
+                </button>
                 <button
                   type="button"
+                  className="export-excel"
                   disabled={!ready || busy}
                   onClick={() => {
                     try { exportBudgetReport(report, options); }
                     catch (error) { onExportFail?.(error.message || "Could not export Excel."); }
                   }}
-                >Excel</button>
+                >
+                  <assetIcons.ExcelLogo className="file-logo" aria-hidden="true" />
+                  <span>Excel</span>
+                </button>
                 <button type="button" onClick={onClose}>Close</button>
               </div>
             </header>

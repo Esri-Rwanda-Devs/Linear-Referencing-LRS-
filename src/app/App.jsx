@@ -828,10 +828,43 @@ export default function App() {
     placeAnchor: lineAnchor,
   });
 
+  const shownEvents = useMemo(() => {
+    const hidden = new Set(hiddenLayerIds);
+    return events.filter((item) => !hidden.has(item.layerId));
+  }, [events, hiddenLayerIds]);
+
   const nearby = useMemo(() => {
     if (!cursor) return [];
-    return featuresAtMeasure(events, cursor.measure, 0.4);
-  }, [cursor, events]);
+    return featuresAtMeasure(shownEvents, cursor.measure, 0.4);
+  }, [cursor, shownEvents]);
+
+  const routeLayerSummary = useMemo(() => {
+    const layers = new Map();
+    shownEvents.forEach((item) => {
+      const entry = layers.get(item.layerId) || {
+        id: item.layerId,
+        title: item.title,
+        group: item.group,
+        kind: item.kind,
+        shape: item.shape,
+        color: item.color,
+        count: 0,
+        km: 0,
+      };
+      entry.count += 1;
+      if (item.kind === "span") entry.km += Math.max(0, item.to - item.from);
+      layers.set(item.layerId, entry);
+    });
+    const bags = new Map();
+    [...layers.values()]
+      .sort((a, b) => b.count - a.count)
+      .forEach((entry) => {
+        const list = bags.get(entry.group) || [];
+        list.push(entry);
+        bags.set(entry.group, list);
+      });
+    return [...bags.entries()];
+  }, [shownEvents]);
 
   const grouped = useMemo(() => {
     const bags = new Map();
@@ -991,7 +1024,8 @@ export default function App() {
               else exportRouteAssets(route, events);
             }}
           >
-            {compareShown ? "Export comparison" : segment ? "Export segment" : "Export Excel"}
+            <assetIcons.ExcelLogo className="file-logo" aria-hidden="true" />
+            <span>{compareShown ? "Export comparison" : segment ? "Export segment" : "Excel"}</span>
           </button>
           <button
             type="button"
@@ -1018,7 +1052,8 @@ export default function App() {
               job.catch((error) => setStatus(error.message || "Print failed.")).finally(() => setPrinting(false));
             }}
           >
-            {printing ? "Printing…" : "Print"}
+            <assetIcons.PdfLogo className="file-logo" aria-hidden="true" />
+            <span>{printing ? "Printing…" : "PDF"}</span>
           </button>
           <ProfileMenu />
         </div>
@@ -1555,11 +1590,49 @@ export default function App() {
                   {route.id} · {route.trajectory}
                 </span>
               )}
-              {grouped.length === 0 && (
+              {grouped.length === 0 && (!route || cursor) && (
                 <em>
-                  Features under the cursor appear here, grouped the same way as
-                  the chart.
+                  {route
+                    ? "No turned-on layers at this point."
+                    : "Features under the cursor appear here, grouped the same way as the chart."}
                 </em>
+              )}
+              {route && !cursor && (
+                routeLayerSummary.length ? (
+                  <>
+                    <em>Turned-on layers on this route. Hover for details.</em>
+                    {routeLayerSummary.map(([group, layers]) => (
+                      <div key={group}>
+                        <b>{groupLabel(group)}</b>
+                        <ul>
+                          {layers.map((layer) => (
+                            <li key={layer.id} className="hover-item hover-summary">
+                              <div className="hover-title">
+                                <svg width="12" height="12" viewBox="0 0 12 12">
+                                  <ChartSymbol
+                                    shape={layer.kind === "span" ? "bar" : layer.shape}
+                                    color={layer.color}
+                                    x={6}
+                                    y={6}
+                                    size={0.65}
+                                  />
+                                </svg>
+                                <span>{layer.title}</span>
+                              </div>
+                              <div className="hover-km">
+                                {layer.kind === "span"
+                                  ? `${layer.count} · ${layer.km.toFixed(2)} km`
+                                  : layer.count}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <em>{routeLoading ? "Loading route layers…" : "No turned-on layers have data on this route."}</em>
+                )
               )}
               {grouped.map(([group, items]) => (
                 <div key={group}>
@@ -1957,9 +2030,9 @@ export default function App() {
                   </dl>
                   <div className="summary-actions">
                     <button type="button" onClick={() => focusEvent(activeEvent)}>Open in map</button>
-                    {!LRS_LAYER_DEFS.find((layer) => layer.id === activeEvent.layerId)?.readOnly && (
+                    {/* {!LRS_LAYER_DEFS.find((layer) => layer.id === activeEvent.layerId)?.readOnly && (
                       <button type="button" onClick={() => setViewMode("edit")}>Edit</button>
-                    )}
+                    )} */}
                   </div>
                 </>
               ) : (

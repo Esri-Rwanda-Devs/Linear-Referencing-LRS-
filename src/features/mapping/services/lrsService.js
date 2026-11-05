@@ -376,7 +376,7 @@ function valueFieldOf(meta, def) {
 
 function typeName(layerId, raw) {
   const text = String(raw ?? "").trim();
-  if (!text) return "Blank";
+  if (!text) return "No data";
   if (layerId === 3) {
     const compact = text.toLowerCase().replace(/[^a-z]/g, "");
     if (compact.includes("undivided")) return "Undivided";
@@ -394,21 +394,94 @@ function typeClause(field, key) {
   return `${column} = '${safe}'`;
 }
 
-async function groupLayer(def, field, where = "1=1") {
+const GEOGRAPHIC_WKIDS = new Set([4326, 4269, 4283, 4258]);
+
+function attributeOf(attributes, name) {
+  if (!attributes) return undefined;
+  if (name in attributes) return attributes[name];
+  const key = Object.keys(attributes).find((item) => item.toLowerCase() === name.toLowerCase());
+  return key ? attributes[key] : undefined;
+}
+
+/**
+ * Length comes from the route measures, which this app already treats as kilometres.
+ * Geometry length is only a fallback: it is degrees on these layers, so dividing it by
+ * 1,000 turned 5,400 km into 0.05 and the chart rounded that to 0.
+ */
+function lengthPlan(meta) {
+  const fields = meta.fields || [];
+  const from = namedField(fields, FROM_FIELDS);
+  const to = namedField(fields, TO_FIELDS);
+  if (from && to && from !== to) {
+    return {
+      kind: "measure",
+      from,
+      to,
+      stats: [
+        { statisticType: "sum", onStatisticField: from, outStatisticFieldName: "m_from" },
+        { statisticType: "sum", onStatisticField: to, outStatisticFieldName: "m_to" },
+      ],
+      km: (attributes, perUnit) => Math.max(0, ((Number(attributeOf(attributes, "m_to")) || 0) - (Number(attributeOf(attributes, "m_from")) || 0)) / perUnit),
+    };
+  }
+  const shapeLength = meta.geometryProperties?.shapeLengthFieldName
+    || fields.find((item) => /^(shape__length|shape_length|st_length\(shape\)|shape\.stlength\(\))$/i.test(item.name))?.name;
+  if (!shapeLength) return { kind: "none", stats: [], km: () => null };
+  const sr = meta.extent?.spatialReference || meta.sourceSpatialReference || {};
+  const geographic = GEOGRAPHIC_WKIDS.has(sr.latestWkid || sr.wkid) || GEOGRAPHIC_WKIDS.has(sr.wkid);
+  return {
+    kind: "shape",
+    stats: [{ statisticType: "sum", onStatisticField: shapeLength, outStatisticFieldName: "len_raw" }],
+    km: (attributes) => {
+      const raw = Number(attributeOf(attributes, "len_raw")) || 0;
+      return geographic ? raw * 111.32 : raw / 1000;
+    },
+  };
+}
+
+/** Measures longer than any road in Rwanda are stored in metres. */
+async function measureDivisor(def, plan) {
+  if (plan.kind !== "measure") return 1;
+  try {
+    const data = await queryRaw(def.id, {
+      where: `${plan.to} > 0`,
+      outFields: plan.to,
+      returnGeometry: "false",
+      orderByFields: `${plan.to} DESC`,
+      resultRecordCount: "1",
+    }, def.service || LRS);
+    const maxTo = Number(attributeOf(data.features?.[0]?.attributes, plan.to)) || 0;
+    return maxTo > 400 ? 1000 : 1;
+  } catch {
+    return 1;
+  }
+}
+
+async function groupLayer(def, field, where = "1=1", length = { stats: [], km: () => null }) {
   const service = def.service || LRS;
   const oid = field.oid || "objectid";
-  const data = await queryRaw(def.id, {
+  const count = { statisticType: "count", onStatisticField: oid, outStatisticFieldName: "count" };
+  const run = (stats) => queryRaw(def.id, {
     where,
     returnGeometry: "false",
     groupByFieldsForStatistics: field.name,
-    outStatistics: JSON.stringify([{ statisticType: "count", onStatisticField: oid, outStatisticFieldName: "count" }]),
+    outStatistics: JSON.stringify([count, ...stats]),
     resultRecordCount: "15",
   }, service);
-  const rows = (data.features || []).map((feature) => ({
-    name: String(feature.attributes?.[field.name] ?? "").trim() || "Blank",
-    count: Number(feature.attributes?.count) || 0,
+  let data;
+  let measured = length.stats.length > 0;
+  try {
+    data = await run(length.stats);
+  } catch (error) {
+    if (!measured) throw error;
+    measured = false;
+    data = await run([]);
+  }
+  return (data.features || []).map((feature) => ({
+    name: String(attributeOf(feature.attributes, field.name) ?? "").trim() || "No data",
+    count: Number(attributeOf(feature.attributes, "count")) || 0,
+    km: measured ? length.km(feature.attributes) : null,
   }));
-  return rows;
 }
 
 async function typeGroups(def, where = "1=1") {
@@ -416,29 +489,43 @@ async function typeGroups(def, where = "1=1") {
   const field = valueFieldOf(meta, def);
   if (!field) return [];
   const oid = (meta.fields || []).find((item) => item.type === "esriFieldTypeOID")?.name || "objectid";
+  const plan = def.kind === "line" ? lengthPlan(meta) : { stats: [], km: () => null };
+  const perUnit = await measureDivisor(def, plan);
+  const length = { stats: plan.stats, km: (attributes) => plan.km(attributes, perUnit) };
+  const merge = (rows) => {
+    const merged = new Map();
+    rows.forEach((row) => {
+      const name = typeName(def.id, row.name);
+      const entry = merged.get(name) || { name, count: 0, km: null };
+      entry.count += row.count;
+      if (Number.isFinite(row.km)) entry.km = (entry.km || 0) + row.km;
+      merged.set(name, entry);
+    });
+    return [...merged.values()].filter((row) => row.count > 0).sort((a, b) => b.count - a.count);
+  };
   try {
-    const rows = await groupLayer(def, { ...field, oid }, where);
-    if (rows.length) {
-      const merged = new Map();
-      rows.forEach((row) => {
-        const name = typeName(def.id, row.name);
-        merged.set(name, (merged.get(name) || 0) + row.count);
-      });
-      return [...merged.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-    }
+    const rows = await groupLayer(def, { ...field, oid }, where, length);
+    if (rows.length) return merge(rows);
   } catch {
     /* Count each known type on its own when the service rejects a grouped query. */
   }
   const keys = Object.keys(VALUE_COLORS[def.id]?.colors || {});
   const rows = await Promise.all(keys.map(async (key) => {
     const clause = typeClause(field, key);
-    const data = await queryRaw(def.id, {
-      where: where === "1=1" ? clause : `(${where}) AND (${clause})`,
-      returnCountOnly: "true",
-    }, def.service || LRS);
-    return { name: typeName(def.id, key), count: Number(data.count) || 0 };
+    const scoped = where === "1=1" ? clause : `(${where}) AND (${clause})`;
+    const data = await queryRaw(def.id, { where: scoped, returnCountOnly: "true" }, def.service || LRS);
+    let km = null;
+    if (length.stats.length && Number(data.count) > 0) {
+      try {
+        const sums = await queryRaw(def.id, { where: scoped, returnGeometry: "false", outStatistics: JSON.stringify(length.stats) }, def.service || LRS);
+        km = length.km(sums.features?.[0]?.attributes);
+      } catch {
+        km = null;
+      }
+    }
+    return { name: typeName(def.id, key), count: Number(data.count) || 0, km };
   }));
-  return rows.filter((row) => row.count > 0);
+  return merge(rows);
 }
 
 const BOUNDARY_LEVELS = [

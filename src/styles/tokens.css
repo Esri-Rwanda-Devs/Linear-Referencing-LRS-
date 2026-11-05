@@ -26,6 +26,10 @@
   --color-warm-bg: #fff7ed;
   --color-warm-border: #fed7aa;
   --color-warm-text: #9a3412;
+  --color-excel: #217346;
+  --color-excel-hover: #185c37;
+  --color-pdf: #d93025;
+  --color-pdf-hover: #b3261e;
 
   --spacing-xs: 4px;
   --spacing-sm: 8px;

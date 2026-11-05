@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { assetIcons } from "../../../assets";
 import { exportSegmentAssets } from "../../../utils/excel";
 import { summariseSegment } from "../../mapping/services/lrsService";
 import { ChartSymbol } from "./StripChart";
@@ -45,7 +46,12 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
         <button type="button" className={selecting ? "on" : ""} onClick={() => onSelecting(!selecting)}>
           {selecting ? (segmentStart !== null ? `From ${segmentStart.toFixed(2)} km… click the end (cancel)` : "Click the start on the route… (cancel)") : "Pick from / to on route"}
         </button>
-        {segment && <button type="button" className="export-excel" onClick={() => exportSegmentAssets(route, events, segment)}>Export Excel</button>}
+        {segment && (
+          <button type="button" className="export-excel" title="Export segment to Excel" onClick={() => exportSegmentAssets(route, events, segment)}>
+            <assetIcons.ExcelLogo className="file-logo" aria-hidden="true" />
+            <span>Excel</span>
+          </button>
+        )}
         {segment && (
           <button
             type="button"
@@ -60,7 +66,8 @@ export default function SegmentAnalysis({ route, events, segment, segmentStart =
               }
             }}
           >
-            {printing ? "Printing…" : "Print"}
+            <assetIcons.PdfLogo className="file-logo" aria-hidden="true" />
+            <span>{printing ? "Printing…" : "PDF"}</span>
           </button>
         )}
         {segment && <button type="button" className="link" onClick={() => onSegment(null)}>Clear</button>}

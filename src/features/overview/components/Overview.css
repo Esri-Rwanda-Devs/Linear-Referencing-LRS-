@@ -37,7 +37,7 @@
   padding: 7px 12px;
   font-size: 12px;
 }
-.ov-toolbar button.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.ov-toolbar button.on { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); }
 .ov-toolbar select, .ov-toolbar input {
   width: 100%;
   box-sizing: border-box;
@@ -89,6 +89,71 @@
 .ov-bars i { display: block; height: 8px; border-radius: 99px; }
 .ov-bars b { font-variant-numeric: tabular-nums; }
 .ov-empty { margin: 8px 0 0; font-size: 12px; color: var(--color-text-muted); }
+.ov-charts { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.ov-chart header { justify-content: space-between; }
+.ov-chart header b { font-size: 12px; color: var(--color-primary); font-variant-numeric: tabular-nums; }
+.ov-chart-body {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  row-gap: 4px;
+}
+.ov-chart-axis {
+  height: 130px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: end;
+  font-size: 9.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 12px;
+}
+.ov-chart-plot {
+  height: 130px;
+  display: flex;
+  align-items: end;
+  justify-content: space-around;
+  gap: 8px;
+  padding: 0 6px;
+  border-left: 1px solid var(--chart-grid);
+  border-bottom: 1px solid var(--chart-grid);
+  background-image: linear-gradient(to bottom, var(--chart-grid) 1px, transparent 1px);
+  background-size: 100% calc(100% / var(--ov-ticks, 4));
+}
+.ov-col {
+  position: relative;
+  flex: 1;
+  max-width: 34px;
+  height: 100%;
+}
+.ov-col b {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--ov-bar) + 3px);
+  transform: translateX(-50%);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ov-col i { position: absolute; left: 0; right: 0; bottom: 0; height: var(--ov-bar); border-radius: 4px 4px 0 0; min-height: 2px; }
+.ov-chart-plot { margin-top: 14px; }
+.ov-chart-axis { height: 142px; margin: 8px 0 -6px; }
+.ov-chart-labels { display: flex; justify-content: space-around; gap: 8px; padding: 0 6px; }
+.ov-chart-labels span {
+  flex: 1;
+  max-width: 64px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @media (max-width: 980px) {
   .ov-cascade { grid-template-columns: 1fr 1fr; }
 }
