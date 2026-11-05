@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ADMIN, BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
 import { insertOnPath, pathLengthM, rectangleRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
-import { accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
+import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
 import { PMS_COLORS } from "../../pavement/pms";
 
 const MODULES = [
@@ -328,10 +328,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const roadCenter = new SimpleLineSymbol({ color: [255, 255, 255, 0.98], width: 1.8, cap: "round", join: "round" });
       const roadCasingEdit = new SimpleLineSymbol({ color: [146, 84, 24, 0.55], width: 5.5, cap: "round", join: "round" });
       const roadCenterEdit = new SimpleLineSymbol({ color: [255, 196, 92, 0.9], width: 2.6, cap: "round", join: "round" });
-      const roadCasingDim = new SimpleLineSymbol({ color: [148, 163, 184, 0.4], width: 4.2, cap: "round", join: "round" });
-      const roadCenterDim = new SimpleLineSymbol({ color: [255, 255, 255, 0.35], width: 1.8, cap: "round", join: "round" });
-      const roadCasingOff = new SimpleLineSymbol({ color: [148, 163, 184, 0.16], width: 2, cap: "round", join: "round" });
-      const roadCenterOff = new SimpleLineSymbol({ color: [255, 255, 255, 0.1], width: 0.8, cap: "round", join: "round" });
+      const roadCasingOff = new SimpleLineSymbol({ color: [148, 163, 184, 0.05], width: 1.2, cap: "round", join: "round" });
+      const roadCenterOff = new SimpleLineSymbol({ color: [255, 255, 255, 0.03], width: 0.5, cap: "round", join: "round" });
       const segmentCasing = new SimpleLineSymbol({ color: [255, 255, 255, 1], width: 8, cap: "round", join: "round" });
       const drawnRoads = new globalThis.Map();
       const roadLines = [];
@@ -413,11 +411,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       const paintHotspots = () => {
         hotspotLayer.removeAll();
+        if ((hiddenRef.current || []).includes(ACCIDENT_LAYER)) return;
         const box = geographicExtent();
-        if (!box || Math.abs(box.xmax - box.xmin) > 0.6 || !roadLines.length) return;
+        const nearby = box && Math.abs(box.xmax - box.xmin) <= 0.6 && roadLines.length;
         const activeKey = routeRef.current?.id ? routeKey(routeRef.current.id) : "";
         const located = roadLines.map(() => []);
-        accidentFeatures.forEach((feature) => {
+        if (nearby) accidentFeatures.forEach((feature) => {
           if (!accidentInLastMonth(accidentTime(feature.attributes))) return;
           if (feature.geometry?.x === undefined) return;
           const at = toLonLat(feature.geometry.x, feature.geometry.y);
@@ -439,7 +438,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const active = routeRef.current;
         if (active?.vertices?.length) {
           const measures = (eventsRef.current || [])
-            .filter((item) => item.layerId === 17 && accidentInLastMonth(item.occurred))
+            .filter((item) => item.layerId === ACCIDENT_LAYER && accidentInLastMonth(item.occurred))
             .map((item) => item.measure);
           hotspotSpans(measures).forEach((span) => drawSpan(active.vertices, active.measures, span));
         }
@@ -460,7 +459,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           paintHotspots();
           return Promise.resolve();
         }
-        const def = LRS_LAYER_DEFS.find((item) => item.id === 17);
+        const def = LRS_LAYER_DEFS.find((item) => item.id === ACCIDENT_LAYER);
         if (!def) return Promise.resolve();
         accidentBoxes.push(extent);
         return loadLayerInExtent(def, extent).then((result) => {
@@ -627,7 +626,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const load = loadLayerInExtent(def, box);
           jobs.push(load.then((result) => {
             if (cancelled) return null;
-            if (def.id === 17) rememberAccidents(result.features);
+            if (def.id === ACCIDENT_LAYER) rememberAccidents(result.features);
             return addFeatures(def, result.features, result.routeField);
           }).catch((error) => {
             const boxes = covered[index];
@@ -848,10 +847,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const on = !keys.size || keys.has(graphic.attributes?.route);
           const center = graphic.attributes?.part === "center";
           const quiet = editingRef.current && on;
-          const off = editingRef.current && !on;
+          const faded = Boolean(keys.size) && !on;
           graphic.symbol = center
-            ? (on ? (quiet ? roadCenterEdit : roadCenter) : (off ? roadCenterOff : roadCenterDim))
-            : (on ? (quiet ? roadCasingEdit : roadCasing) : (off ? roadCasingOff : roadCasingDim));
+            ? (on ? (quiet ? roadCenterEdit : roadCenter) : (faded ? roadCenterOff : roadCenter))
+            : (on ? (quiet ? roadCasingEdit : roadCasing) : (faded ? roadCasingOff : roadCasing));
         });
         lrsLayers.forEach((layer, index) => {
           if (!layer || layer === "pending" || LRS_LAYER_DEFS[index].route) return;
@@ -1388,7 +1387,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -1734,7 +1733,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     const bag = api.current;
     if (!bag?.accidentLayer) return;
-    const accidentId = 17;
+    const accidentId = ACCIDENT_LAYER;
     bag.accidentLayer.removeAll();
     const mark = (target, item) => {
       if (!target?.vertices?.length || !item || item.layerId !== accidentId) return;
@@ -1816,6 +1815,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     [bag.compareLayer, bag.cursorLayer, bag.segmentLayer, bag.projectLayer, bag.analysisLayer].forEach((layer) => {
       if (layer) layer.visible = !pavement;
     });
+    const accidentsOn = !hidden.has(ACCIDENT_LAYER);
+    if (bag.hotspotLayer) bag.hotspotLayer.visible = accidentsOn && !pavement;
+    if (accidentsOn) bag.ensureAccidents?.(bag.mapExtent?.());
+    else bag.paintHotspots?.();
     bag.raiseEditLayers?.();
     bag.refreshExtent?.();
   }, [hiddenLayerIds, editing, ready, pavement]);

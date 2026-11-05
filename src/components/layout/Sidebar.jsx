@@ -52,6 +52,13 @@ export default function Sidebar({ viewMode, onChange }) {
           </button>
         ))}
       </div>
+      <div className="sidebar-fade" aria-hidden="true">
+        <svg viewBox="0 0 240 130" preserveAspectRatio="none">
+          <path fill="#12345a" d="M0 50 C40 28 70 62 110 46 C150 30 180 58 240 36 L240 130 L0 130 Z" />
+          <path fill="#1c4d3a" d="M0 78 C50 60 90 90 140 72 C180 58 210 80 240 66 L240 130 L0 130 Z" />
+          <path fill="#0b1c30" d="M0 100 C60 86 120 108 180 92 C210 86 228 96 240 90 L240 130 L0 130 Z" />
+        </svg>
+      </div>
       <div className="sidebar-logout">
         <button type="button" className="sidebar-logout-button" title="Log out" onClick={() => signOutOfLrs()}>
           <assetIcons.FiLogOut className="sidebar-logout-button-icon" />

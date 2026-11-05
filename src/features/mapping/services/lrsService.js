@@ -1,4 +1,4 @@
-import { ADMIN, LRS, LRS_LAYER_DEFS, PAVEMENT_LAYER_ID, PORTAL, SNAP_METERS, VALUE_COLORS } from "../../../config";
+import { ADMIN, LRS, LRS_LAYER_DEFS, PAVEMENT_LAYER_ID, PORTAL, SNAP_METERS, VALUE_COLORS, VILLAGE_BOUNDARY } from "../../../config";
 import { buildRoute, flattenPaths, haversineKm, lineMeasureSpan, locateOnRoute, pointAtMeasure, projectSegment, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 
 const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid", "road_id"];
@@ -335,6 +335,228 @@ async function queryPages(layerId, params, pageCap = 8, service = LRS) {
     offset += batch.features.length;
   }
   return features;
+}
+
+async function queryRaw(layerId, params, service = LRS) {
+  const { token } = await signInToLrs();
+  const query = new URLSearchParams({ f: "json", token, ...params });
+  const response = await fetch(`${devUrl(service)}/${layerId}/query?${query}`, { signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error(`Query failed ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || "Query failed");
+  return data;
+}
+
+function fieldNamed(meta, pattern) {
+  return (meta.fields || []).find((field) => pattern.test(field.name))?.name || "";
+}
+
+async function countLayer(def) {
+  const data = await queryRaw(def.id, { where: "1=1", returnCountOnly: "true" }, def.service || LRS);
+  return Number(data.count) || 0;
+}
+
+const VALUE_FIELD_ALIASES = {
+  3: ["cway", "cwaytype", "carriageway_type", "carriagewaytype"],
+  6: ["drainage_type_lhs", "drainage_type", "draintype", "drain_type"],
+  10: ["pavement_category", "pavement_type", "pavementcategory"],
+  14: ["maxspeed", "speed_limit", "speedlimit", "speed"],
+  19: ["severity"],
+};
+
+function valueFieldOf(meta, def) {
+  const aliases = VALUE_FIELD_ALIASES[def.id] || [VALUE_COLORS[def.id]?.field].filter(Boolean);
+  const fields = meta.fields || [];
+  for (const alias of aliases) {
+    const hit = fields.find((item) => item.name.toLowerCase() === alias.toLowerCase());
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function typeName(layerId, raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return "Blank";
+  if (layerId === 3) {
+    const compact = text.toLowerCase().replace(/[^a-z]/g, "");
+    if (compact.includes("undivided")) return "Undivided";
+    if (compact.includes("divided") || compact === "dual") return "Divided";
+  }
+  return text;
+}
+
+function typeClause(field, key) {
+  const column = `UPPER(${field.name})`;
+  if (/integer|double|single/i.test(field.type || "") && /^-?\d+(\.\d+)?$/.test(key)) return `${field.name} = ${key}`;
+  if (key === "divided") return `${column} LIKE '%DIVIDED%' AND ${column} NOT LIKE '%UNDIVIDED%'`;
+  if (key === "undivided") return `${column} LIKE '%UNDIVIDED%'`;
+  const safe = key.toUpperCase().replace(/'/g, "''");
+  return `${column} = '${safe}'`;
+}
+
+async function groupLayer(def, field, where = "1=1") {
+  const service = def.service || LRS;
+  const oid = field.oid || "objectid";
+  const data = await queryRaw(def.id, {
+    where,
+    returnGeometry: "false",
+    groupByFieldsForStatistics: field.name,
+    outStatistics: JSON.stringify([{ statisticType: "count", onStatisticField: oid, outStatisticFieldName: "count" }]),
+    resultRecordCount: "15",
+  }, service);
+  const rows = (data.features || []).map((feature) => ({
+    name: String(feature.attributes?.[field.name] ?? "").trim() || "Blank",
+    count: Number(feature.attributes?.count) || 0,
+  }));
+  return rows;
+}
+
+async function typeGroups(def, where = "1=1") {
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const field = valueFieldOf(meta, def);
+  if (!field) return [];
+  const oid = (meta.fields || []).find((item) => item.type === "esriFieldTypeOID")?.name || "objectid";
+  try {
+    const rows = await groupLayer(def, { ...field, oid }, where);
+    if (rows.length) {
+      const merged = new Map();
+      rows.forEach((row) => {
+        const name = typeName(def.id, row.name);
+        merged.set(name, (merged.get(name) || 0) + row.count);
+      });
+      return [...merged.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    }
+  } catch {
+    /* Count each known type on its own when the service rejects a grouped query. */
+  }
+  const keys = Object.keys(VALUE_COLORS[def.id]?.colors || {});
+  const rows = await Promise.all(keys.map(async (key) => {
+    const clause = typeClause(field, key);
+    const data = await queryRaw(def.id, {
+      where: where === "1=1" ? clause : `(${where}) AND (${clause})`,
+      returnCountOnly: "true",
+    }, def.service || LRS);
+    return { name: typeName(def.id, key), count: Number(data.count) || 0 };
+  }));
+  return rows.filter((row) => row.count > 0);
+}
+
+const BOUNDARY_LEVELS = [
+  { id: "province", label: "Province", pattern: /^province(_name)?$/i },
+  { id: "district", label: "District", pattern: /^district(_name)?$/i },
+  { id: "sector", label: "Sector", pattern: /^sector(_name)?$/i },
+  { id: "cell", label: "Cell", pattern: /^cell(_name)?$/i },
+  { id: "village", label: "Village", pattern: /^village(_name)?$/i },
+];
+
+async function queryBoundary(params) {
+  const { token } = await signInToLrs();
+  const query = new URLSearchParams({ f: "json", token, ...params });
+  const response = await fetch(`${devUrl(VILLAGE_BOUNDARY)}/query?${query}`, { signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error(`Query failed ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || "Query failed");
+  return data;
+}
+
+function namesFrom(data, field) {
+  return [...new Set((data.features || [])
+    .map((feature) => String(feature.attributes?.[field] ?? "").trim())
+    .filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+/** Admin levels that actually exist on the village boundary layer, in cascade order. */
+export async function loadBoundaryLevels() {
+  const meta = await getJson(VILLAGE_BOUNDARY);
+  const fields = meta.fields || [];
+  return BOUNDARY_LEVELS.map((level) => {
+    const field = fields.find((item) => level.pattern.test(item.name));
+    return field ? { id: level.id, label: level.label, field: field.name, type: field.type || "" } : null;
+  }).filter(Boolean);
+}
+
+/** Distinct names for one boundary level, limited by the parents already chosen. */
+export async function loadBoundaryChoices(level, parents) {
+  const where = parents.length
+    ? parents.map((parent) => whereEquals(parent.field, parent.value, parent.type)).join(" AND ")
+    : "1=1";
+  const data = await queryBoundary({
+    where,
+    returnGeometry: "false",
+    returnDistinctValues: "true",
+    outFields: level.field,
+    orderByFields: level.field,
+    resultRecordCount: "2000",
+  });
+  return namesFrom(data, level.field);
+}
+
+async function assetField(def, levelId) {
+  const level = BOUNDARY_LEVELS.find((item) => item.id === levelId);
+  if (!level) return null;
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const name = fieldNamed(meta, level.pattern);
+  if (!name) return null;
+  const type = (meta.fields || []).find((field) => field.name === name)?.type || "";
+  return { name, type };
+}
+
+/** Count each layer inside one named boundary, using that layer's matching field. */
+export async function countOverviewArea(levelId, areaName) {
+  const layers = LRS_LAYER_DEFS.filter((def) => def.kind === "point" || def.kind === "line");
+  return Promise.all(layers.map(async (def) => {
+    try {
+      const field = await assetField(def, levelId);
+      if (!field) return { id: def.id, count: null };
+      const data = await queryRaw(def.id, {
+        where: whereEquals(field.name, areaName, field.type),
+        returnCountOnly: "true",
+      }, def.service || LRS);
+      return { id: def.id, count: Number(data.count) || 0 };
+    } catch {
+      return { id: def.id, count: null };
+    }
+  }));
+}
+
+/** Type counts for line events, limited to one boundary when a filter is set. */
+export async function groupOverviewTypes(levelId, areaName) {
+  const lines = LRS_LAYER_DEFS.filter((def) => def.kind === "line" && !def.route && VALUE_COLORS[def.id]);
+  return Promise.all(lines.map(async (def) => {
+    try {
+      const field = levelId ? await assetField(def, levelId) : null;
+      if (levelId && !field) return { id: def.id, groups: null };
+      const where = field ? whereEquals(field.name, areaName, field.type) : "1=1";
+      return { id: def.id, groups: await typeGroups(def, where) };
+    } catch {
+      return { id: def.id, groups: [] };
+    }
+  }));
+}
+
+/** Counts and grouped values for the overview page. One light query per layer. */
+export async function loadOverview() {
+  const layers = LRS_LAYER_DEFS.filter((def) => def.kind === "point" || def.kind === "line");
+  return Promise.all(layers.map(async (def) => {
+    const base = { id: def.id, title: def.title, kind: def.kind, group: def.group, swatch: def.swatch, route: Boolean(def.route) };
+    try {
+      const count = await countLayer(def);
+      let groups = [];
+      let splitField = "";
+      if (def.kind === "line" && !def.route && VALUE_COLORS[def.id]) {
+        try {
+          groups = await typeGroups(def);
+          splitField = VALUE_FIELD_ALIASES[def.id]?.[0] || VALUE_COLORS[def.id].field;
+        } catch {
+          groups = [];
+        }
+      }
+      return { ...base, count, groups, splitField, error: "" };
+    } catch (error) {
+      const message = /abort/i.test(error.message || "") ? "Timed out" : (error.message || "Could not count this layer.");
+      return { ...base, count: null, groups: [], splitField: "", error: message };
+    }
+  }));
 }
 
 async function roadFields() {
@@ -1081,7 +1303,8 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
 }
 
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-const ACCIDENT_LAYER = 17;
+export const ACCIDENT_LAYER = LRS_LAYER_DEFS.find((def) => /accident/i.test(def.title))?.id ?? 19;
+const HOTSPOT_KM = 1;
 
 function toMillis(value) {
   if (typeof value === "number" && value > 1e11) return value;
@@ -1129,26 +1352,29 @@ function lastMonth(event, now = Date.now()) {
   return event.layerId === ACCIDENT_LAYER && accidentInLastMonth(event.occurred, now);
 }
 
-/** Groups measures along one road into the yellow (5–15) and red (above 15) stretches. */
+/** Stretches of at most 1 km holding 5–15 accidents (yellow) or more than 15 (red). Fewer stay as points. */
 export function hotspotSpans(measures) {
   const sorted = measures.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  const windows = [];
+  let end = 0;
+  for (let start = 0; start < sorted.length; start += 1) {
+    if (end < start) end = start;
+    while (end + 1 < sorted.length && sorted[end + 1] - sorted[start] <= HOTSPOT_KM) end += 1;
+    const count = end - start + 1;
+    if (count >= 5) windows.push({ start, end, count });
+  }
+  windows.sort((a, b) => b.count - a.count || a.start - b.start);
+  const taken = new Array(sorted.length).fill(false);
   const spans = [];
-  let group = [];
-  const flush = () => {
-    if (group.length >= 5) {
-      const from = group[0];
-      const to = group[group.length - 1];
-      const pad = to - from < 0.12 ? 0.08 : 0.03;
-      spans.push({ from: from - pad, to: to + pad, count: group.length, ...accidentTone(group.length) });
-    }
-    group = [];
-  };
-  sorted.forEach((measure) => {
-    if (group.length && measure - group[group.length - 1] > 0.4) flush();
-    group.push(measure);
+  windows.forEach((window) => {
+    for (let index = window.start; index <= window.end; index += 1) if (taken[index]) return;
+    for (let index = window.start; index <= window.end; index += 1) taken[index] = true;
+    const from = sorted[window.start];
+    const to = sorted[window.end];
+    const pad = to - from < 0.12 ? 0.08 : 0.03;
+    spans.push({ from: from - pad, to: to + pad, count: window.count, ...accidentTone(window.count) });
   });
-  flush();
-  return spans;
+  return spans.sort((a, b) => a.from - b.from);
 }
 
 /** Yellow for 5–15 last-month accidents on a stretch, red above 15. */

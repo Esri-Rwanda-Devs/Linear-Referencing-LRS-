@@ -6,6 +6,7 @@ import { TbRoad } from "react-icons/tb";
 import { GiTakeMyMoney } from "react-icons/gi";
 import { RiAccountCircleFill, RiLogoutCircleFill } from "react-icons/ri";
 import { FiLogOut } from "react-icons/fi";
+import { BsDash } from "react-icons/bs";
 
 
 
@@ -23,4 +24,5 @@ export const assetIcons = {
   RiAccountCircleFill,
   RiLogoutCircleFill,
   FiLogOut,
+  BsDash,
 };

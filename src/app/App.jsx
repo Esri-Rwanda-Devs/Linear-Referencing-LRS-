@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FiMoon, FiSun } from "react-icons/fi";
 import { EditorPopup, EditorSidebar } from "../features/editing/components/Editor";
 import Planner from "../features/analysis/components/Planner";
 import SegmentAnalysis from "../features/analysis/components/SegmentAnalysis";
 import RoutePicker from "../features/analysis/components/RoutePicker";
 import RouteCompare from "../features/analysis/components/RouteCompare";
 import StripChart, { ChartSymbol } from "../features/analysis/components/StripChart";
-import { BUILDING_RATE_RWF, COMPENSATION_PERCENT, groupLabel, LRS_LAYER_DEFS, PARCEL_RATE_RWF, REQUESTED_ITEM, WINDOW_KM } from "../config";
+import { BUILDING_RATE_RWF, COMPENSATION_PERCENT, GROUPS, groupLabel, LRS_LAYER_DEFS, PARCEL_RATE_RWF, REQUESTED_ITEM, WINDOW_KM } from "../config";
 import { exportComparison, exportRouteAssets, exportSegmentAssets } from "../utils/excel";
 import {
   failedLayerTitles,
@@ -26,10 +27,13 @@ import ProfileMenu from "../components/layout/ProfileMenu";
 import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
+import Overview from "../features/overview/components/Overview";
 import { appendVertex, applyRates } from "../features/cost/utils/corridor";
+import { assetIcons } from "../assets";
 
 const STORE = "rwanda-lrs-projects";
 const CHART_STORE = "rwanda-lrs-chart-height";
+const THEME_STORE = "rwanda-lrs-theme";
 const CHART_DEFAULT = 340;
 const CHART_MIN = 40;
 const MAP_MIN = 120;
@@ -97,6 +101,8 @@ export default function App() {
   const [panelHost] = useState(() => document.createElement("div"));
   const [panelTab, setPanelTab] = useState("nearest");
   const [viewMode, setViewMode] = useState("analyse");
+  const [overviewQuery, setOverviewQuery] = useState("");
+  const [theme, setTheme] = useState(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const [placingId, setPlacingId] = useState(null);
   const [lineAnchor, setLineAnchor] = useState(null);
   const [placeMarks, setPlaceMarks] = useState(null);
@@ -106,6 +112,7 @@ export default function App() {
   const editingPage = viewMode === "edit";
   const costPage = viewMode === "cost";
   const pavementPage = viewMode === "pavement";
+  const overviewPage = viewMode === "overview";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
   const [chartH, setChartH] = useState(
@@ -721,6 +728,10 @@ export default function App() {
   const [focusing, setFocusing] = useState(null);
   const mapApi = useRef(null);
   useEffect(() => {
+    if (viewMode === "overview") return;
+    mapApi.current?.view?.resize?.();
+  }, [viewMode]);
+  useEffect(() => {
     const rates = { land: landRate, building: buildingRate, compensation: compensationPct };
     setPlanReport((current) => applyRates(current, rates));
     setPlanOptions((current) => {
@@ -881,6 +892,42 @@ export default function App() {
     });
   };
 
+  const routeSummary = useMemo(() => {
+    const read = (pattern) => {
+      for (const feature of route?.features || []) {
+        const attrs = feature.attributes || {};
+        const key = Object.keys(attrs).find((name) => pattern.test(name) && attrs[name] != null && String(attrs[name]).trim());
+        if (key) return String(attrs[key]).trim();
+      }
+      return "";
+    };
+    const counts = new Map();
+    events.filter((item) => item.layerId === 10 && item.name).forEach((item) => {
+      counts.set(item.name, (counts.get(item.name) || 0) + 1);
+    });
+    const surface = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || read(/surface|pavement/i);
+    return {
+      id: route?.id || "",
+      name: read(/routename|roadname|linkname/i) || (route?.trajectory && route.trajectory !== route.id ? route.trajectory : ""),
+      classification: read(/class|category|functional/i) || route?.roadClass || "",
+      length: route?.lengthKm,
+      surface,
+    };
+  }, [route, events]);
+
+  const clearRoute = () => {
+    if (placingId != null) return;
+    setRouteId("");
+    setActiveId(null);
+    setActiveEvent(null);
+    setSegment(null);
+    setSegmentStart(null);
+    setSelectingSegment(false);
+    setCompare(null);
+    setFollow(false);
+    setStatus("Route cleared. Click a road on the map or search for another route.");
+  };
+
   const shiftWindow = (delta) => {
     if (!route) return;
     setWindowKm(([from, to]) => {
@@ -894,13 +941,45 @@ export default function App() {
    <div className="app-container">
     <LoginGate />
     <Sidebar viewMode={viewMode} onChange={setViewMode} />
-        <div className={`app${editingPage ? " page-edit" : ""}`}>
+        <div className={`app${editingPage ? " page-edit" : ""}${overviewPage ? " page-overview" : ""}`}>
       <header className="topbar">
         <div>
           {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
           <h3>Road Location Reference Application</h3>
         </div>
+        <div className="top-search">
+          {overviewPage ? (
+            <input
+              className="overview-search"
+              value={overviewQuery}
+              placeholder="Filter overview (bridges, paved, divided…)"
+              onChange={(event) => setOverviewQuery(event.target.value)}
+            />
+          ) : (
+            <RoutePicker
+              catalog={catalog}
+              value={routeId}
+              placeholder="Search road (e.g. RN1)"
+              onChange={selectRoute}
+            />
+          )}
+        </div>
         <div className="top-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-pressed={theme === "dark"}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => {
+              const next = theme === "dark" ? "light" : "dark";
+              document.documentElement.dataset.theme = next;
+              try { localStorage.setItem(THEME_STORE, next); } catch { /* the theme still changes for this visit */ }
+              setTheme(next);
+            }}
+          >
+            {theme === "dark" ? <FiSun /> : <FiMoon />}
+            <span>{theme === "dark" ? "Light" : "Dark"}</span>
+          </button>
           <button
             type="button"
             className="export-excel"
@@ -1072,6 +1151,7 @@ export default function App() {
           />
         )}
         {pavementPage && <PavementPanel mapApi={mapApi} />}
+        {overviewPage && <Overview query={overviewQuery} onQuery={setOverviewQuery} />}
         {editingPage && (
           <EditorSidebar
             hiddenLayerIds={hiddenLayerIds}
@@ -1107,7 +1187,7 @@ export default function App() {
             }}
           />
         )}
-        <main ref={mainRef} style={{ gridTemplateRows: chartPage ? rowsFor(chartH) : "1fr" }}>
+        <main ref={mainRef} className={overviewPage ? "is-hidden" : ""} style={{ gridTemplateRows: chartPage ? rowsFor(chartH) : "1fr" }}>
           <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>
             <div ref={mapRef} className="map" />
             {(routeLoading || focusing) && (
@@ -1147,7 +1227,7 @@ export default function App() {
                 }}
               />
             )}
-            {(chartPage || costPage) && <div className="legend-box">
+            {/* {(chartPage || costPage) && <div className="legend-box">
               <button
                 type="button"
                 className="legend-toggle"
@@ -1220,7 +1300,7 @@ export default function App() {
                   )}
                 </ul>
               )}
-            </div>}
+            </div>} */}
             {chartPage && createPortal(
               <div className="analysis-panel">
                 <div className="analysis-tabs" role="tablist">
@@ -1468,7 +1548,7 @@ export default function App() {
               <strong>
                 {cursor
                   ? `${cursor.measure.toFixed(2)} km`
-                  : "Hover the amber route"}
+                  : "Hover the selected route"}
               </strong>
               {route && (
                 <span>
@@ -1595,7 +1675,7 @@ export default function App() {
             </div>
           </div>
           <section className="chart-pane" ref={paneRef}>
-            <div className="station-bar">
+          <div className="station-bar">
               <button
                 type="button"
                 onClick={() => stepRoute(-1)}
@@ -1603,8 +1683,8 @@ export default function App() {
               >
                 Prev route
               </button>
-              <label>
-                Route
+              {/* <label>
+                Route */}
                 <RoutePicker
                   catalog={catalog}
                   value={routeId}
@@ -1617,7 +1697,7 @@ export default function App() {
                     setFollow(true);
                   }}
                 />
-              </label>
+              {/* </label> */}
               <button
                 type="button"
                 onClick={() => stepRoute(1)}
@@ -1625,6 +1705,11 @@ export default function App() {
               >
                 Next route
               </button>
+              {routeId && (
+                <button type="button" className="route-cancel" onClick={clearRoute} title="Clear this route and pick another">
+                  Cancel
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => shiftWindow(-1)}
@@ -1632,8 +1717,8 @@ export default function App() {
               >
                 ‹
               </button>
-              <label>
-                From measure
+              {/* <label>
+                From measure */}
                 <input
                   type="number"
                   inputMode="decimal"
@@ -1644,9 +1729,10 @@ export default function App() {
                   onChange={(event) => onWindowDraft(0, event.target.value)}
                   onBlur={(event) => onWindowBlur(0, event.target.value)}
                 />
-              </label>
-              <label>
-                To measure
+              {/* </label> */}
+              <span><assetIcons.BsDash /></span>
+              {/* <label>
+                To measure */}
                 <input
                   type="number"
                   inputMode="decimal"
@@ -1657,7 +1743,7 @@ export default function App() {
                   onChange={(event) => onWindowDraft(1, event.target.value)}
                   onBlur={(event) => onWindowBlur(1, event.target.value)}
                 />
-              </label>
+              {/* </label> */}
               <button
                 type="button"
                 onClick={() => shiftWindow(1)}
@@ -1683,6 +1769,40 @@ export default function App() {
                     : "")}
               </span>
             </div>
+          <span className="chart-display-title">Layers</span>
+            <div className="chart-display">
+            
+              {/* {GROUPS.filter((group) => group.id === "POI" || group.id === "ATT").map((group) => {
+                const ids = LRS_LAYER_DEFS.filter((layer) => layer.group === group.id && layer.chart !== false).map((layer) => layer.id);
+                const shown = ids.some((id) => !hiddenLayerIds.includes(id));
+                return (
+                  <label key={group.id}>
+                    <input
+                      type="checkbox"
+                      checked={shown}
+                      onChange={() => setHiddenLayerIds((current) => (
+                        shown ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id))
+                      ))}
+                    />
+                    {group.label}
+                  </label>
+                );
+              })} */}
+              {LRS_LAYER_DEFS.filter((layer) => layer.chart !== false).map((layer) => (
+                <label key={layer.id}>
+                  <input
+                    type="checkbox"
+                    checked={!hiddenLayerIds.includes(layer.id)}
+                    onChange={() => setHiddenLayerIds((current) => (
+                      current.includes(layer.id) ? current.filter((id) => id !== layer.id) : [...current, layer.id]
+                    ))}
+                  />
+                  <i style={{ background: layer.swatch }} />
+                  {layer.title}
+                </label>
+              ))}
+            </div>
+            
             {route && (
               <div
                 className={compareShown ? "charts-parallel" : "charts-single"}
@@ -1713,6 +1833,7 @@ export default function App() {
                   )}
                   <StripChart
                     fill
+                    hiddenLayerIds={hiddenLayerIds}
                     events={events}
                     projects={routeProjects}
                     route={route}
@@ -1769,6 +1890,7 @@ export default function App() {
                     </div>
                     <StripChart
                       fill
+                      hiddenLayerIds={hiddenLayerIds}
                       events={compareShown.events}
                       projects={NO_PROJECTS}
                       route={compareShown.route}
@@ -1788,6 +1910,77 @@ export default function App() {
           </section>
           </>}
         </main>
+        {chartPage && (
+          <aside className="summary-rail">
+            <article className="summary-card">
+              <header>
+                <span>Route information</span>
+                {routeId && (
+                  <button type="button" className="route-cancel" onClick={clearRoute}>
+                    Cancel
+                  </button>
+                )}
+              </header>
+              <dl>
+                <div><dt>Route ID</dt><dd>{routeSummary.id || "—"}</dd></div>
+                <div><dt>Road name</dt><dd>{routeSummary.name || "—"}</dd></div>
+                <div><dt>Classification</dt><dd>{routeSummary.classification || "—"}</dd></div>
+                <div><dt>Length</dt><dd>{Number.isFinite(routeSummary.length) ? `${routeSummary.length.toFixed(2)} km` : "—"}</dd></div>
+                <div><dt>Surface</dt><dd>{routeSummary.surface || "—"}</dd></div>
+              </dl>
+            </article>
+            <article className="summary-card">
+              <header>
+                <span>Selected event</span>
+                {activeEvent && (
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                    <ChartSymbol shape={activeEvent.kind === "span" ? "bar" : activeEvent.shape} color={activeEvent.color} x={8} y={8} size={0.8} />
+                  </svg>
+                )}
+              </header>
+              {activeEvent ? (
+                <>
+                  <strong>{activeEvent.title}</strong>
+                  <em>{activeEvent.name}</em>
+                  <dl>
+                    <div>
+                      <dt>Chainage</dt>
+                      <dd>
+                        {activeEvent.kind === "span"
+                          ? `${activeEvent.from.toFixed(2)} – ${activeEvent.to.toFixed(2)} km`
+                          : `${activeEvent.measure.toFixed(3)} km`}
+                      </dd>
+                    </div>
+                    {(activeEvent.details || []).slice(0, 6).map(([label, value]) => (
+                      <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+                    ))}
+                  </dl>
+                  <div className="summary-actions">
+                    <button type="button" onClick={() => focusEvent(activeEvent)}>Open in map</button>
+                    {!LRS_LAYER_DEFS.find((layer) => layer.id === activeEvent.layerId)?.readOnly && (
+                      <button type="button" onClick={() => setViewMode("edit")}>Edit</button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p>Click a symbol on the chart or the map to see it here.</p>
+              )}
+            </article>
+            <article className="summary-card">
+              <header><span>Legend</span></header>
+              <ul className="summary-legend">
+                {LRS_LAYER_DEFS.filter((layer) => layer.chart !== false).map((layer) => (
+                  <li key={layer.id}>
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                      <ChartSymbol shape={layer.kind === "point" ? layer.shape : "bar"} color={layer.swatch} x={8} y={8} size={0.75} />
+                    </svg>
+                    {layer.title}
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </aside>
+        )}
       </div>
     </div>
    </div>

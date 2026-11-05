@@ -6,9 +6,7 @@ const ROW_H = 20;
 const AXIS_H = 24;
 const CHAR_W = 4.4;
 
-const ROWS = [];
 function rowsFor() {
-  if (ROWS.length) return ROWS;
   const rows = [];
   GROUPS.forEach((group) => {
     const layers = LRS_LAYER_DEFS.filter((layer) => layer.group === group.id && layer.chart !== false);
@@ -20,8 +18,20 @@ function rowsFor() {
     ordered.forEach((layer) => rows.push({ type: "layer", group: group.id, title: layer.title, color: layer.swatch, shape: layer.kind === "point" ? layer.shape : "bar", layerId: layer.id, route: Boolean(layer.route), kind: layer.kind }));
     if (group.id === "PLN") rows.push({ type: "layer", group: "PLN", title: "Projects", color: group.color, shape: "bar" });
   });
-  ROWS.push(...rows);
-  return ROWS;
+  return rows;
+}
+
+function visibleRows(hiddenLayerIds) {
+  const hidden = new Set(hiddenLayerIds || []);
+  const rows = rowsFor().filter((row) => row.type !== "layer" || row.layerId == null || !hidden.has(row.layerId));
+  return rows.filter((row, index) => {
+    if (row.type !== "group") return true;
+    for (let cursor = index + 1; cursor < rows.length; cursor += 1) {
+      if (rows[cursor].type === "group") return false;
+      if (rows[cursor].group === row.id) return true;
+    }
+    return false;
+  });
 }
 
 export function ChartSymbol({ shape, color, x, y, size = 1 }) {
@@ -194,10 +204,10 @@ function RoadSlider({ lengthKm, from, to, cursor, events, onWindow }) {
   );
 }
 
-function StripChart({ fill = false, events, projects, route, windowKm, cursor, segment, segmentStart = null, selectingSegment, onSegmentPoint, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent }) {
+function StripChart({ fill = false, events, projects, route, windowKm, cursor, segment, segmentStart = null, selectingSegment, onSegmentPoint, activeEventId, attachedIds, onWindow, onHoverMeasure, onSegment, onPickProject, onSelectEvent, hiddenLayerIds = [] }) {
   const [drag, setDrag] = useState(null);
   const clipId = `plot-clip-${useId().replace(/:/g, "")}`;
-  const rows = rowsFor();
+  const rows = visibleRows(hiddenLayerIds);
   const labelW = 150;
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(1100);
@@ -397,8 +407,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
               <rect key={value.name} x={7 + chip * 3.5} y={yMid - 4} width="3.5" height="8" fill={value.color} />
             ))
             : <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />}
-          <text x="24" y={yMid + 3.5} fill="#334155" fontSize="9.5">{row.title}</text>
-          <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="#e2e8f0" />
+          <text x="24" y={yMid + 3.5} fill="var(--chart-label)" fontSize="9.5">{row.title}</text>
+          <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="var(--chart-grid)" />
           <g clipPath={`url(#${clipId})`}>
             {row.layerId === 14 && (
               <rect x={labelW} y={y + 1} width={Math.max(0, right - labelW)} height={Math.max(4, layerH - 2)} fill={VALUE_COLORS[14].colors[0]} />
@@ -436,8 +446,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
               if (!hidden && x > labelEnd + 10 && room > 0) {
                 const text = fitText(item.name, room, charW);
                 if (text) {
-                  label = <text x={x + 5 + 3 * symbolScale} y={yMid + labelFont * 0.33} fontSize={labelFont - 0.5} fill="#334155" pointerEvents="none"
-                    stroke="rgba(248,250,252,0.9)" strokeWidth="2" paintOrder="stroke">{text}</text>;
+                  label = <text x={x + 5 + 3 * symbolScale} y={yMid + labelFont * 0.33} fontSize={labelFont - 0.5} fill="var(--chart-label)" pointerEvents="none"
+                    stroke="var(--chart-halo)" strokeWidth="2.5" strokeLinejoin="round" paintOrder="stroke">{text}</text>;
                   labelEnd = x + 5 + 3 * symbolScale + text.length * charW;
                 }
               }
@@ -496,11 +506,11 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
             <rect x={labelW} y="0" width={right - labelW} height={height} />
           </clipPath>
         </defs>
-        <rect x="0" y="0" width={width} height={height} fill="#f8fafc" />
+        <rect x="0" y="0" width={width} height={height} fill="var(--chart-bg)" />
         {ticks.map((tick) => (
           <g key={tick}>
-            <line x1={xOf(tick)} x2={xOf(tick)} y1={AXIS_H - 4} y2={height - 4} stroke="#e2e8f0" />
-            <text x={xOf(tick)} y="16" textAnchor="middle" fontSize="9" fill="#64748b">{step < 1 ? tick.toFixed(1) : tick.toFixed(0)}</text>
+            <line x1={xOf(tick)} x2={xOf(tick)} y1={AXIS_H - 4} y2={height - 4} stroke="var(--chart-grid)" />
+            <text x={xOf(tick)} y="16" textAnchor="middle" fontSize="9" fill="var(--chart-muted)">{step < 1 ? tick.toFixed(1) : tick.toFixed(0)}</text>
           </g>
         ))}
         {rowsSvg}
@@ -522,7 +532,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
               <line x1={x1} x2={x1} y1={AXIS_H - 4} y2={height - 4} stroke={tone.stroke} strokeWidth="1.2" strokeDasharray="3 2" />
               <line x1={x2} x2={x2} y1={AXIS_H - 4} y2={height - 4} stroke={tone.stroke} strokeWidth="1.2" strokeDasharray="3 2" />
               <text x={(x1 + x2) / 2} y={AXIS_H + 2} textAnchor="middle" fontSize="8" fontWeight="700" fill={tone.text}
-                stroke="rgba(255,255,255,0.9)" strokeWidth="2" paintOrder="stroke">
+                stroke="var(--chart-halo)" strokeWidth="2.5" strokeLinejoin="round" paintOrder="stroke">
                 {`${band.from.toFixed(2)} – ${band.to.toFixed(2)} km (${(band.to - band.from).toFixed(2)} km)${note}`}
               </text>
             </g>
@@ -531,7 +541,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         {segmentStart !== null && segmentStart >= from && segmentStart <= to && (
           <g pointerEvents="none">
             <line x1={xOf(segmentStart)} x2={xOf(segmentStart)} y1={AXIS_H - 4} y2={height - 4} stroke="#16a34a" strokeWidth="1.6" strokeDasharray="4 2" />
-            <text x={xOf(segmentStart) + 4} y={AXIS_H + 2} fontSize="8" fontWeight="700" fill="#15803d" stroke="rgba(255,255,255,0.9)" strokeWidth="2" paintOrder="stroke">
+            <text x={xOf(segmentStart) + 4} y={AXIS_H + 2} fontSize="8" fontWeight="700" fill="#22c55e" stroke="var(--chart-halo)" strokeWidth="2.5" strokeLinejoin="round" paintOrder="stroke">
               {`From ${segmentStart.toFixed(2)} km · click the end`}
             </text>
           </g>

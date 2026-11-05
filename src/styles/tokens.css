@@ -12,6 +12,20 @@
   --color-warning: #d97706;
   --color-danger: #b91c1c;
   --color-info: #208dba;
+  --color-accent: #1d4ed8;
+  --color-on-accent: #ffffff;
+  --color-text-strong: #0f172a;
+  --color-link: #0369a1;
+  --color-hover: #f0f9ff;
+  --color-input-bg: #ffffff;
+  --color-control-border: #cbd5e1;
+  --color-overlay: rgba(255, 255, 255, 0.95);
+  --color-highlight: #facc15;
+  --color-on-highlight: #0f172a;
+  --color-highlight-soft: #fef9c3;
+  --color-warm-bg: #fff7ed;
+  --color-warm-border: #fed7aa;
+  --color-warm-text: #9a3412;
 
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -28,8 +42,48 @@
 
   --font-family: "Avenir Next", "Segoe UI", sans-serif;
 
+  --chart-bg: #f8fafc;
+  --chart-label: #334155;
+  --chart-muted: #64748b;
+  --chart-grid: #e2e8f0;
+  --chart-panel: #ffffff;
+  --chart-halo: rgba(248, 250, 252, 0.9);
+
   color: var(--color-text);
   background: var(--color-background);
   font-family: var(--font-family);
   font-size: 14px;
+}
+
+:root[data-theme="dark"] {
+  --color-primary: #38bdf8;
+  --color-primary-hover: #7dd3fc;
+  --color-secondary: #93a4b8;
+  --color-background: #071422;
+  --color-surface: #10263c;
+  --color-surface-muted: #0c1e33;
+  --color-text: #e7eef7;
+  --color-text-muted: #93a4b8;
+  --color-border: #1e3a56;
+  --color-info: #38bdf8;
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-success: #4ade80;
+  --color-text-strong: #f8fafc;
+  --color-link: #7dd3fc;
+  --color-hover: #16304a;
+  --color-input-bg: #0c1e33;
+  --color-control-border: #3b5a7a;
+  --color-overlay: rgba(16, 38, 60, 0.96);
+  --color-highlight-soft: rgba(250, 204, 21, 0.18);
+  --color-warm-bg: rgba(194, 65, 12, 0.18);
+  --color-warm-border: #7c2d12;
+  --color-warm-text: #fdba74;
+
+  --chart-bg: #0c1e33;
+  --chart-label: #d5e2ef;
+  --chart-muted: #8aa0b8;
+  --chart-grid: #1c3a56;
+  --chart-panel: #0b192b;
+  --chart-halo: rgba(12, 30, 51, 0.95);
 }

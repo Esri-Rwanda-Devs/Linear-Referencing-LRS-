@@ -7,6 +7,8 @@ export const WATER =
   "https://gh.space.gov.rw/server/rest/services/Water/FeatureServer";
 export const ADMIN =
   "https://gh.space.gov.rw/server/rest/services/Admin_Boundaries/FeatureServer";
+export const VILLAGE_BOUNDARY =
+  "https://gh.space.gov.rw/server/rest/services/Village_boundary_forest_analysis/FeatureServer/0";
 export const ACCIDENTS =
   "https://gh.space.gov.rw/server/rest/services/Road_Asset_LRS/FeatureServer";
 export const PAVEMENT_LAYER_ID = 10;
@@ -133,16 +135,16 @@ export const EVENT_LAYERS = [
 export const GROUPS = [
   { id: "NET", label: "NET", hint: "Road network", color: "#0f766e" },
   {
+    id: "POI",
+    label: "Point assets",
+    hint: "Points of interest, cameras, and accidents",
+    color: "#e11d48",
+  },
+  {
     id: "ATT",
     label: "Line Events",
     hint: "Pavement, drain, speed, carriageway",
     color: "#7c3aed",
-  },
-  {
-    id: "POI",
-    label: "POI",
-    hint: "Points of interest, cameras, and accidents",
-    color: "#e11d48",
   },
   { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
@@ -334,7 +336,7 @@ export const VALUE_COLORS = {
   },
   14: {
     field: "maxspeed",
-    colors: { 0: "#E2E8F0", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" },
+    colors: { 0: "#E2E8F010", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" },
   },
   3: {
     field: "cwaytype",
