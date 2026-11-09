@@ -1,8 +1,9 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { GROUPS, LRS_LAYER_DEFS, VALUE_COLORS } from "../../../config";
 import { segmentAccidents } from "../../mapping/services/lrsService";
+import { iconUrl } from "../../mapping/icons";
 
-const ROW_H = 20;
+const ROW_H = 28;
 const AXIS_H = 24;
 const CHAR_W = 4.4;
 
@@ -35,6 +36,11 @@ function visibleRows(hiddenLayerIds) {
 }
 
 export function ChartSymbol({ shape, color, x, y, size = 1 }) {
+  const href = iconUrl(shape, color);
+  if (href) {
+    const box = 16 * size;
+    return <image href={href} x={x - box / 2} y={y - box / 2} width={box} height={box} />;
+  }
   const s = size;
   if (shape === "triangle") return <polygon points={`${x},${y - 6 * s} ${x - 5 * s},${y + 4 * s} ${x + 5 * s},${y + 4 * s}`} fill={color} />;
   if (shape === "diamond") return <polygon points={`${x},${y - 5.5 * s} ${x + 4.5 * s},${y} ${x},${y + 5.5 * s} ${x - 4.5 * s},${y}`} fill={color} />;
@@ -242,7 +248,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
   const groupCount = rows.filter((row) => row.type === "group").length;
   const layerCount = Math.max(1, rows.length - groupCount);
   const layerH = fill && availH
-    ? Math.max(ROW_H, Math.min(40, Math.floor((availH - AXIS_H - 8 - groupCount * ROW_H) / layerCount)))
+    ? Math.max(ROW_H, Math.min(48, Math.floor((availH - AXIS_H - 8 - groupCount * ROW_H) / layerCount)))
     : ROW_H;
   const rowY = [];
   let rowBottom = AXIS_H;
@@ -252,8 +258,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
   });
   const height = rowBottom + 8;
   const barH = Math.round(Math.min(24, layerH * 0.7));
-  const symbolScale = Math.min(1.5, layerH / ROW_H);
-  const labelFont = Math.min(10, 8 + (layerH - ROW_H) * 0.12);
+  const pointScale = Math.max(1, Math.min(1.45, (layerH - 8) / 16));
+  const labelFont = Math.min(14, 12 + Math.max(0, layerH - ROW_H) * 0.12);
   const charW = CHAR_W * (labelFont / 7.5);
   const [from, to] = windowKm;
   const span = Math.max(0.2, to - from);
@@ -346,8 +352,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         return (
           <g key={`${row.id}-g`}>
             <rect x="0" y={y + 2} width={labelW - 8} height={ROW_H - 4} rx="3" fill={row.color} />
-            <text x="8" y={y + 13.5} fill="#fff" fontSize="9.5" fontWeight="700">{row.label}</text>
-            <text x={labelW + 6} y={y + 13.5} fill="#94a3b8" fontSize="8.5">{row.hint}</text>
+            <text x="8" y={y + 18} fill="#fff" fontSize="12" fontWeight="700">{row.label}</text>
+            <text x={labelW + 6} y={y + 18} fill="#94a3b8" fontSize="11">{row.hint}</text>
           </g>
         );
       }
@@ -386,17 +392,15 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
       }
       const runs = row.layerId === 5 ? separateRuns(spans) : mergeRuns(spans);
 
+      const iconPx = 16 * pointScale;
+      const minGap = iconPx + 6;
+      const laneEnd = [-Infinity, -Infinity];
       const drawn = [];
-      let lastX = -Infinity;
       points.forEach((item) => {
         const x = xOf(item.measure);
-        const special = item.id === activeEventId || attached.has(item.id);
-        if (!special && x - lastX < 3 && drawn.length) {
-          drawn[drawn.length - 1].hidden += 1;
-          return;
-        }
-        drawn.push({ item, x, hidden: 0 });
-        lastX = x;
+        const lane = x - laneEnd[0] >= minGap || x - laneEnd[0] >= x - laneEnd[1] ? 0 : 1;
+        laneEnd[lane] = x;
+        drawn.push({ item, x, lane, hidden: 0 });
       });
 
       let labelEnd = -Infinity;
@@ -406,8 +410,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
             ? valueColorsOf(byLayer.get(row.layerId)).slice(0, 4).map((value, chip) => (
               <rect key={value.name} x={7 + chip * 3.5} y={yMid - 4} width="3.5" height="8" fill={value.color} />
             ))
-            : <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={0.75} />}
-          <text x="24" y={yMid + 3.5} fill="var(--chart-label)" fontSize="9.5">{row.title}</text>
+            : <ChartSymbol shape={row.shape} color={row.color} x={14} y={yMid} size={1} />}
+          <text x="28" y={yMid + 4} fill="var(--chart-label)" fontSize="12.5">{row.title}</text>
           <line x1={labelW} x2={right} y1={yMid} y2={yMid} stroke="var(--chart-grid)" />
           <g clipPath={`url(#${clipId})`}>
             {row.layerId === 14 && (
@@ -437,26 +441,27 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
                 <text key={`t-${runIndex}`} x={start} y={yMid + labelFont * 0.36} fontSize={labelFont} fontWeight="600" fill={dark ? "#ffffff" : "#111827"} pointerEvents="none">{text}</text>
               );
             })}
-            {drawn.map(({ item, x, hidden }, drawIndex) => {
+            {drawn.map(({ item, x, lane }, drawIndex) => {
               const active = item.id === activeEventId;
               const isAttached = attached.has(item.id);
+              const yPoint = yMid + (lane === 0 ? 0 : Math.min(9, layerH * 0.24));
               const next = drawn[drawIndex + 1];
-              const room = Math.min(90, (next ? next.x : right) - x - 12);
+              const room = Math.min(140, (next ? next.x : right) - x - iconPx);
               let label = null;
-              if (!hidden && x > labelEnd + 10 && room > 0) {
+              if (x > labelEnd + 8 && room > 0) {
                 const text = fitText(item.name, room, charW);
                 if (text) {
-                  label = <text x={x + 5 + 3 * symbolScale} y={yMid + labelFont * 0.33} fontSize={labelFont - 0.5} fill="var(--chart-label)" pointerEvents="none"
-                    stroke="var(--chart-halo)" strokeWidth="2.5" strokeLinejoin="round" paintOrder="stroke">{text}</text>;
-                  labelEnd = x + 5 + 3 * symbolScale + text.length * charW;
+                  label = <text x={x + iconPx * 0.55} y={yPoint + labelFont * 0.35} fontSize={labelFont} fontWeight="600" fill="var(--chart-label)" pointerEvents="none"
+                    stroke="var(--chart-halo)" strokeWidth="3" strokeLinejoin="round" paintOrder="stroke">{text}</text>;
+                  labelEnd = x + iconPx * 0.55 + text.length * charW;
                 }
               }
               return (
                 <g key={item.id} style={{ cursor: "pointer" }} onClick={pick(item)}>
-                  <title>{tooltip(item, `${item.measure.toFixed(3)} km${hidden ? ` · +${hidden} more here, zoom in to separate` : ""}`)}</title>
-                  {isAttached && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#be185d" strokeWidth="1.5" />}
-                  {active && <circle cx={x} cy={yMid} r="6" fill="none" stroke="#facc15" strokeWidth="2" />}
-                  <ChartSymbol shape={item.shape} color={item.color} x={x} y={yMid} size={(hidden ? 0.72 : 0.6) * symbolScale} />
+                  <title>{tooltip(item, `${item.measure.toFixed(3)} km`)}</title>
+                  {isAttached && <circle cx={x} cy={yPoint} r="8" fill="none" stroke="#be185d" strokeWidth="1.5" />}
+                  {active && <circle cx={x} cy={yPoint} r="8" fill="none" stroke="#facc15" strokeWidth="2" />}
+                  <ChartSymbol shape={item.shape} color={item.color} x={x} y={yPoint} size={pointScale} />
                   {label}
                 </g>
               );

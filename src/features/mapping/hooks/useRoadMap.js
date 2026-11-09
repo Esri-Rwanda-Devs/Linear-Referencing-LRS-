@@ -4,6 +4,7 @@ import { insertOnPath, pathLengthM, rectangleRing } from "../../cost/utils/corri
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
 import { PMS_COLORS } from "../../pavement/pms";
+import { markerSymbol } from "../icons";
 
 const MODULES = [
   "esri/Map",
@@ -351,11 +352,39 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           uniqueValueInfos: Object.entries(rule.colors).map(([value, color]) => ({ value: String(value), symbol: line(color) })),
         };
       };
-      const symbolFor = (def) => (def.kind === "point"
-        ? (def.shape === "x"
-          ? { type: "simple-marker", style: "x", color: def.color, size: 6, outline: { color: def.color, width: 1.6 } }
-          : { type: "simple-marker", style: def.shape || "circle", color: def.color, size: def.shape === "triangle" ? 7 : 5.5, outline: { color: [255, 255, 255, 0.9], width: 0.6 } })
-        : { type: "simple-line", color: def.color, width: def.width || 2.5, cap: "round", join: "round" });
+      const symbolFor = (def) => {
+        if (def.kind === "point") {
+          const icon = markerSymbol(def);
+          if (icon) return icon;
+          return def.shape === "x"
+            ? { type: "simple-marker", style: "x", color: def.color, size: 8, outline: { color: def.color, width: 1.6 } }
+            : { type: "simple-marker", style: def.shape || "circle", color: def.color, size: 8, outline: { color: [255, 255, 255, 0.9], width: 0.8 } };
+        }
+        return { type: "simple-line", color: def.color, width: def.width || 2.5, cap: "round", join: "round" };
+      };
+      const nativeLine = (geometry) => {
+        const rawX = geometry?.curvePaths?.[0]?.[0]?.[0] ?? geometry?.paths?.[0]?.[0]?.[0];
+        if (!Number.isFinite(rawX)) return null;
+        const spatialReference = Math.abs(rawX) > 180 ? { wkid: 102100 } : { wkid: 4326 };
+        if (geometry.curvePaths?.length) return new Polyline({ curvePaths: geometry.curvePaths, spatialReference });
+        if (geometry.paths?.length) return new Polyline({ paths: geometry.paths, spatialReference });
+        return null;
+      };
+      const lineOnRoute = (from, to) => {
+        const active = routeRef.current;
+        if (!active?.vertices?.length) return null;
+        if (!Number.isFinite(from) || !Number.isFinite(to) || Math.abs(to - from) < 0.02) return null;
+        const length = active.lengthKm || active.measures?.[active.measures.length - 1] || 0;
+        let start = Math.min(from, to);
+        let end = Math.max(from, to);
+        if (length > 0 && end > length * 3 && end > 50) return null;
+        if (length > 0) {
+          start = Math.max(0, Math.min(length, start));
+          end = Math.max(start, Math.min(length, end));
+        }
+        const slice = sliceVertices(active.vertices, active.measures, start, end);
+        return slice.length > 1 ? new Polyline({ paths: [slice], spatialReference: { wkid: 4326 } }) : null;
+      };
       const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
       const seen = LRS_LAYER_DEFS.map(() => new globalThis.Map());
       const covered = LRS_LAYER_DEFS.map(() => []);
@@ -523,7 +552,14 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           title: def.title,
           source: [],
           objectIdField: "oid",
-          fields: [{ name: "oid", type: "oid" }, { name: "route", type: "string" }, { name: "rid", type: "string" }, { name: "tone", type: "string" }],
+          fields: [
+            { name: "oid", type: "oid" },
+            { name: "route", type: "string" },
+            { name: "rid", type: "string" },
+            { name: "tone", type: "string" },
+            { name: "fromM", type: "double" },
+            { name: "toM", type: "double" },
+          ],
           geometryType: def.kind === "point" ? "point" : "polyline",
           spatialReference: { wkid: 4326 },
           renderer: rendererFor(def),
@@ -546,19 +582,37 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!oid) return;
           const g = feature.geometry;
           if (!g) return;
+          const def = LRS_LAYER_DEFS[index];
+          const fromM = Number(feature.attributes?.frommeasure);
+          const toM = Number(feature.attributes?.tomeasure);
           let geometry = null;
           let detail = 1;
           if (g.x !== undefined) {
             const at = toLonLat(g.x, g.y);
             if (at) geometry = new Point({ longitude: at[0], latitude: at[1] });
-          } else {
-            const paths = flattenPaths(g)
-              .map((path) => (keepCurves ? path : thinPath(path)))
-              .filter((path) => path.length > 1);
-            if (paths.length) {
-              geometry = new Polyline({ paths, spatialReference: { wkid: 4326 } });
-              detail = paths.reduce((count, path) => count + path.length, 0);
+          } else if (def.kind === "point") {
+            const rid = routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "";
+            const active = routeRef.current;
+            const onRoute = Boolean(active && rid && routeKey(rid) === routeKey(active.id));
+            const measure = Number.isFinite(fromM) && Number.isFinite(toM) ? (fromM + toM) / 2 : fromM;
+            const snapped = onRoute && Number.isFinite(measure) ? pointAtMeasure(active.vertices, active.measures, measure) : null;
+            if (snapped) geometry = new Point({ longitude: snapped[0], latitude: snapped[1] });
+            else {
+              const path = flattenPaths(g)[0];
+              const mid = path?.[Math.floor((path.length - 1) / 2)];
+              const at = mid ? toLonLat(mid[0], mid[1]) : null;
+              if (at) geometry = new Point({ longitude: at[0], latitude: at[1] });
             }
+          } else {
+            const rid = routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "";
+            const active = routeRef.current;
+            const onRoute = Boolean(active && rid && routeKey(rid) === routeKey(active.id));
+            geometry = (onRoute ? lineOnRoute(fromM, toM) : null) || nativeLine(g);
+            if (!geometry && keepCurves) {
+              const paths = flattenPaths(g).filter((path) => path.length > 1);
+              if (paths.length) geometry = new Polyline({ paths, spatialReference: { wkid: 4326 } });
+            }
+            detail = g.curvePaths?.length ? 100000 : 8000;
           }
           if (!geometry) return;
           const previous = seen[index].get(oid);
@@ -567,7 +621,14 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const rid = routeField ? String(feature.attributes?.[routeField] ?? "").trim() : "";
           const graphic = new Graphic({
             geometry,
-            attributes: { oid, route: rid ? routeKey(rid) : "", rid, tone: lineTone(LRS_LAYER_DEFS[index].id, feature.attributes) },
+            attributes: {
+              oid,
+              route: rid ? routeKey(rid) : "",
+              rid,
+              tone: lineTone(def.id, feature.attributes),
+              fromM: Number.isFinite(fromM) ? fromM : null,
+              toM: Number.isFinite(toM) ? toM : null,
+            },
           });
           if (previous === undefined) add.push(graphic);
           else update.push(graphic);
@@ -594,8 +655,40 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }
           if (add.length || update.length) console.info(`[LRS] ${def.title}: added ${add.length}, updated ${update.length} (${seen[index].size} total)`);
           raiseEditLayers();
+          if (!def.route) alignLines();
         }).catch((error) => console.warn(`[LRS] Could not draw ${def.title}`, error));
         return chains[index];
+      };
+      const alignLines = () => {
+        const active = routeRef.current;
+        if (!active?.vertices?.length) return;
+        const key = routeKey(active.id);
+        lrsLayers.forEach((layer, index) => {
+          const def = LRS_LAYER_DEFS[index];
+          if (!layer || layer === "pending" || !def || def.route || !layer.queryFeatures) return;
+          if (def.kind !== "line" && def.kind !== "point") return;
+          layer.queryFeatures().then((result) => {
+            if (cancelled || routeKey(routeRef.current?.id) !== key) return;
+            const updates = [];
+            (result.features || []).forEach((graphic) => {
+              if (graphic.attributes?.route !== key) return;
+              const from = Number(graphic.attributes?.fromM);
+              const to = Number(graphic.attributes?.toM);
+              if (def.kind === "point") {
+                if (!Number.isFinite(from) || !Number.isFinite(to) || Math.abs(to - from) < 0.02) return;
+                const at = pointAtMeasure(active.vertices, active.measures, (from + to) / 2);
+                if (!at) return;
+                graphic.geometry = new Point({ longitude: at[0], latitude: at[1] });
+              } else {
+                const geometry = lineOnRoute(from, to);
+                if (!geometry) return;
+                graphic.geometry = geometry;
+              }
+              updates.push(graphic);
+            });
+            if (updates.length) layer.applyEdits({ updateFeatures: updates }).catch(() => {});
+          }).catch(() => {});
+        });
       };
       const refreshExtent = () => {
         const box = geographicExtent();
@@ -886,12 +979,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const def = LRS_LAYER_DEFS[index];
           if (!layer || layer === "pending" || !def || def.route || def.kind === "line") return;
           const base = symbolFor(def);
-          layer.renderer = {
-            type: "simple",
-            symbol: editingRef.current
-              ? { ...base, size: (base.size || 6) + 4, outline: { color: [255, 255, 255, 1], width: 1.5 } }
-              : base,
-          };
+          const symbol = editingRef.current
+            ? (base.type === "picture-marker"
+              ? markerSymbol(def, 46)
+              : { ...base, size: (base.size || 8) + 4, outline: { color: [255, 255, 255, 1], width: 1.5 } })
+            : base;
+          layer.renderer = { type: "simple", symbol };
           if (!editingRef.current || !layer.visible) return;
           const cap = map.layers.indexOf(placeLayer);
           map.reorder(layer, cap < 0 ? map.layers.length - 1 : cap);
@@ -1338,10 +1431,15 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         if (!pavementOn || !segments?.length) return;
         const graphics = [];
         segments.forEach((segment) => {
-          const paths = (segment.paths || []).map((path) => thinPath(path, 80)).filter((path) => path.length > 1);
-          if (!paths.length) return;
+          const active = routeRef.current;
+          const sameRoute = Boolean(active && segment.routeId && routeKey(segment.routeId) === routeKey(active.id));
+          const line = (sameRoute ? lineOnRoute(Number(segment.from), Number(segment.to)) : null)
+            || nativeLine(segment.geometry)
+            || ((segment.paths || []).some((path) => path.length > 1)
+              ? new Polyline({ paths: (segment.paths || []).filter((path) => path.length > 1), spatialReference: { wkid: 4326 } })
+              : null);
+          if (!line) return;
           const color = PMS_COLORS[segment.className] || PMS_COLORS.unknown;
-          const line = new Polyline({ paths, spatialReference: { wkid: 4326 } });
           const onRoute = Boolean(segment.onRoute || segment.priority);
           if (onRoute) {
             graphics.push(new Graphic({
@@ -1370,12 +1468,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           graphics.push(new Graphic({
             geometry: line,
             attributes: { pid: segment.id },
-            symbol: new SimpleLineSymbol({
-              color,
-              width: segment.selected ? 3.2 : 2,
-              cap: "round",
-              join: "round",
-            }),
+              symbol: new SimpleLineSymbol({
+                color,
+                width: segment.selected ? 5 : 4.5,
+                cap: "round",
+                join: "round",
+              }),
           }));
         });
         if (graphics.length) pmsLayer.addMany(graphics);
@@ -1387,7 +1485,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -1727,6 +1825,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     bag.route = route || null;
     bag.compareRoute = other;
     bag.applyRouteEffect?.(route, other);
+    bag.alignLines?.();
     bag.paintHotspots?.();
   }, [route, compareRoute, events, editing, ready]);
 

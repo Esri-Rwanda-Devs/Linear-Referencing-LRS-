@@ -50,7 +50,7 @@ export const EVENT_LAYERS = [
     title: "Bridges",
     kind: "point",
     shape: "x",
-    color: "#1c1c1c",
+    color: "#facc15",
     labelFields: ["name", "ref"],
   },
   {
@@ -210,19 +210,30 @@ export const LRS_LAYER_DEFS = [
     title: "Cameras",
     group: "POI",
     kind: "point",
-    shape: "circle",
+    shape: "camera",
     color: [8, 145, 178, 0.95],
     swatch: "#0891b2",
     snap: true,
+  },
+  {
+    id: 15,
+    title: "Traffic",
+    group: "POI",
+    kind: "point",
+    shape: "traffic",
+    color: [180, 83, 9, 0.95],
+    swatch: "#b45309",
+    snap: true,
+    readOnly: true,
   },
   {
     id: 2,
     title: "Bridges",
     group: "POI",
     kind: "point",
-    shape: "square",
-    color: [30, 41, 59, 0.95],
-    swatch: "#1e293b",
+    shape: "bridge",
+    color: [250, 204, 21, 0.95],
+    swatch: "#facc15",
   },
   {
     id: 0,
@@ -239,7 +250,7 @@ export const LRS_LAYER_DEFS = [
     title: "Transformers",
     group: "POI",
     kind: "point",
-    shape: "triangle",
+    shape: "transformer",
     color: [192, 38, 211, 0.95],
     swatch: "#c026d3",
   },
@@ -248,7 +259,7 @@ export const LRS_LAYER_DEFS = [
     title: "Culverts",
     group: "POI",
     kind: "point",
-    shape: "x",
+    shape: "culvert",
     color: [234, 88, 12, 0.95],
     swatch: "#ea580c",
   },
@@ -257,7 +268,7 @@ export const LRS_LAYER_DEFS = [
     title: "LV Supports",
     group: "POI",
     kind: "point",
-    shape: "triangle",
+    shape: "pole",
     color: [22, 163, 74, 0.95],
     swatch: "#16a34a",
   },
@@ -266,7 +277,7 @@ export const LRS_LAYER_DEFS = [
     title: "Point Assets",
     group: "POI",
     kind: "point",
-    shape: "circle",
+    shape: "sign",
     color: [37, 99, 235, 0.95],
     swatch: "#2563eb",
   },
@@ -275,7 +286,7 @@ export const LRS_LAYER_DEFS = [
     title: "KM Stones",
     group: "POI",
     kind: "point",
-    shape: "diamond",
+    shape: "milestone",
     color: [219, 39, 119, 0.95],
     swatch: "#db2777",
   },
@@ -285,7 +296,7 @@ export const LRS_LAYER_DEFS = [
     title: "Accidents",
     group: "POI",
     kind: "point",
-    shape: "triangle",
+    shape: "accident",
     color: [220, 38, 38, 0.95],
     swatch: "#dc2626",
     showAll: true,
@@ -375,7 +386,7 @@ export const TEMPLATES = [
 ];
 
 export const SNAP_METERS = 80;
-export const WINDOW_KM = 8;
+export const WINDOW_KM = 2;
 /** Land inside the reserve, per square metre of parcel overlap. */
 export const PARCEL_RATE_RWF = 800;
 /** Building footprint inside the reserve, per square metre. Editable in the budgeting panel. */

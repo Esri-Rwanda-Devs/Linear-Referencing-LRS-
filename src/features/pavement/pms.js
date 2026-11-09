@@ -191,6 +191,7 @@ export function toSegment(feature) {
       ["Rutting", field(attributes, "rutting")],
     ].map(([label, value]) => [label, textOf(value)]).filter(([, value]) => value),
     paths,
+    geometry: feature.geometry || null,
   };
 }
 

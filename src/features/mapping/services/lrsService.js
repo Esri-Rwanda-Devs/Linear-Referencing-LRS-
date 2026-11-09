@@ -1225,7 +1225,9 @@ export async function loadEvents(route) {
           ? (carriagewayType(feature.attributes) || "Carriageway")
           : layer.id === 20
             ? (usableLabel(feature.attributes?.road) || usableLabel(feature.attributes?.cell) || "Camera")
-            : titleOf(feature.attributes, layer.routeField, layer.def.title);
+            : layer.id === 15
+              ? (usableLabel(feature.attributes?.traffic_category) || (feature.attributes?.aadt != null && feature.attributes.aadt !== "" ? `AADT ${feature.attributes.aadt}` : "Traffic"))
+              : titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;

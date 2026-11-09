@@ -238,6 +238,10 @@ export default function PavementPanel({ mapApi }) {
       drawn.map((segment) => ({
         id: segment.id,
         paths: segment.paths,
+        geometry: segment.geometry,
+        from: segment.from,
+        to: segment.to,
+        routeId: segment.routeId,
         className: conditionClass(segment, indicator),
         selected: segment.id === pickedId,
         onRoute: Boolean(activeKey) && roadKeyOf(segment) === activeKey,

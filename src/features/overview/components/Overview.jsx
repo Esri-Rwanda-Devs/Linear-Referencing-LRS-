@@ -5,7 +5,7 @@ import "./Overview.css";
 
 const numberText = (value) => (Number.isFinite(value) ? value.toLocaleString() : "—");
 
-const POINT_RANK = ["Bridges", "Culverts", "Cameras", "Accidents", "Transformers", "LV Supports", "Point Assets", "KM Stones"];
+const POINT_RANK = ["Bridges", "Culverts", "Cameras", "Traffic", "Accidents", "Transformers", "LV Supports", "Point Assets", "KM Stones"];
 
 function rankOf(title) {
   const at = POINT_RANK.findIndex((name) => name.toLowerCase() === String(title).toLowerCase());
