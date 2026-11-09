@@ -8,6 +8,7 @@ import { RiAccountCircleFill, RiLogoutCircleFill } from "react-icons/ri";
 import { FiLogOut } from "react-icons/fi";
 import { BsDash } from "react-icons/bs";
 import { PiFilePdfFill, PiMicrosoftExcelLogoFill } from "react-icons/pi";
+import { FaRoute } from "react-icons/fa";
 
 
 
@@ -28,4 +29,5 @@ export const assetIcons = {
   BsDash,
   ExcelLogo: PiMicrosoftExcelLogoFill,
   PdfLogo: PiFilePdfFill,
+  Route: FaRoute,
 };

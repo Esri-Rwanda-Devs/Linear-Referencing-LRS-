@@ -5,7 +5,7 @@ const ROUTE_FIELDS = ["routeid", "route_id", "routename", "route_name", "roadid"
 const FROM_FIELDS = ["frommeasure", "from_measure", "beginmeasure", "fromm", "fromkm", "startmeasure", "measure"];
 const TO_FIELDS = ["tomeasure", "to_measure", "endmeasure", "tom", "tokm", "endmeasure"];
 const CODE_FIELDS = ["routecode", "route_code", "roadcode", "road_code", "routename", "route_name"];
-const LABEL_FIELDS = ["accident_id", "name", "assetname", "asset_name", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drainage_type_lhs", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "severity", "type", "assettype", "asset_type", "description", "remarks", "routename", "route_name"];
+const LABEL_FIELDS = ["accident_id", "name", "assetname", "km_stones", "eventname", "bridgename", "bridge_name", "culvertname", "stonename", "kmstone", "km_stone", "pointname", "pavementtype", "pavement_type", "draintype", "drainage_type_lhs", "carriagewaytype", "carriageway_type", "speedlimit", "speed_limit", "speed", "severity", "type", "assettype", "asset_type", "description", "remarks", "transformername", "route_name"];
 const SKIP_LABEL = /globalid|objectid|guid|date|created|edited|user|shape|routeid|route_id|measure|^fid$/i;
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
 
@@ -356,6 +356,35 @@ async function countLayer(def) {
   return Number(data.count) || 0;
 }
 
+/** One road per route code. Several route ids that share a code count once. */
+async function countDistinctCodes(def, where = "1=1") {
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const codeField = namedField(meta.fields || [], ["road_code", "roadcode", "routecode", "route_code"]);
+  if (!codeField) return countLayer(def);
+  const seen = new Set();
+  let offset = 0;
+  for (let page = 0; page < 8; page += 1) {
+    const data = await queryRaw(def.id, {
+      where,
+      returnGeometry: "false",
+      returnDistinctValues: "true",
+      outFields: codeField,
+      orderByFields: codeField,
+      resultOffset: String(offset),
+      resultRecordCount: "2000",
+    }, def.service || LRS);
+    const batch = data.features || [];
+    batch.forEach((feature) => {
+      const text = String(attributeOf(feature.attributes, codeField) ?? "").trim();
+      if (!text || /[{}]/.test(text)) return;
+      seen.add(text.toUpperCase());
+    });
+    if (!data.exceededTransferLimit || !batch.length) break;
+    offset += batch.length;
+  }
+  return seen.size;
+}
+
 const VALUE_FIELD_ALIASES = {
   3: ["cway", "cwaytype", "carriageway_type", "carriagewaytype"],
   6: ["drainage_type_lhs", "drainage_type", "draintype", "drain_type"],
@@ -595,8 +624,10 @@ export async function countOverviewArea(levelId, areaName) {
     try {
       const field = await assetField(def, levelId);
       if (!field) return { id: def.id, count: null };
+      const where = whereEquals(field.name, areaName, field.type);
+      if (def.route) return { id: def.id, count: await countDistinctCodes(def, where) };
       const data = await queryRaw(def.id, {
-        where: whereEquals(field.name, areaName, field.type),
+        where,
         returnCountOnly: "true",
       }, def.service || LRS);
       return { id: def.id, count: Number(data.count) || 0 };
@@ -625,9 +656,9 @@ export async function groupOverviewTypes(levelId, areaName) {
 export async function loadOverview() {
   const layers = LRS_LAYER_DEFS.filter((def) => def.kind === "point" || def.kind === "line");
   return Promise.all(layers.map(async (def) => {
-    const base = { id: def.id, title: def.title, kind: def.kind, group: def.group, swatch: def.swatch, route: Boolean(def.route) };
+    const base = { id: def.id, title: def.title, kind: def.kind, group: def.group, swatch: def.swatch, shape: def.shape, route: Boolean(def.route) };
     try {
-      const count = await countLayer(def);
+      const count = def.route ? await countDistinctCodes(def) : await countLayer(def);
       let groups = [];
       let splitField = "";
       if (def.kind === "line" && !def.route && VALUE_COLORS[def.id]) {
@@ -1539,7 +1570,7 @@ export function summariseSegment(events, from, to) {
     if (overlap <= 0) return;
     const layer = spans.get(event.layerId) || { layerId: event.layerId, title: event.title, color: event.color, byName: new Map() };
     layer.byName.set(event.name, (layer.byName.get(event.name) || 0) + overlap);
-    if (!layer.colors) layer.colors = new Map();
+    if (!layer.colors) layer.colors = new Map(); 
     layer.colors.set(event.name, event.color);
     spans.set(event.layerId, layer);
   });

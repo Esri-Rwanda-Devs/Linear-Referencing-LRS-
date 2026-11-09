@@ -323,7 +323,6 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const roadDef = LRS_LAYER_DEFS[roadIndex];
       const roadLayer = new GraphicsLayer({ id: `lrs-${roadDef.id}`, title: roadDef.title, listMode: "hide" });
       lrsLayers[roadIndex] = roadLayer;
-      const overlayCount = map.layers.length;
       map.add(roadLayer, 0);
       const roadCasing = new SimpleLineSymbol({ color: [120, 128, 138, 0.95], width: 4.2, cap: "round", join: "round" });
       const roadCenter = new SimpleLineSymbol({ color: [255, 255, 255, 0.98], width: 1.8, cap: "round", join: "round" });
@@ -570,8 +569,9 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           featureEffect: def.showAll ? null : effectFor(),
         });
         lrsLayers[index] = featureLayer;
-        const aboveRoads = Math.max(1, map.layers.length - overlayCount);
-        map.add(featureLayer, def.kind === "point" || def.showAll ? aboveRoads : 0);
+        const aboveRoute = map.layers.indexOf(overlay) + 1;
+        const aboveLines = map.layers.indexOf(placeLayer);
+        map.add(featureLayer, def.kind === "point" ? Math.max(aboveLines, aboveRoute) : aboveRoute);
         return featureLayer;
       };
       const graphicsFor = (features, routeField, index, keepCurves) => {
@@ -968,13 +968,13 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         refreshExtent();
       };
       const raiseEditLayers = () => {
-        const lineAt = map.layers.indexOf(overlay) + 1;
+        const aboveRoute = map.layers.indexOf(overlay) + 1;
         lrsLayers.forEach((layer, index) => {
           const def = LRS_LAYER_DEFS[index];
           if (!layer || layer === "pending" || !def || def.route || def.kind !== "line") return;
-          const colored = Boolean(VALUE_COLORS[def.id]);
-          map.reorder(layer, layer.visible && (editingRef.current || colored) ? lineAt : 0);
+          map.reorder(layer, aboveRoute);
         });
+        const aboveLines = map.layers.indexOf(placeLayer);
         lrsLayers.forEach((layer, index) => {
           const def = LRS_LAYER_DEFS[index];
           if (!layer || layer === "pending" || !def || def.route || def.kind === "line") return;
@@ -985,9 +985,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
               : { ...base, size: (base.size || 8) + 4, outline: { color: [255, 255, 255, 1], width: 1.5 } })
             : base;
           layer.renderer = { type: "simple", symbol };
-          if (!editingRef.current || !layer.visible) return;
-          const cap = map.layers.indexOf(placeLayer);
-          map.reorder(layer, cap < 0 ? map.layers.length - 1 : cap);
+          map.reorder(layer, aboveLines < 0 ? map.layers.length - 1 : aboveLines);
         });
       };
       const drawFeatures = (def, features) => {

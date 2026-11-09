@@ -390,7 +390,7 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         const endAt = firstAtOrAfter(bucket.points, to + 1e-9);
         points = bucket.points.slice(startAt, endAt);
       }
-      const runs = row.layerId === 5 ? separateRuns(spans) : mergeRuns(spans);
+      const runs = row.layerId === 5 || row.layerId === 14 ? separateRuns(spans) : mergeRuns(spans);
 
       const iconPx = 16 * pointScale;
       const minGap = iconPx + 6;

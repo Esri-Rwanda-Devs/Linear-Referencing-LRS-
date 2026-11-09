@@ -137,7 +137,7 @@ export const GROUPS = [
   {
     id: "POI",
     label: "Point assets",
-    hint: "Points of interest, cameras, and accidents",
+    hint: "Points Assets",
     color: "#e11d48",
   },
   {
@@ -173,6 +173,7 @@ export const LRS_LAYER_DEFS = [
     color: [251, 146, 60, 0.9],
     width: 4,
     swatch: "#fb923c",
+
   },
   {
     id: 6,
@@ -217,7 +218,7 @@ export const LRS_LAYER_DEFS = [
   },
   {
     id: 15,
-    title: "Traffic",
+    title: "Traffic Station",
     group: "POI",
     kind: "point",
     shape: "traffic",
@@ -235,16 +236,16 @@ export const LRS_LAYER_DEFS = [
     color: [250, 204, 21, 0.95],
     swatch: "#facc15",
   },
-  {
-    id: 0,
-    title: "Calibration Points",
-    group: "POI",
-    kind: "point",
-    chart: false,
-    shape: "diamond",
-    color: [13, 148, 136, 0.95],
-    swatch: "#0d9488",
-  },
+  // {
+  //   id: 0,
+  //   title: "Calibration Points",
+  //   group: "POI",
+  //   kind: "point",
+  //   chart: false,
+  //   shape: "diamond",
+  //   color: [13, 148, 136, 0.95],
+  //   swatch: "#0d9488",
+  // },
   {
     id: 17,
     title: "Transformers",

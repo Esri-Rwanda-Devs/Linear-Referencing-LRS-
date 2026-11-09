@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { assetIcons } from "../../../assets";
 import { VALUE_COLORS } from "../../../config";
+import { iconUrl } from "../../mapping/icons";
 import { countOverviewArea, groupOverviewTypes, loadBoundaryChoices, loadBoundaryLevels, loadOverview } from "../../mapping/services/lrsService";
 import "./Overview.css";
 
@@ -52,7 +54,7 @@ function niceStep(max) {
   return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power;
 }
 
-function LengthChart({ title, items, loading, caption }) {
+function LengthChart({ title, items, loading, caption, mark }) {
   const measured = items.filter((item) => Number.isFinite(item.km));
   const max = Math.max(0, ...measured.map((item) => item.km));
   const step = niceStep(max || 1);
@@ -63,7 +65,7 @@ function LengthChart({ title, items, loading, caption }) {
   return (
     <article className="ov-asset ov-chart">
       <header>
-        <span>Length per {title}</span>
+        <span><CardMark item={mark} />Length per {title}</span>
         <b>{measured.length ? `${kmText(total)} km` : ""}</b>
       </header>
       {caption && <em>{caption}</em>}
@@ -97,11 +99,21 @@ function LengthChart({ title, items, loading, caption }) {
   );
 }
 
+function CardMark({ item }) {
+  const href = iconUrl(item?.shape, item?.swatch);
+  if (href) return <img className="ov-icon" src={href} alt="" />;
+  if (item?.route) {
+    const RouteIcon = assetIcons.GiRoad;
+    return <RouteIcon className="ov-icon" style={{ color: item.swatch }} />;
+  }
+  return <i style={{ background: item?.swatch }} />;
+}
+
 function CountCard({ item, count, caption, loading }) {
   return (
     <article className="ov-asset ov-compact">
       <header>
-        {item.swatch && <i style={{ background: item.swatch }} />}
+        <CardMark item={item} />
         <span>{item.title}</span>
       </header>
       <strong>{loading ? "…" : numberText(count)}</strong>
@@ -339,7 +351,7 @@ export default function Overview({ query = "", onQuery }) {
                 <CountCard
                   item={{ ...roads, title: "Roads", swatch: roads.swatch }}
                   count={figure(roads) == null && active ? roads.count : figure(roads)}
-                  caption={figure(roads) == null && active ? "National total" : (place || "Total roads")}
+                  caption={figure(roads) == null && active ? "National route codes" : (place ? `${place} route codes` : "TOTAL")}
                   loading={areaLoading && Boolean(active)}
                 />
               )}
@@ -359,7 +371,7 @@ export default function Overview({ query = "", onQuery }) {
             </div>
           </section>
         )}
-        {shownLines.length > 0 && (
+        {/* {shownLines.length > 0 && (
           <section>
             <h3>By type</h3>
             <div className="ov-types">
@@ -380,7 +392,7 @@ export default function Overview({ query = "", onQuery }) {
               })}
             </div>
           </section>
-        )}
+        )} */}
         {lineCards.length > 0 && (
           <section>
             <h3>Length by type (km){place ? ` · ${place}` : ""}</h3>
@@ -389,6 +401,7 @@ export default function Overview({ query = "", onQuery }) {
                 <LengthChart
                   key={item.id}
                   title={item.title}
+                  mark={item}
                   items={groups}
                   loading={loading || typesPending}
                   caption={national ? `National · no ${active.label.toLowerCase()} field` : ""}
