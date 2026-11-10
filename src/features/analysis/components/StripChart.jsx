@@ -388,7 +388,8 @@ function StripChart({ fill = false, events, projects, route, windowKm, cursor, s
         spans = bucket.spans.filter((item) => item.to >= from && item.from <= to);
         const startAt = firstAtOrAfter(bucket.points, from);
         const endAt = firstAtOrAfter(bucket.points, to + 1e-9);
-        points = bucket.points.slice(startAt, endAt);
+        const routeEnd = route?.lengthKm;
+        points = bucket.points.slice(startAt, endAt).filter((item) => !(routeEnd > 0) || item.measure <= routeEnd + 0.005);
       }
       const runs = row.layerId === 5 || row.layerId === 14 ? separateRuns(spans) : mergeRuns(spans);
 

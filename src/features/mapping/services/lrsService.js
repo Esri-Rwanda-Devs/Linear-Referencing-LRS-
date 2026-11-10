@@ -1258,7 +1258,9 @@ export async function loadEvents(route) {
             ? (usableLabel(feature.attributes?.road) || usableLabel(feature.attributes?.cell) || "Camera")
             : layer.id === 15
               ? (usableLabel(feature.attributes?.traffic_category) || (feature.attributes?.aadt != null && feature.attributes.aadt !== "" ? `AADT ${feature.attributes.aadt}` : "Traffic"))
-              : titleOf(feature.attributes, layer.routeField, layer.def.title);
+              : layer.id === 9
+                ? (usableLabel(feature.attributes?.pole_type) || usableLabel(feature.attributes?.pole_structure) || "MV Support")
+                : titleOf(feature.attributes, layer.routeField, layer.def.title);
       const fromValue = layer.fromField ? Number(feature.attributes[layer.fromField]) : NaN;
       const toRaw = layer.toField ? Number(feature.attributes[layer.toField]) : NaN;
       const toValue = Number.isFinite(toRaw) ? toRaw : fromValue;
@@ -1279,6 +1281,11 @@ export async function loadEvents(route) {
           }
           from = Math.max(0, Math.min(length, from));
           to = Math.max(from, Math.min(length, to));
+        } else {
+          const placed = measureInsideRoute(from, route.lengthKm || 0);
+          if (placed == null) return;
+          from = placed;
+          to = placed;
         }
         const midpoint = (from + to) / 2;
         events.push(eventRecord(layer, feature, index, name, from, to, lineEvent || layer.def.snap ? onRoad(midpoint) : featurePoint(feature)));
@@ -1294,7 +1301,7 @@ export async function loadEvents(route) {
         const locatedPoint = toLonLat(feature.geometry.x, feature.geometry.y);
         if (!locatedPoint) return;
         const hit = locateOnRoute(route.vertices, route.measures, locatedPoint, maxKm * 8);
-        if (!hit) return;
+        if (!hit || measureInsideRoute(hit.measure, route.lengthKm || 0) == null) return;
         events.push(eventRecord(layer, feature, index, name, hit.measure, hit.measure, layer.def.snap ? hit.point : locatedPoint, hit.distanceKm * 1000));
         return;
       }
@@ -1315,6 +1322,28 @@ function featurePoint(feature) {
 
 const DETAIL_SKIP = /globalid|objectid|^fid$|shape|guid|eventid|routeid|route_id|routename|route_name|fromdate|todate|locerror|created|edited|^gdb_|^st_/i;
 const DETAIL_FIRST = ["severity", "probable_cause", "vehicle_type", "priority", "resolved", "road", "district", "sector", "cell", "village", "impacted_category", "action_taken", "details", "accident_id"];
+/** Fields pinned to the top of the selected-event card, per LRS layer id. */
+const EVENT_DETAIL_FIELDS = {
+  2: [
+    { label: "Bridge class", names: ["bridge_class", "bridgeclass", "br_class", "bridge_cls", "bridgecls", "class", "classification", "bridge_classification"] },
+    { label: "Bridge name", names: ["bridge_name", "bridgename", "br_name", "name", "asset_name", "assetname", "structure_name"] },
+  ],
+  9: [
+    { label: "Pole type", names: ["pole_type", "poletype"] },
+    { label: "Pole structure", names: ["pole_structure", "polestructure"] },
+    { label: "Dressing", names: ["dressing_type_insulator", "dressingtypeinsulator"] },
+    { label: "Manufacturer", names: ["manifacturer", "manufacturer"] },
+  ],
+};
+
+/** Point measures past the route end are dropped. Values stored in metres are converted first. */
+function measureInsideRoute(measure, lengthKm) {
+  if (!Number.isFinite(measure)) return null;
+  let value = measure;
+  if (lengthKm > 0 && value > lengthKm * 3 && value > 50) value /= 1000;
+  if (lengthKm > 0 && (value < -0.005 || value > lengthKm + 0.005)) return null;
+  return value;
+}
 
 function prettyField(name) {
   return name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim().replace(/^./, (char) => char.toUpperCase());
@@ -1329,10 +1358,34 @@ function prettyValue(name, value) {
   return String(value).trim();
 }
 
-/** Readable attribute pairs for tooltips and the hover card; ids and system fields are left out. */
-function detailsOf(attributes, name) {
-  return Object.entries(attributes)
-    .filter(([field, value]) => !DETAIL_SKIP.test(field) && value !== null && value !== undefined && String(value).trim() !== "" && String(value).trim() !== name && !GUID.test(String(value).trim()))
+const normName = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function findDetail(attributes, names) {
+  const byKey = new Map();
+  Object.entries(attributes || {}).forEach(([field, value]) => {
+    if (value === null || value === undefined || String(value).trim() === "" || GUID.test(String(value).trim())) return;
+    const key = normName(field);
+    if (key && !byKey.has(key)) byKey.set(key, { field, value });
+  });
+  for (const name of names) {
+    const hit = byKey.get(normName(name));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Readable attribute pairs for the selected event, tooltips, and the hover card. */
+function detailsOf(attributes, name, layerId) {
+  const pinned = [];
+  const used = new Set();
+  (EVENT_DETAIL_FIELDS[layerId] || []).forEach((spec) => {
+    const hit = findDetail(attributes, spec.names);
+    if (!hit) return;
+    pinned.push([spec.label, prettyValue(hit.field, hit.value)]);
+    used.add(normName(hit.field));
+  });
+  const rest = Object.entries(attributes)
+    .filter(([field, value]) => !used.has(normName(field)) && !DETAIL_SKIP.test(field) && value !== null && value !== undefined && String(value).trim() !== "" && String(value).trim() !== name && !GUID.test(String(value).trim()))
     .sort((a, b) => {
       const rank = (field) => {
         const at = DETAIL_FIRST.indexOf(field.toLowerCase());
@@ -1340,11 +1393,10 @@ function detailsOf(attributes, name) {
       };
       return rank(a[0]) - rank(b[0]);
     })
-    .map(([field, value]) => [prettyField(field), prettyValue(field, value)])
-    .slice(0, 8);
+    .map(([field, value]) => [prettyField(field), prettyValue(field, value)]);
+  return [...pinned, ...rest].slice(0, 8);
 }
 
-const normName = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, "");
 const VALUE_PALETTE = ["#60a5fa", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#2dd4bf", "#f97316", "#94a3b8", "#c084fc", "#4ade80", "#38bdf8"];
 
 function colorKey(value) {
@@ -1417,7 +1469,7 @@ function eventRecord(layer, feature, index, name, from, to, point, distanceM = 0
     measure: (from + to) / 2,
     point,
     distanceM,
-    details: detailsOf(feature.attributes || {}, name),
+    details: detailsOf(feature.attributes || {}, name, layer.id),
     occurred: occurredAt(feature.attributes),
   };
 }
@@ -1517,11 +1569,11 @@ export function featuresAtMeasure(events, measure, toleranceKm = 0.35) {
   });
 }
 
-/** Length-weighted average of max speed. Stretches with no max speed count as 0. */
+/** Σ(segment km × speed) / route km. Stretches with no speed limit count as 0. */
 export function averageMaxSpeed(events, lengthKm) {
   if (!(lengthKm > 0)) return 0;
   const pieces = (events || [])
-    .filter((event) => event.layerId === 5)
+    .filter((event) => event.layerId === 14)
     .map((event) => {
       const match = String(event.name ?? "").match(/-?\d+(?:\.\d+)?/);
       const speed = match ? Number(match[0]) : 0;

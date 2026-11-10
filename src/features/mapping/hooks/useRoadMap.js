@@ -303,15 +303,28 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         nameOrigin(longitude, latitude, "My location", { wide: true });
         console.info(`[LRS] Current location ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
       };
-      const locate = new Locate({ view, popupEnabled: false, scale: 1128 });
+      const locateHost = document.createElement("div");
+      const locate = new Locate({ view, container: locateHost, popupEnabled: false, scale: 1128 });
       locate.on("locate", (event) => {
         const coords = event.position?.coords;
         if (!coords) return;
         zoomToHere(coords.longitude, coords.latitude);
       });
       locate.on("locate-error", (event) => console.warn("[LRS] Could not get current location", event.error));
+      const home = document.createElement("button");
+      home.type = "button";
+      home.className = "map-home esri-widget esri-widget--button";
+      home.title = "Home";
+      home.setAttribute("aria-label", "Return the map home");
+      home.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.4 1.2 7.2h1.6V14h3.6V9.2h3.2V14h3.6V7.2h1.6L8 1.4Z"/></svg>`;
+      home.addEventListener("click", () => {
+        view.goTo({ center: OPEN_AT.center, scale: OPEN_AT.scale }, { duration: 700 }).catch(() => {});
+      });
+      const nav = document.createElement("div");
+      nav.className = "map-nav";
+      nav.append(home, locateHost);
       view.ui.add(search, { position: "top-right", index: 0 });
-      view.ui.add(locate, { position: "top-right", index: 1 });
+      view.ui.add(nav, { position: "top-right", index: 1 });
       if (uiPanel) {
         uiPanel.className = "analysis-host";
         view.ui.add(uiPanel, { position: "top-right", index: 2 });
@@ -981,7 +994,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const base = symbolFor(def);
           const symbol = editingRef.current
             ? (base.type === "picture-marker"
-              ? markerSymbol(def, 46)
+              ? markerSymbol(def, 30)
               : { ...base, size: (base.size || 8) + 4, outline: { color: [255, 255, 255, 1], width: 1.5 } })
             : base;
           layer.renderer = { type: "simple", symbol };
