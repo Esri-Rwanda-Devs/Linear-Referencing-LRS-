@@ -146,7 +146,7 @@ export const GROUPS = [
     hint: "Pavement, drain, speed, carriageway",
     color: "#7c3aed",
   },
-  { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
+  // { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
 
 export const groupLabel = (id) =>

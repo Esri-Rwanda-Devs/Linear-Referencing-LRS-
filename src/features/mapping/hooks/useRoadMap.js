@@ -1033,8 +1033,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const parcelLayer = new GraphicsLayer({ id: "lrs-parcels", listMode: "hide" });
       map.add(parcelLayer, map.layers.indexOf(roadLayer) + 1);
       const parcelSymbol = new SimpleFillSymbol({
-        color: [250, 204, 21, 0.28],
-        outline: { color: [120, 53, 15, 1], width: 1.4 },
+        color: [0, 0, 0, 0],
+        outline: { color: [180, 83, 9, 0.85], width: 1.1 },
       });
       const parcelPopup = {
         title: "{district} · {parcel_number}",
@@ -1158,12 +1158,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       const planLayer = new GraphicsLayer({ id: "lrs-plan", listMode: "hide" });
       map.add(planLayer, Math.max(map.layers.indexOf(placeLayer), 0));
-      const planFill = new SimpleFillSymbol({ color: [37, 99, 235, 0.16], outline: { color: [29, 78, 216, 1], width: 2 } });
-      const planLineSymbol = new SimpleLineSymbol({ color: [15, 23, 42, 1], width: 2.2, style: "short-dash" });
-      const planHit = new SimpleFillSymbol({ color: [234, 88, 12, 0.4], outline: { color: [154, 52, 18, 1], width: 1 } });
+      const planFill = new SimpleFillSymbol({ color: [251, 182, 193, 0.38], outline: { color: [244, 114, 182, 0.9], width: 1 } });
+      const planLineSymbol = new SimpleLineSymbol({ color: [30, 41, 59, 1], width: 2.4, style: "short-dash" });
+      const planHit = new SimpleFillSymbol({ color: [249, 115, 22, 0.55], outline: { color: [194, 65, 12, 1], width: 1 } });
       const planMark = (color) => new SimpleMarkerSymbol({ style: "circle", color, size: 11, outline: { color: [255, 255, 255], width: 2 } });
-      const planBuildingFill = new SimpleFillSymbol({ color: [124, 58, 237, 0.35], outline: { color: [91, 33, 182, 1], width: 1 } });
-      const planBuildingMark = new SimpleMarkerSymbol({ style: "square", color: [124, 58, 237, 0.95], size: 8, outline: { color: [255, 255, 255], width: 1 } });
+      const planBuildingFill = new SimpleFillSymbol({ color: [153, 27, 27, 0.9], outline: { color: [127, 29, 29, 1], width: 1 } });
+      const planBuildingMark = new SimpleMarkerSymbol({ style: "square", color: [153, 27, 27, 0.95], size: 9, outline: { color: [255, 255, 255], width: 1 } });
       const reservePolygon = (vertices, widthM) => {
         if (!vertices || vertices.length < 2) return null;
         const width = Math.max(Number(widthM) || 0, 1);
@@ -1198,6 +1198,30 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }));
         });
         return polygon;
+      };
+      const PLAN_INK = [[37, 99, 235], [22, 163, 74], [217, 119, 6], [124, 58, 237], [220, 38, 38]];
+      const showPlanOptions = (options, activeId) => {
+        planLayer.removeAll();
+        (options || []).forEach((option, index) => {
+          const path = (option.vertices || []).filter((point) => point?.length === 2);
+          if (path.length < 2) return;
+          const ink = PLAN_INK[index % PLAN_INK.length];
+          const active = option.id === activeId;
+          const polygon = reservePolygon(path, option.width);
+          if (polygon) {
+            planLayer.add(new Graphic({
+              geometry: polygon,
+              symbol: new SimpleFillSymbol({
+                color: [...ink, active ? 0.24 : 0.1],
+                outline: { color: [...ink, active ? 1 : 0.7], width: active ? 2.4 : 1.2 },
+              }),
+            }));
+          }
+          planLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }),
+            symbol: new SimpleLineSymbol({ color: [...ink, 1], width: active ? 3 : 1.6, style: active ? "solid" : "short-dash" }),
+          }));
+        });
       };
       let planSettled = false;
       paintPlanPreview = (longitude, latitude) => {
@@ -1496,7 +1520,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });

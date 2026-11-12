@@ -43,22 +43,43 @@ export function insertOnPath(vertices, point, maxM = 18) {
   return next;
 }
 
+export function closestOnPath(vertices, point) {
+  if (!vertices || vertices.length < 2 || !point) return null;
+  let best = null;
+  for (let index = 0; index < vertices.length - 1; index += 1) {
+    const start = vertices[index];
+    const end = vertices[index + 1];
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const length2 = dx * dx + dy * dy || 1e-12;
+    const t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2));
+    const projected = [start[0] + dx * t, start[1] + dy * t];
+    const distance = lineLengthM(projected, point);
+    if (!best || distance < best.distance) best = { distance: distance, point: projected };
+  }
+  return best;
+}
+
 export function applyRates(report, rates) {
   if (!report || report.error) return report;
   const landRate = Number(rates?.land) || 0;
   const buildingRate = Number(rates?.building) || 0;
   const compensationPct = Number(rates?.compensation) || 0;
+  const contingencyPct = Number(rates?.contingency) || 0;
   if (
     report.landRate === landRate
     && report.buildingRate === buildingRate
     && report.compensationPct === compensationPct
+    && report.contingencyPct === contingencyPct
     && report.totalCost != null
   ) return report;
   const parcels = (report.parcels || []).map((parcel) => ({ ...parcel, cost: parcel.sqm * landRate }));
   const buildings = (report.buildings || []).map((building) => ({ ...building, cost: (building.sqm || 0) * buildingRate }));
   const landCost = parcels.reduce((sum, parcel) => sum + parcel.cost, 0);
   const buildingCost = buildings.reduce((sum, building) => sum + building.cost, 0);
-  const compensation = (landCost + buildingCost) * compensationPct / 100;
+  const disturbance = (landCost + buildingCost) * compensationPct / 100;
+  const contingency = (landCost + buildingCost + disturbance) * contingencyPct / 100;
+  const compensation = disturbance + contingency;
   const parcelSqm = parcels.reduce((sum, parcel) => sum + parcel.sqm, 0);
   const buildingSqm = buildings.reduce((sum, building) => sum + (building.sqm || 0), 0);
   return {
@@ -68,6 +89,9 @@ export function applyRates(report, rates) {
     landRate,
     buildingRate,
     compensationPct,
+    contingencyPct,
+    disturbance,
+    contingency,
     landCost,
     buildingCost,
     compensation,

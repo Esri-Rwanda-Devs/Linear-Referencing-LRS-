@@ -20,6 +20,7 @@ import {
   LRS_LAYER_DEFS,
   PARCEL_RATE_RWF,
   REQUESTED_ITEM,
+  SNAP_METERS,
   WINDOW_KM,
 } from "../config";
 import {
@@ -54,7 +55,7 @@ import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
 import Overview from "../features/overview/components/Overview";
-import { appendVertex, applyRates } from "../features/cost/utils/corridor";
+import { appendVertex, applyRates, closestOnPath } from "../features/cost/utils/corridor";
 import { assetIcons } from "../assets";
 
 const STORE = "rwanda-lrs-projects";
@@ -284,10 +285,30 @@ export default function App() {
   const [landRate, setLandRate] = useState(PARCEL_RATE_RWF);
   const [buildingRate, setBuildingRate] = useState(BUILDING_RATE_RWF);
   const [compensationPct, setCompensationPct] = useState(COMPENSATION_PERCENT);
+  const [contingencyPct, setContingencyPct] = useState(10);
+  const [reserveSection, setReserveSection] = useState("budget");
+  const [planSnap, setPlanSnap] = useState(false);
+  const [aerialOn, setAerialOn] = useState(true);
+  const [parcelStatus, setParcelStatus] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-status") || "{}");
+      return saved && typeof saved === "object" ? saved : {};
+    } catch {
+      return {};
+    }
+  });
   const [planBusy, setPlanBusy] = useState(false);
   const [planReport, setPlanReport] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [planOptions, setPlanOptions] = useState([]);
+  const [planOptions, setPlanOptions] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-cost-options") || "[]");
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+  const [planNote, setPlanNote] = useState(() => localStorage.getItem("rwanda-lrs-cost-note") || "");
   const [planActive, setPlanActive] = useState(null);
   const planVerticesRef = useRef([]);
   const planWidthRef = useRef(20);
@@ -295,19 +316,44 @@ export default function App() {
     land: PARCEL_RATE_RWF,
     building: BUILDING_RATE_RWF,
     compensation: COMPENSATION_PERCENT,
+    contingency: 10,
   });
+  const planSnapRef = useRef(false);
+  planSnapRef.current = planSnap;
   planVerticesRef.current = planVertices;
   planWidthRef.current = planWidth;
   planRatesRef.current = {
     land: landRate,
     building: buildingRate,
     compensation: compensationPct,
+    contingency: contingencyPct,
   };
   const [hiddenLayerIds, setHiddenLayerIds] = useState(() =>
     LRS_LAYER_DEFS.filter((layer) => !layer.route && !layer.visible).map(
       (layer) => layer.id,
     ),
   );
+  useEffect(() => {
+    try {
+      localStorage.setItem("rwanda-lrs-cost-options", JSON.stringify(planOptions));
+    } catch {
+      /* A large parcel list can exceed the browser store. The comparison still works this session. */
+    }
+  }, [planOptions]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("rwanda-lrs-cost-note", planNote);
+    } catch {
+      /* The note stays in memory for this session. */
+    }
+  }, [planNote]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("rwanda-lrs-parcel-status", JSON.stringify(parcelStatus));
+    } catch {
+      /* Status stays in memory for this session. */
+    }
+  }, [parcelStatus]);
 
   useEffect(() => {
     loadRouteCatalog()
@@ -901,12 +947,18 @@ export default function App() {
     if (viewMode === "overview") return;
     const frame = requestAnimationFrame(() => mapApi.current?.view?.resize?.());
     return () => cancelAnimationFrame(frame);
-  }, [viewMode, focusPane, chartH]);
+  }, [viewMode, focusPane, chartH, reserveSection]);
+  useEffect(() => {
+    if (!costPage || planDraw || planVerticesRef.current.length < 2) return undefined;
+    const timer = window.setTimeout(() => measurePlan(planVerticesRef.current, planWidthRef.current), 500);
+    return () => window.clearTimeout(timer);
+  }, [planWidth]);
   useEffect(() => {
     const rates = {
       land: landRate,
       building: buildingRate,
       compensation: compensationPct,
+      contingency: contingencyPct,
     };
     setPlanReport((current) => applyRates(current, rates));
     setPlanOptions((current) => {
@@ -919,7 +971,7 @@ export default function App() {
       });
       return changed ? next : current;
     });
-  }, [landRate, buildingRate, compensationPct]);
+  }, [landRate, buildingRate, compensationPct, contingencyPct]);
   useEffect(() => {
     if (costPage) return;
     setPlanDraw(false);
@@ -947,6 +999,13 @@ export default function App() {
         }),
       )
       .finally(() => setPlanBusy(false));
+  };
+  const snappedPlanPoint = (longitude, latitude) => {
+    const point = [longitude, latitude];
+    if (!planSnapRef.current || !route?.vertices?.length) return point;
+    const near = closestOnPath(route.vertices, point);
+    if (near && near.distance <= SNAP_METERS * 4) return near.point;
+    return point;
   };
   const mapRef = useRoadMap({
     mapApi,
@@ -982,12 +1041,12 @@ export default function App() {
     planVertices,
     planWidth,
     onPlanClick: (longitude, latitude) => {
-      const next = appendVertex(planVerticesRef.current, [longitude, latitude]);
+      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude));
       planVerticesRef.current = next;
       setPlanVertices(next);
     },
     onPlanFinish: (longitude, latitude) => {
-      const next = appendVertex(planVerticesRef.current, [longitude, latitude]);
+      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude));
       if (next.length < 2) return;
       planVerticesRef.current = next;
       setPlanVertices(next);
@@ -1219,7 +1278,7 @@ export default function App() {
       <LoginGate />
       <Sidebar viewMode={viewMode} onChange={setViewMode} />
       <div
-        className={`app${editingPage ? " page-edit" : ""}${overviewPage ? " page-overview" : ""}`}
+        className={`app${editingPage ? " page-edit" : ""}${overviewPage ? " page-overview" : ""}${costPage ? " page-reserve" : ""}${costPage && reserveSection !== "budget" ? " page-reserve-board" : ""}`}
       >
         <header className="topbar">
           <div>
@@ -1358,18 +1417,31 @@ export default function App() {
         /> */}
           {costPage && (
             <CostPlan
+              section={reserveSection}
+              onSection={setReserveSection}
+              catalog={catalog}
+              routeId={route?.id || routeId}
+              routeReady={Boolean(route?.vertices?.length)}
+              onSelectRoute={selectRoute}
               drawing={planDraw}
               editing={planEdit}
+              snapping={planSnap}
               vertices={planVertices}
               width={planWidth}
               landRate={landRate}
               buildingRate={buildingRate}
-              compensationPct={compensationPct}
+              disturbancePct={compensationPct}
+              contingencyPct={contingencyPct}
               busy={planBusy}
               report={planReport}
-              open={planOpen}
               options={planOptions}
               activeId={planActive}
+              note={planNote}
+              parcelsOn={parcelsOn}
+              aerialOn={aerialOn}
+              parcelStatus={parcelStatus}
+              onParcelStatus={(key, status) => setParcelStatus((current) => ({ ...current, [key]: status }))}
+              onNote={setPlanNote}
               onWidth={(value) => {
                 const next = Number(value);
                 if (Number.isFinite(next))
@@ -1383,10 +1455,27 @@ export default function App() {
                 const next = Number(value);
                 if (Number.isFinite(next)) setBuildingRate(Math.max(0, next));
               }}
-              onCompensation={(value) => {
+              onDisturbance={(value) => {
                 const next = Number(value);
-                if (Number.isFinite(next))
-                  setCompensationPct(Math.max(0, Math.min(100, next)));
+                if (Number.isFinite(next)) setCompensationPct(Math.max(0, Math.min(100, next)));
+              }}
+              onContingency={(value) => {
+                const next = Number(value);
+                if (Number.isFinite(next)) setContingencyPct(Math.max(0, Math.min(100, next)));
+              }}
+              onSnap={() => setPlanSnap((value) => !value)}
+              onParcels={() => setParcelsOn((value) => !value)}
+              onAerial={() => {
+                setAerialOn((value) => {
+                  const next = !value;
+                  const view = mapApi.current?.view;
+                  if (view?.map) view.map.basemap = next ? "satellite" : "gray-vector";
+                  return next;
+                });
+              }}
+              onSelect={(id) => setPlanActive(id)}
+              onLegal={(id, legal) => {
+                setPlanOptions((current) => current.map((item) => (item.id === id ? { ...item, legal } : item)));
               }}
               onDraw={() => {
                 setPlanDraw(true);
@@ -1419,20 +1508,35 @@ export default function App() {
                 setPlanActive(null);
                 measurePlan(planVerticesRef.current, planWidthRef.current);
               }}
-              onKeep={() => {
+              onKeep={(label) => {
                 if (!planReport || planReport.error) return;
                 const id = `opt-${Date.now()}`;
                 setPlanOptions((current) => [
                   ...current,
                   {
                     id,
-                    label: `Option ${current.length + 1}`,
+                    label: label || `Option ${current.length + 1}`,
+                    preferred: false,
+                    legal: "Proposed",
                     vertices: planVertices.map((point) => [...point]),
                     width: planWidth,
                     report: planReport,
                   },
                 ]);
                 setPlanActive(id);
+              }}
+              onRename={(id, label) => {
+                setPlanOptions((current) =>
+                  current.map((item) => (item.id === id ? { ...item, label } : item)),
+                );
+              }}
+              onPrefer={(id) => {
+                setPlanOptions((current) =>
+                  current.map((item) => ({ ...item, preferred: item.id === id })),
+                );
+              }}
+              onShowAll={() => {
+                mapApi.current?.showPlanOptions?.(planOptions, planActive);
               }}
               onShowOption={(id) => {
                 const option = planOptions.find((item) => item.id === id);
@@ -2396,7 +2500,7 @@ export default function App() {
           </main>
           {chartPage && (
             <aside className="summary-rail">
-              <article className="summary-card">
+              <article className="summary-card route-card">
                 <header>
                   <span>Route information</span>
                   {routeId && (
@@ -2536,7 +2640,7 @@ export default function App() {
                   )}
                 </div>
               </article>
-              <article className="summary-card">
+              <article className="summary-card event-card">
                 <header>
                   <span>Selected event</span>
                   {activeEvent && (
@@ -2598,7 +2702,7 @@ export default function App() {
                   <p>Click a symbol on the chart or the map to see it here.</p>
                 )}
               </article>
-              <article className="summary-card">
+              <article className="summary-card legend-card">
                 <header>
                   <span>Legend</span>
                 </header>
