@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ADMIN, BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
-import { insertOnPath, pathLengthM, rectangleRing } from "../../cost/utils/corridor";
+import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
+import { distanceToPathM, insertOnPath, pathLengthM, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
 import { PMS_COLORS } from "../../pavement/pms";
@@ -76,7 +76,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, pavement = false, planDraw = false, planVertices = null, planEdit = false, planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, pavement = false, planDraw = false, planMeasure = false, planVertices = null, planEdit = false, planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, planSnapPoint, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const busyRef = useRef(routeLoadingRef);
@@ -94,17 +94,21 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   const placingRef = useRef(placing);
   placingRef.current = placing;
   const planDrawRef = useRef(planDraw);
+  const planMeasureRef = useRef(planMeasure);
   const planEditRef = useRef(planEdit);
   const planClickRef = useRef(onPlanClick);
   const planFinishRef = useRef(onPlanFinish);
   const planCommitRef = useRef(onPlanCommit);
+  const planSnapPointRef = useRef(planSnapPoint);
   const planVerticesRef = useRef(planVertices);
   const planWidthRef = useRef(planWidth);
   planDrawRef.current = planDraw;
+  planMeasureRef.current = planMeasure;
   planEditRef.current = planEdit;
   planClickRef.current = onPlanClick;
   planFinishRef.current = onPlanFinish;
   planCommitRef.current = onPlanCommit;
+  planSnapPointRef.current = planSnapPoint;
   planVerticesRef.current = planVertices;
   planWidthRef.current = planWidth;
   const editHitRef = useRef(onEditHit);
@@ -786,6 +790,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       let hoverFrame = 0;
       let paintPlanPreview = () => {};
+      let paintMeasureHover = () => {};
       view.on("pointer-move", (event) => {
         if (hoverFrame) return;
         hoverFrame = requestAnimationFrame(() => {
@@ -795,6 +800,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (api.current?.route) hoverRef.current?.(mapPoint.longitude, mapPoint.latitude);
           paintPlacePreview(mapPoint.longitude, mapPoint.latitude);
           paintPlanPreview(mapPoint.longitude, mapPoint.latitude);
+          paintMeasureHover(mapPoint.longitude, mapPoint.latitude);
         });
       });
       view.on("pointer-leave", () => {
@@ -852,7 +858,16 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         event.stopPropagation();
         planFinishRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
       });
+      let measurePoints = [];
+      let paintMeasure = () => {};
       view.on("click", (event) => {
+        if (planMeasureRef.current) {
+          event.stopPropagation();
+          const point = [event.mapPoint.longitude, event.mapPoint.latitude];
+          measurePoints = measurePoints.length >= 2 ? [point] : [...measurePoints, point];
+          paintMeasure(measurePoints);
+          return;
+        }
         if (pavementOn) {
           event.stopPropagation();
           view.hitTest(event, { include: [pmsLayer] }).then((response) => {
@@ -1158,6 +1173,48 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       const planLayer = new GraphicsLayer({ id: "lrs-plan", listMode: "hide" });
       map.add(planLayer, Math.max(map.layers.indexOf(placeLayer), 0));
+      const measureLayer = new GraphicsLayer({ id: "lrs-measure", listMode: "hide" });
+      map.add(measureLayer);
+      const measureLine = new SimpleLineSymbol({ color: [29, 78, 216, 1], width: 2.5, cap: "round" });
+      const measureMark = new SimpleMarkerSymbol({ style: "circle", color: [29, 78, 216, 1], size: 8, outline: { color: [255, 255, 255, 1], width: 1.5 } });
+      paintMeasure = (committed, hover) => {
+        measureLayer.removeAll();
+        map.reorder(measureLayer, map.layers.length - 1);
+        const path = hover ? [...committed, hover] : committed;
+        committed.forEach((point) => {
+          measureLayer.add(new Graphic({
+            geometry: new Point({ longitude: point[0], latitude: point[1] }),
+            symbol: measureMark,
+          }));
+        });
+        if (path.length < 2) return;
+        measureLayer.add(new Graphic({
+          geometry: new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }),
+          symbol: measureLine,
+        }));
+        const start = path[path.length - 2];
+        const end = path[path.length - 1];
+        const km = pathLengthM([start, end]) / 1000;
+        measureLayer.add(new Graphic({
+          geometry: new Point({ longitude: (start[0] + end[0]) / 2, latitude: (start[1] + end[1]) / 2 }),
+          symbol: new TextSymbol({
+            text: `${km.toLocaleString("en-RW", { minimumFractionDigits: 2, maximumFractionDigits: 3 })} km`,
+            color: [15, 23, 42, 1],
+            haloColor: [255, 255, 255, 0.95],
+            haloSize: 2,
+            font: { size: 12, weight: "bold" },
+            yoffset: 14,
+          }),
+        }));
+      };
+      paintMeasureHover = (longitude, latitude) => {
+        if (!planMeasureRef.current || measurePoints.length !== 1) return;
+        paintMeasure(measurePoints, [longitude, latitude]);
+      };
+      const clearMeasure = () => {
+        measurePoints = [];
+        measureLayer.removeAll();
+      };
       const planFill = new SimpleFillSymbol({ color: [251, 182, 193, 0.38], outline: { color: [244, 114, 182, 0.9], width: 1 } });
       const planLineSymbol = new SimpleLineSymbol({ color: [30, 41, 59, 1], width: 2.4, style: "short-dash" });
       const planHit = new SimpleFillSymbol({ color: [249, 115, 22, 0.55], outline: { color: [194, 65, 12, 1], width: 1 } });
@@ -1226,14 +1283,17 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       let planSettled = false;
       paintPlanPreview = (longitude, latitude) => {
         if (dragIndex >= 0 && dragVertices) {
-          dragVertices[dragIndex] = [longitude, latitude];
+          const end = dragIndex === 0 || dragIndex === dragVertices.length - 1;
+          const snapped = planSnapPointRef.current?.(longitude, latitude, end);
+          dragVertices[dragIndex] = snapped || [longitude, latitude];
           drawReserve(dragVertices, planWidthRef.current);
           return;
         }
         if (planSettled || !planDrawRef.current) return;
         const base = planVerticesRef.current || [];
         if (!base.length) return;
-        drawReserve([...base, [longitude, latitude]], planWidthRef.current);
+        const snapped = planSnapPointRef.current?.(longitude, latitude, false);
+        drawReserve([...base, snapped || [longitude, latitude]], planWidthRef.current);
       };
       const assetInside = (geometry, polygon) => {
         if (!geometry) return false;
@@ -1329,6 +1389,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }
           if (!sqm || sqm < 0.05) return;
           const attr = feature.attributes || {};
+          const ring = simplifyRing(rings[0]);
+          const distanceM = distanceToPathM(path, ring);
           parcels.push({
             key: `${attr.district || "parcel"}-${attr.OBJECTID || attr.upi || parcels.length}`,
             upi: attr.upi || "",
@@ -1339,6 +1401,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             cell: attr.cell || "",
             village: attr.village || "",
             recordedSize: attr.size ?? "",
+            ring,
+            distanceM,
             sqm,
             cost: 0,
           });
@@ -1363,28 +1427,61 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             return [];
           }
         }));
+        let affectZone = polygon;
+        try {
+          const expanded = geometryEngine.geodesicBuffer(polygon, BUILDING_AFFECT_METERS, "meters");
+          const zone = Array.isArray(expanded) ? expanded[0] : expanded;
+          if (zone?.rings?.length) affectZone = zone;
+        } catch {
+          /* buildings are tested against the reserve itself */
+        }
         const buildings = [];
         buildingBatches.flat().forEach(({ feature, service }) => {
           const attr = feature.attributes || {};
           const rings = feature.geometry?.rings;
           const pointGeom = feature.geometry?.x != null ? new Point({ longitude: feature.geometry.x, latitude: feature.geometry.y }) : null;
           let sqm = 0;
-          let hit = null;
+          let footprint = 0;
+          let near = false;
+          let drawGeom = null;
           try {
             if (rings?.length) {
               const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
-              if (!geometryEngine.intersects(geom, polygon)) return;
-              hit = geometryEngine.intersect(geom, polygon);
-              sqm = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
-              if (!sqm || sqm < 0.05) return;
+              try {
+                footprint = Math.abs(geometryEngine.geodesicArea(geom, "square-meters")) || 0;
+              } catch {
+                footprint = 0;
+              }
+              if (!(footprint > 0.05)) footprint = recordedFootprint(attr);
+              const overlaps = geometryEngine.intersects(geom, polygon);
+              const close = overlaps || geometryEngine.intersects(geom, affectZone);
+              if (!close || !(footprint > 0.05)) return;
+              near = !overlaps;
+              sqm = footprint;
+              drawGeom = geom;
+              if (overlaps) {
+                const hit = geometryEngine.intersect(geom, polygon);
+                const taken = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
+                if (taken >= 0.05) sqm = taken;
+              }
             } else if (pointGeom) {
-              if (!geometryEngine.intersects(polygon, pointGeom)) return;
-              sqm = recordedFootprint(attr);
-              hit = pointGeom;
+              const overlaps = geometryEngine.intersects(polygon, pointGeom);
+              const close = overlaps || geometryEngine.intersects(affectZone, pointGeom);
+              if (!close) return;
+              footprint = recordedFootprint(attr);
+              sqm = footprint;
+              near = !overlaps;
+              drawGeom = pointGeom;
             } else return;
           } catch {
             return;
           }
+          if (!(sqm > 0.05)) return;
+          const ring = rings?.length ? simplifyRing(rings[0]) : null;
+          const center = ring?.length
+            ? [ring.reduce((sum, point) => sum + point[0], 0) / ring.length, ring.reduce((sum, point) => sum + point[1], 0) / ring.length]
+            : (pointGeom ? [pointGeom.longitude, pointGeom.latitude] : null);
+          const distanceM = ring ? distanceToPathM(path, ring) : distanceToPathM(path, center);
           const name = attr.Name_Of_Project || attr.name_of_project || attr.Predicted_Use || attr.Building_Type || attr.building_type || "";
           buildings.push({
             key: `${service.name}-${attr.OBJECTID || attr.objectid || attr.upi || buildings.length}`,
@@ -1393,13 +1490,28 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             use: attr.Predicted_Use || attr.Building_Type || attr.building_type || "",
             district: attr.district || attr.district_1 || "",
             kind: rings?.length ? "polygon" : "point",
+            footprint,
+            near,
+            ring,
+            center,
+            distanceM,
             sqm,
             cost: 0,
           });
-          if (hit?.rings) planLayer.add(new Graphic({ geometry: hit, symbol: planBuildingFill }));
+          if (drawGeom?.rings) planLayer.add(new Graphic({ geometry: drawGeom, symbol: planBuildingFill }));
           else if (pointGeom) planLayer.add(new Graphic({ geometry: pointGeom, symbol: planBuildingMark }));
         });
         buildings.sort((a, b) => b.sqm - a.sqm);
+        const samplePoint = (geometry) => {
+          if (!geometry) return null;
+          if (geometry.longitude != null && geometry.latitude != null) return [geometry.longitude, geometry.latitude];
+          if (geometry.x != null && geometry.y != null) return [geometry.x, geometry.y];
+          const ring = geometry.rings?.[0];
+          if (ring?.length) return [ring[0][0], ring[0][1]];
+          const line = geometry.paths?.[0];
+          if (line?.length) return [line[Math.floor(line.length / 2)][0], line[Math.floor(line.length / 2)][1]];
+          return null;
+        };
         const hidden = new Set(hiddenRef.current || []);
         const assets = [];
         const seenAsset = new Set();
@@ -1420,15 +1532,18 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             if (seenAsset.has(key)) return;
             seenAsset.add(key);
             const event = eventOf(def.id, oid);
+            const at = samplePoint(graphic.geometry);
             assets.push({
               key,
               layer: def.title,
               layerId: def.id,
               oid,
               route: routeId || "",
+              road: Boolean(def.route),
               value: graphic.attributes?.tone || event?.typeKey || "",
               name: event?.name || (def.route ? routeId : ""),
               measure: event?.measure ?? null,
+              distanceM: at ? distanceToPathM(path, at) : null,
               details: (event?.details || []).map((pair) => pair.join(": ")).join(" · "),
             });
           });
@@ -1520,7 +1635,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, clearPlan, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, clearPlan, clearMeasure, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -1702,8 +1817,18 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     const bag = api.current;
     if (!bag?.view?.container) return;
-    bag.view.container.style.cursor = planDraw || planEdit || pickingOrigin || segmentPicking || editing || placing ? "crosshair" : "";
-  }, [planDraw, planEdit, pickingOrigin, segmentPicking, editing, placing, ready]);
+    bag.view.container.style.cursor = planDraw || planMeasure || planEdit || pickingOrigin || segmentPicking || editing || placing ? "crosshair" : "";
+  }, [planDraw, planMeasure, planEdit, pickingOrigin, segmentPicking, editing, placing, ready]);
+
+  useEffect(() => {
+    if (!ready || planMeasure) return;
+    mapApi.current?.clearMeasure?.();
+  }, [planMeasure, ready, mapApi]);
+
+  useEffect(() => {
+    if (!ready || !planDraw || !(planVertices || []).length) return;
+    mapApi.current?.drawReserve?.(planVertices, planWidth);
+  }, [ready, planDraw, planVertices, planWidth, mapApi]);
 
   useEffect(() => {
     const bag = api.current;

@@ -102,7 +102,7 @@ h1 { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
   overflow: auto;
 }
 .app.page-reserve .rr-nav { grid-column: 1 / -1; margin: 0 -12px; }
-.app.page-reserve .rr-title { grid-column: 1 / -1; }
+.app.page-reserve .rr-title { grid-column: 1 / -1; grid-row: 2; }
 .app.page-reserve .rr-left { grid-column: 1; grid-row: 3; }
 .app.page-reserve main {
   grid-column: 2;

@@ -55,7 +55,7 @@ import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
 import Overview from "../features/overview/components/Overview";
-import { appendVertex, applyRates, closestOnPath } from "../features/cost/utils/corridor";
+import { appendVertex, applyRates, attachAlignment, snappedRoadPoint } from "../features/cost/utils/corridor";
 import { assetIcons } from "../assets";
 
 const STORE = "rwanda-lrs-projects";
@@ -96,6 +96,27 @@ function snapMeasureToEventEnds(
 function readProjects() {
   try {
     return JSON.parse(localStorage.getItem(STORE) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function readReserveProjects() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("rwanda-lrs-cost-projects") || "null");
+    if (Array.isArray(saved?.projects)) return saved.projects;
+  } catch {
+    /* Fall through to the older scenario list. */
+  }
+  try {
+    const options = JSON.parse(localStorage.getItem("rwanda-lrs-cost-options") || "[]");
+    if (!Array.isArray(options) || !options.length) return [];
+    return [{
+      id: "project-saved",
+      name: "Saved alignments",
+      note: localStorage.getItem("rwanda-lrs-cost-note") || "",
+      scenarios: options.slice(0, 3),
+    }];
   } catch {
     return [];
   }
@@ -279,6 +300,7 @@ export default function App() {
   segmentStartRef.current = segmentStart;
   const [parcelsOn, setParcelsOn] = useState(true);
   const [planDraw, setPlanDraw] = useState(false);
+  const [planMeasure, setPlanMeasure] = useState(false);
   const [planEdit, setPlanEdit] = useState(false);
   const [planVertices, setPlanVertices] = useState([]);
   const [planWidth, setPlanWidth] = useState(20);
@@ -297,18 +319,14 @@ export default function App() {
       return {};
     }
   });
+  const [reserveProjects, setReserveProjects] = useState(readReserveProjects);
+  const [reserveProjectId, setReserveProjectId] = useState(() => readReserveProjects()[0]?.id || "");
+  const reserveProject = reserveProjects.find((project) => project.id === reserveProjectId) || null;
+  const planOptions = reserveProject?.scenarios || [];
+  const planNote = reserveProject?.note || "";
   const [planBusy, setPlanBusy] = useState(false);
   const [planReport, setPlanReport] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [planOptions, setPlanOptions] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-cost-options") || "[]");
-      return Array.isArray(saved) ? saved : [];
-    } catch {
-      return [];
-    }
-  });
-  const [planNote, setPlanNote] = useState(() => localStorage.getItem("rwanda-lrs-cost-note") || "");
   const [planActive, setPlanActive] = useState(null);
   const planVerticesRef = useRef([]);
   const planWidthRef = useRef(20);
@@ -335,18 +353,14 @@ export default function App() {
   );
   useEffect(() => {
     try {
-      localStorage.setItem("rwanda-lrs-cost-options", JSON.stringify(planOptions));
+      localStorage.setItem("rwanda-lrs-cost-projects", JSON.stringify({
+        projects: reserveProjects,
+        activeId: reserveProjectId,
+      }));
     } catch {
       /* A large parcel list can exceed the browser store. The comparison still works this session. */
     }
-  }, [planOptions]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("rwanda-lrs-cost-note", planNote);
-    } catch {
-      /* The note stays in memory for this session. */
-    }
-  }, [planNote]);
+  }, [reserveProjects, reserveProjectId]);
   useEffect(() => {
     try {
       localStorage.setItem("rwanda-lrs-parcel-status", JSON.stringify(parcelStatus));
@@ -961,13 +975,18 @@ export default function App() {
       contingency: contingencyPct,
     };
     setPlanReport((current) => applyRates(current, rates));
-    setPlanOptions((current) => {
+    setReserveProjects((current) => {
       let changed = false;
-      const next = current.map((option) => {
-        const report = applyRates(option.report, rates);
-        if (report === option.report) return option;
-        changed = true;
-        return { ...option, report };
+      const next = current.map((project) => {
+        let projectChanged = false;
+        const scenarios = (project.scenarios || []).map((option) => {
+          const report = applyRates(option.report, rates);
+          if (report === option.report) return option;
+          projectChanged = true;
+          changed = true;
+          return { ...option, report };
+        });
+        return projectChanged ? { ...project, scenarios } : project;
       });
       return changed ? next : current;
     });
@@ -976,6 +995,7 @@ export default function App() {
     if (costPage) return;
     setPlanDraw(false);
     setPlanEdit(false);
+    setPlanMeasure(false);
     planVerticesRef.current = [];
     setPlanVertices([]);
     setPlanReport(null);
@@ -1000,12 +1020,11 @@ export default function App() {
       )
       .finally(() => setPlanBusy(false));
   };
-  const snappedPlanPoint = (longitude, latitude) => {
+  const snappedPlanPoint = (longitude, latitude, finish = false) => {
     const point = [longitude, latitude];
     if (!planSnapRef.current || !route?.vertices?.length) return point;
-    const near = closestOnPath(route.vertices, point);
-    if (near && near.distance <= SNAP_METERS * 4) return near.point;
-    return point;
+    const start = planVerticesRef.current.length === 0;
+    return snappedRoadPoint(route.vertices, point, { force: start || finish, snapM: SNAP_METERS });
   };
   const mapRef = useRoadMap({
     mapApi,
@@ -1037,16 +1056,18 @@ export default function App() {
     pavement: pavementPage,
     planning: costPage && parcelsOn,
     planDraw,
+    planMeasure,
     planEdit,
     planVertices,
     planWidth,
+    planSnapPoint: snappedPlanPoint,
     onPlanClick: (longitude, latitude) => {
       const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude));
       planVerticesRef.current = next;
       setPlanVertices(next);
     },
     onPlanFinish: (longitude, latitude) => {
-      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude));
+      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude, true));
       if (next.length < 2) return;
       planVerticesRef.current = next;
       setPlanVertices(next);
@@ -1056,12 +1077,15 @@ export default function App() {
       measurePlan(next, planWidthRef.current);
     },
     onPlanCommit: (vertices) => {
-      planVerticesRef.current = vertices;
-      setPlanVertices(vertices);
+      const next = planSnapRef.current && route?.vertices?.length
+        ? attachAlignment(vertices, route.vertices, SNAP_METERS)
+        : vertices;
+      planVerticesRef.current = next;
+      setPlanVertices(next);
       setPlanDraw(false);
       setPlanEdit(true);
       setPlanActive(null);
-      measurePlan(vertices, planWidthRef.current);
+      measurePlan(next, planWidthRef.current);
     },
     placing: placingId != null,
     onEditHit,
@@ -1424,6 +1448,7 @@ export default function App() {
               routeReady={Boolean(route?.vertices?.length)}
               onSelectRoute={selectRoute}
               drawing={planDraw}
+              measuring={planMeasure}
               editing={planEdit}
               snapping={planSnap}
               vertices={planVertices}
@@ -1437,11 +1462,30 @@ export default function App() {
               options={planOptions}
               activeId={planActive}
               note={planNote}
+              projects={reserveProjects}
+              projectId={reserveProjectId}
+              onCreateProject={(name) => {
+                const id = `project-${Date.now()}`;
+                setReserveProjects((current) => [
+                  ...current,
+                  { id, name: name.trim() || `Project ${current.length + 1}`, note: "", scenarios: [] },
+                ]);
+                setReserveProjectId(id);
+                setPlanActive(null);
+              }}
+              onSelectProject={(id) => {
+                setReserveProjectId(id);
+                setPlanActive(null);
+              }}
               parcelsOn={parcelsOn}
               aerialOn={aerialOn}
               parcelStatus={parcelStatus}
               onParcelStatus={(key, status) => setParcelStatus((current) => ({ ...current, [key]: status }))}
-              onNote={setPlanNote}
+              onNote={(note) => {
+                setReserveProjects((current) => current.map((project) => (
+                  project.id === reserveProjectId ? { ...project, note } : project
+                )));
+              }}
               onWidth={(value) => {
                 const next = Number(value);
                 if (Number.isFinite(next))
@@ -1463,7 +1507,30 @@ export default function App() {
                 const next = Number(value);
                 if (Number.isFinite(next)) setContingencyPct(Math.max(0, Math.min(100, next)));
               }}
-              onSnap={() => setPlanSnap((value) => !value)}
+              onMeasure={() => {
+                setPlanMeasure((value) => {
+                  if (!value) {
+                    setPlanDraw(false);
+                    setPlanEdit(false);
+                  }
+                  return !value;
+                });
+              }}
+              onSnap={() => {
+                const next = !planSnap;
+                setPlanSnap(next);
+                if (!next) return;
+                if (!route?.vertices?.length) {
+                  setStatus("Select a base road. Snap attaches the new road to it.");
+                  return;
+                }
+                if (planVerticesRef.current.length >= 2) {
+                  const tied = attachAlignment(planVerticesRef.current, route.vertices, SNAP_METERS);
+                  planVerticesRef.current = tied;
+                  setPlanVertices(tied);
+                  measurePlan(tied, planWidthRef.current);
+                }
+              }}
               onParcels={() => setParcelsOn((value) => !value)}
               onAerial={() => {
                 setAerialOn((value) => {
@@ -1475,9 +1542,14 @@ export default function App() {
               }}
               onSelect={(id) => setPlanActive(id)}
               onLegal={(id, legal) => {
-                setPlanOptions((current) => current.map((item) => (item.id === id ? { ...item, legal } : item)));
+                setReserveProjects((current) => current.map((project) => (
+                  project.id === reserveProjectId
+                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, legal } : item)) }
+                    : project
+                )));
               }}
               onDraw={() => {
+                setPlanMeasure(false);
                 setPlanDraw(true);
                 setPlanEdit(false);
                 setPlanActive(null);
@@ -1510,30 +1582,48 @@ export default function App() {
               }}
               onKeep={(label) => {
                 if (!planReport || planReport.error) return;
+                if (!reserveProject) {
+                  setStatus("Create a project before saving a scenario.");
+                  return;
+                }
+                if (reserveProject.scenarios.length >= 3) {
+                  setStatus("This project already has 3 scenarios. Remove one, or create another project.");
+                  return;
+                }
                 const id = `opt-${Date.now()}`;
-                setPlanOptions((current) => [
-                  ...current,
-                  {
-                    id,
-                    label: label || `Option ${current.length + 1}`,
-                    preferred: false,
-                    legal: "Proposed",
-                    vertices: planVertices.map((point) => [...point]),
-                    width: planWidth,
-                    report: planReport,
-                  },
-                ]);
+                setReserveProjects((current) => current.map((project) => {
+                  if (project.id !== reserveProjectId || project.scenarios.length >= 3) return project;
+                  return {
+                    ...project,
+                    scenarios: [
+                      ...project.scenarios,
+                      {
+                        id,
+                        label: label || `Scenario ${project.scenarios.length + 1}`,
+                        preferred: false,
+                        legal: "Proposed",
+                        vertices: planVertices.map((point) => [...point]),
+                        width: planWidth,
+                        report: planReport,
+                      },
+                    ],
+                  };
+                }));
                 setPlanActive(id);
               }}
               onRename={(id, label) => {
-                setPlanOptions((current) =>
-                  current.map((item) => (item.id === id ? { ...item, label } : item)),
-                );
+                setReserveProjects((current) => current.map((project) => (
+                  project.id === reserveProjectId
+                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, label } : item)) }
+                    : project
+                )));
               }}
               onPrefer={(id) => {
-                setPlanOptions((current) =>
-                  current.map((item) => ({ ...item, preferred: item.id === id })),
-                );
+                setReserveProjects((current) => current.map((project) => (
+                  project.id === reserveProjectId
+                    ? { ...project, scenarios: project.scenarios.map((item) => ({ ...item, preferred: item.id === id })) }
+                    : project
+                )));
               }}
               onShowAll={() => {
                 mapApi.current?.showPlanOptions?.(planOptions, planActive);
@@ -1552,9 +1642,11 @@ export default function App() {
                 mapApi.current?.drawReserve?.(option.vertices, option.width);
               }}
               onRemoveOption={(id) => {
-                setPlanOptions((current) =>
-                  current.filter((item) => item.id !== id),
-                );
+                setReserveProjects((current) => current.map((project) => (
+                  project.id === reserveProjectId
+                    ? { ...project, scenarios: project.scenarios.filter((item) => item.id !== id) }
+                    : project
+                )));
                 setPlanActive((current) => (current === id ? null : current));
               }}
               onOpen={() => setPlanOpen(true)}

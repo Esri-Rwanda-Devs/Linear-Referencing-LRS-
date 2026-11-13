@@ -43,6 +43,23 @@ export function insertOnPath(vertices, point, maxM = 18) {
   return next;
 }
 
+/** Pull a point onto the road. Ends are always attached; other points attach only when they are already near the road. */
+export function snappedRoadPoint(roadVertices, point, { force = false, snapM = 80 } = {}) {
+  const near = closestOnPath(roadVertices, point);
+  if (!near) return point;
+  if (force || near.distance <= snapM) return near.point;
+  return point;
+}
+
+/** The new road starts and ends on the selected road. A middle point within snapM is placed on the road too. */
+export function attachAlignment(vertices, roadVertices, snapM = 80) {
+  if (!vertices?.length || !roadVertices || roadVertices.length < 2) return vertices || [];
+  return vertices.map((point, index) => snappedRoadPoint(roadVertices, point, {
+    force: index === 0 || index === vertices.length - 1,
+    snapM,
+  }));
+}
+
 export function closestOnPath(vertices, point) {
   if (!vertices || vertices.length < 2 || !point) return null;
   let best = null;
@@ -57,6 +74,58 @@ export function closestOnPath(vertices, point) {
     const distance = lineLengthM(projected, point);
     if (!best || distance < best.distance) best = { distance: distance, point: projected };
   }
+  return best;
+}
+
+export function simplifyRing(ring, max = 64) {
+  if (!ring?.length) return [];
+  const closed = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+  const open = (closed ? ring.slice(0, -1) : ring).map((point) => [point[0], point[1]]);
+  if (open.length <= max) return open;
+  const step = Math.ceil(open.length / max);
+  return open.filter((_, index) => index % step === 0);
+}
+
+export function pointInRing(point, ring) {
+  if (!point || !ring || ring.length < 3) return false;
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const start = ring[index];
+    const end = ring[previous];
+    const crosses = (start[1] > point[1]) !== (end[1] > point[1])
+      && point[0] < ((end[0] - start[0]) * (point[1] - start[1])) / ((end[1] - start[1]) || 1e-12) + start[0];
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function segmentsCross(a, b, c, d) {
+  const side = (start, end, point) => (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (point[0] - start[0]);
+  const ab = side(a, b, c);
+  const cd = side(a, b, d);
+  const ac = side(c, d, a);
+  const bd = side(c, d, b);
+  return ((ab > 0 && cd < 0) || (ab < 0 && cd > 0)) && ((ac > 0 && bd < 0) || (ac < 0 && bd > 0));
+}
+
+/** Metres from the drawn road to a point or a ring. Zero means the road crosses it. */
+export function distanceToPathM(path, target) {
+  if (!path || path.length < 2 || !target) return null;
+  if (typeof target[0] === "number") return closestOnPath(path, target)?.distance ?? null;
+  const ring = target;
+  if (ring.length < 3) return null;
+  if (path.some((point) => pointInRing(point, ring))) return 0;
+  for (let index = 1; index < path.length; index += 1) {
+    for (let edge = 1; edge < ring.length; edge += 1) {
+      if (segmentsCross(path[index - 1], path[index], ring[edge - 1], ring[edge])) return 0;
+    }
+    if (segmentsCross(path[index - 1], path[index], ring[ring.length - 1], ring[0])) return 0;
+  }
+  let best = null;
+  ring.forEach((point) => {
+    const near = closestOnPath(path, point);
+    if (near && (best == null || near.distance < best)) best = near.distance;
+  });
   return best;
 }
 
