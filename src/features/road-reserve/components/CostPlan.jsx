@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import RoutePicker from "../../analysis/components/RoutePicker";
-import { MODERN_PARCEL_RATE_RWF } from "../../../config";
+import { URBAN_PARCEL_RATE_RWF } from "../../../config";
 import { exportBudgetReport } from "../../../utils/excel";
 import { closestOnPath, formatMetre, formatRwf, formatSqm, pointInRing } from "../../cost/utils/corridor";
 import Modal from "./Modal";
 import "./RoadReserve.css";
-
+import { assetIcons } from "../../../assets";
 const SECTIONS = [
   ["budget", "Map and budget"],
   ["register", "Parcel register"],
@@ -34,6 +34,93 @@ const overlapOf = (parcel) => {
   return `${Math.min(999, Math.round((parcel.sqm / recorded) * 100))}%`;
 };
 const letterOf = (index) => String.fromCharCode(65 + (index % 26));
+const projectLabel = (project) => (project?.id ? `${project.name} (${project.scenarios?.length || 0}/3)` : "Select a project");
+
+function ProjectSearch({ projects, projectId, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const boxRef = useRef(null);
+  const listRef = useRef(null);
+  const selected = (projects || []).find((project) => project.id === projectId);
+  const matches = useMemo(() => {
+    const wanted = query.trim().toLowerCase();
+    const all = projects || [];
+    return wanted ? all.filter((project) => project.name.toLowerCase().includes(wanted)) : all;
+  }, [projects, query]);
+  const choices = query.trim() ? matches : [{ id: "", name: "Select a project", scenarios: [] }, ...matches];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event) => {
+      if (!boxRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  useEffect(() => { setActive(0); }, [query, open]);
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  const choose = (id) => {
+    onSelect(id);
+    setOpen(false);
+    setQuery("");
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setActive((index) => Math.min(Math.max(choices.length - 1, 0), index + 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((index) => Math.max(0, index - 1));
+    } else if (event.key === "Enter" && open && choices[active]) {
+      event.preventDefault();
+      choose(choices[active].id);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setQuery("");
+    }
+  };
+
+  return (
+    <div className={`rr-project-search${open ? " open" : ""}`} ref={boxRef}>
+      <input
+        value={open ? query : (selected ? projectLabel(selected) : "")}
+        placeholder={selected ? projectLabel(selected) : "Search projects"}
+        aria-label="Project"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        onKeyDown={onKeyDown}
+      />
+      <i className="caret" aria-hidden="true">▾</i>
+      {open && (
+        <ul ref={listRef} role="listbox">
+          {choices.map((project, index) => (
+            <li
+              key={project.id || "none"}
+              data-index={index}
+              role="option"
+              aria-selected={project.id === projectId}
+              className={`${index === active ? "active" : ""} ${project.id && project.id === projectId ? "selected" : ""}`}
+              onPointerDown={(event) => { event.preventDefault(); choose(project.id); }}
+              onPointerEnter={() => setActive(index)}
+            >
+              {projectLabel(project)}
+            </li>
+          ))}
+          {!matches.length && <li className="none">No project matches “{query}”</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
 const hasBuilding = (parcel, buildings) => Boolean(parcel.upi) && (buildings || []).some((building) => building.upi && building.upi === parcel.upi);
 
 function metric(option, key) {
@@ -181,7 +268,7 @@ export default function CostPlan({
   busy, report, options, activeId, note, parcelsOn, aerialOn, parcelStatus, onParcelStatus,
   onWidth, onLand, onBuilding, onDisturbance, onContingency,
   onDraw, onFinish, onReshape, onClear, onSnap, onMeasure, onKeep, onSelect, onShowOption, onRename, onPrefer, onLegal,
-  onNote, onParcels, onAerial, onExportFail, projects, projectId, onCreateProject, onSelectProject,
+  onNote, onParcels, onAerial, onExportFail, projects, projectId, onCreateProject, onSelectProject, savePrompt,
 }) {
   const ready = Boolean(report && !report.error);
   const parcels = report?.parcels || [];
@@ -190,7 +277,7 @@ export default function CostPlan({
   const [filter, setFilter] = useState("All");
   const [selectedKey, setSelectedKey] = useState("");
   const [areaKind, setAreaKind] = useState("rural");
-  const [zoneRates, setZoneRates] = useState({ modern: String(MODERN_PARCEL_RATE_RWF), peri: "", rural: String(landRate), agri: "" });
+  const [zoneRates, setZoneRates] = useState({ urban: String(URBAN_PARCEL_RATE_RWF), peri: "", rural: String(landRate), agri: "" });
   const source = options.find((option) => option.id === activeId)?.report || report;
   const sourceParcels = source?.parcels || parcels;
   const selected = sourceParcels.find((parcel) => parcel.key === selectedKey) || sourceParcels[0];
@@ -207,8 +294,17 @@ export default function CostPlan({
     <i><b style={{ width: `${Math.max(0, (value / maxPart) * 100)}%`, background: color }} /></i>
   );
   const [scenarioName, setScenarioName] = useState("");
+  const [saveOpen, setSaveOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
+  const seenSavePrompt = useRef(0);
+  useEffect(() => {
+    if (!savePrompt || savePrompt === seenSavePrompt.current || busy) return;
+    seenSavePrompt.current = savePrompt;
+    if (!ready) return;
+    setScenarioName(`Scenario ${letterOf((options || []).length)}`);
+    setSaveOpen(true);
+  }, [savePrompt, busy, ready]);
   const full = options.length >= 3;
   const closeProject = () => {
     setProjectOpen(false);
@@ -220,10 +316,16 @@ export default function CostPlan({
     onCreateProject(name);
     closeProject();
   };
-  const saveCurrent = () => {
-    if (!projectId || full) return;
+  const askToSave = () => {
+    setScenarioName((current) => current.trim() || `Scenario ${letterOf(options.length)}`);
+    setSaveOpen(true);
+  };
+  const finishLine = () => onFinish();
+  const confirmSave = () => {
+    if (!projectId || full || busy || !ready || report?.error) return;
     onKeep(scenarioName.trim() || `Scenario ${letterOf(options.length)}`);
     setScenarioName("");
+    setSaveOpen(false);
   };
   const exportCurrent = () => {
     const item = ready ? report : options[0]?.report;
@@ -232,10 +334,10 @@ export default function CostPlan({
     catch (error) { onExportFail?.(error.message || "Could not export Excel."); }
   };
   const alignment = options.find((option) => option.id === activeId)?.vertices || vertices || [];
-  const areaRate = Number(areaKind === "modern" ? zoneRates.modern : zoneRates.rural);
+  const areaRate = Number(areaKind === "urban" ? zoneRates.urban : zoneRates.rural);
   const chooseArea = (kind) => {
     setAreaKind(kind);
-    const rate = Number(kind === "modern" ? zoneRates.modern : zoneRates.rural);
+    const rate = Number(kind === "urban" ? zoneRates.urban : zoneRates.rural);
     if (Number.isFinite(rate)) onLand(Math.max(0, rate));
   };
   const parcelBuildings = selected ? (source?.buildings || buildings).filter((building) => buildingOnParcel(selected, building)) : [];
@@ -243,13 +345,13 @@ export default function CostPlan({
   return (
     <>
       <header className="rr-nav">
-        <div className="rr-brand"><i>A</i> RAMS · Road Reserve</div>
+        <div className="rr-brand">Road Reserve Management System</div>
         <nav className="rr-tabs" aria-label="Road reserve">
           {SECTIONS.map(([id, label]) => (
             <button key={id} type="button" className={section === id ? "on" : ""} aria-current={section === id ? "page" : undefined} onClick={() => onSection(id)}>{label}</button>
           ))}
         </nav>
-        <div className="rr-user">Planner</div>
+        
       </header>
     
 
@@ -257,25 +359,15 @@ export default function CostPlan({
         <>
           <div className="rr-title">
             <div>
-              <p>Road Reserve / Budgeting tool</p>
-              <div className="rr-project">
-                <label>
-                  Project
-                  <select value={projectId || ""} onChange={(event) => onSelectProject(event.target.value)}>
-                    <option value="">Select a project</option>
-                    {(projects || []).map((project) => (
-                      <option key={project.id} value={project.id}>{project.name} ({project.scenarios?.length || 0}/3)</option>
-                    ))}
-                  </select>
-                </label>
-                <button type="button" className="rr-btn solid" onClick={() => setProjectOpen(true)}>Create project</button>
-                <span>{projectId ? `${options.length} of 3 scenarios` : "Create a project to save scenarios"}</span>
-              </div>
+              <h2>Road Reserve / Budgeting tool</h2>
+            
             </div>
             <div className="rr-actions">
-              <button type="button" disabled={!ready || !projectId || full} onClick={saveCurrent}>{full ? "3 scenarios saved" : "Save scenario"}</button>
-              <button type="button" disabled={!ready && options.length === 0} onClick={exportCurrent}>Export Excel</button>
-              <button type="button" className="solid" disabled={!ready && options.length === 0} onClick={() => printComparison(options.length ? options : [{ label: "Current line", report }], note)}>Export PDF summary</button>
+            <ProjectSearch projects={projects} projectId={projectId} onSelect={onSelectProject} />
+            <button type="button" className="rr-btn solid" onClick={() => setProjectOpen(true)}><assetIcons.Plus size={16} />New project</button>
+              {/* <button type="button" disabled={!ready || !projectId || full} onClick={saveCurrent}>{full ? "3 scenarios saved" : "Save scenario"}</button> */}
+              <button type="button" className="export-excel" disabled={!ready && options.length === 0} onClick={exportCurrent}><assetIcons.ExcelLogo className="file-logo" aria-hidden="true" /><span>Excel</span></button>
+              <button type="button" className="print-pdf" disabled={!ready && options.length === 0} onClick={() => printComparison(options.length ? options : [{ label: "Current line", report }], note)}><assetIcons.PdfLogo className="file-logo" aria-hidden="true" /><span>PDF</span></button>
             </div>
           </div>
           <aside className="rr-left">
@@ -287,15 +379,16 @@ export default function CostPlan({
             <section className="rr-card">
               <p className="rr-step">2. Draw alignment</p>
               <div className="rr-draw">
-                <button type="button" className={drawing ? "on" : ""} onClick={onDraw}>{drawing ? "Drawing" : "Draw line"}</button>
-                <button type="button" className={editing ? "on" : ""} onClick={onReshape}>Edit vertices</button>
-                <button type="button" className={snapping ? "on" : ""} onClick={onSnap} title="Attaches the start and end of the new road to the selected road. A point within 80 m of that road is placed on it.">Snap to road</button>
-                <button type="button" className={measuring ? "on" : ""} onClick={onMeasure} title="Click two points on the map. The distance is shown on the map in kilometres.">Measure</button>
-                <button type="button" onClick={onClear}>Clear</button>
+                <button type="button" className={drawing ? "on" : ""} onClick={onDraw}><assetIcons.Draw size={15} />{drawing ? "Drawing" : "Draw"}</button>
+                <button type="button" className={editing ? "on" : ""} onClick={onReshape}><assetIcons.MdOutlineEditRoad size={15} />Vertices</button>
+                <button type="button" className={snapping ? "on" : ""} onClick={onSnap} title="Attaches the start and end of the new road to the selected road. A point within 80 m of that road is placed on it."><assetIcons.Join size={15} />Snap</button>
+                <button type="button" className={measuring ? "on" : ""} onClick={onMeasure} title="Click two points on the map. The distance is shown on the map in kilometres."><assetIcons.Ruler size={15} />Measure</button>
+                <button type="button" onClick={onClear}><assetIcons.Delete size={15} />Clear</button>
               </div>
               {measuring && <p className="rr-hint">Click the first point, then the second. The distance appears on the map in km. Click again to start over.</p>}
               {snapping && <p className="rr-hint">{routeReady ? `The new road starts and ends on ${routeId}. Points within 80 m stay on the road.` : "Select a base road first. Snap attaches the new road to it."}</p>}
-              {drawing && points >= 2 && <button type="button" className="rr-btn solid" onClick={onFinish}>Finish line</button>}
+              {drawing && points >= 2 && <button type="button" className="rr-btn solid" onClick={finishLine}>Finish line</button>}
+              {!drawing && ready && !activeId && !saveOpen && <button type="button" className="rr-btn solid" onClick={askToSave}>Save scenario</button>}
               {busy && <p className="rr-hint">Measuring parcels and buildings…</p>}
             </section>
             <section className="rr-card">
@@ -311,7 +404,32 @@ export default function CostPlan({
               <div className="rr-range"><span>10 m</span><span>80 m</span></div>
             </section>
             <section className="rr-card">
-              <p className="rr-step">4. Layers</p>
+              <p className="rr-step">Saved scenarios</p>
+              <h3>Show on the map</h3>
+              {!projectId && <p className="rr-hint">Create a project, then save a finished line. Each project holds 3 scenarios.</p>}
+              {projectId && options.length === 0 && <p className="rr-hint">Finish a line to save it here. Choose one to draw it on the map.</p>}
+              <div className="rr-scenarios">
+                {options.map((option, index) => (
+                  <button key={option.id} type="button" className={option.id === activeId ? "on" : ""} onClick={() => onShowOption(option.id)}>
+                    <b>{letterOf(index)} · {option.label}</b>
+                    <span>{formatMetre(option.report?.lengthM)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </aside>
+          <aside className="rr-right">
+            <section className="rr-card">
+              <h3>Reserve summary</h3>
+              <div className="rr-stats">
+                <div><span>Parcels affected</span><b>{ready ? parcels.length : "—"}</b></div>
+                <div><span>Buildings affected</span><b>{ready ? buildings.length : "—"}</b></div>
+                <div><span>Reserve area</span><b>{ready ? formatSqm(report.corridorSqm) : "—"}</b></div>
+                <div><span>Alignment length</span><b>{ready ? formatMetre(report.lengthM) : "—"}</b></div>
+              </div>
+            </section>
+            <section className="rr-card">
+            <p className="rr-step">4. Layers</p>
               <ul className="rr-key rr-legend-side">
                 <li><i style={{ background: "transparent", borderBottom: "2px dashed currentColor" }} />Alignment</li>
                 <li><i style={{ background: "#f9a8d4" }} />Reserve</li>
@@ -326,43 +444,6 @@ export default function CostPlan({
                 <li>Aerial photo <Switch on={aerialOn} label="Aerial photo" onClick={onAerial} /></li>
                 <li>Proclaimed reserves <Switch on={false} label="Proclaimed reserves" disabled /></li>
               </ul>
-            </section>
-            <section className="rr-card">
-              <p className="rr-step">5. Rate profile</p>
-              <label className="stack">Area used for the land cost
-                <select value={areaKind} onChange={(event) => chooseArea(event.target.value)}>
-                  <option value="modern">Modern</option>
-                  <option value="rural">Rural</option>
-                </select>
-              </label>
-              <p className="rr-hint">{areaKind === "modern" ? "Modern" : "Rural"} sample rate · {formatRwf(areaRate)} per m². Edit both rates under Rates and rules.</p>
-              <button type="button" className="rr-link" onClick={() => onSection("rates")}>Edit rates and rules</button>
-            </section>
-          </aside>
-          <aside className="rr-right">
-            <section className="rr-card">
-              <h3>Reserve summary</h3>
-              <div className="rr-stats">
-                <div><span>Parcels affected</span><b>{ready ? parcels.length : "—"}</b></div>
-                <div><span>Buildings affected</span><b>{ready ? buildings.length : "—"}</b></div>
-                <div><span>Reserve area</span><b>{ready ? formatSqm(report.corridorSqm) : "—"}</b></div>
-                <div><span>Alignment length</span><b>{ready ? formatMetre(report.lengthM) : "—"}</b></div>
-              </div>
-            </section>
-            <section className="rr-card">
-              <h3>Cost estimate</h3>
-              <p className="rr-hint">Land uses the {areaKind === "modern" ? "modern" : "rural"} rate, {formatRwf(areaRate)} per m². Alignment length is the new road.</p>
-              {ready ? (
-                <>
-                  <div className="rr-cost">
-                    <div><span>Land ({formatSqm(report.parcelSqm)})</span>{bar(report.landCost, "#2563eb")}<b>{millions(report.landCost)}</b></div>
-                    <div><span>Buildings ({formatSqm(report.buildingSqm)})</span>{bar(report.buildingCost, "#ea580c")}<b>{millions(report.buildingCost)}</b></div>
-                    <div><span>Disturbance allowance ({disturbancePct}%)</span>{bar(report.disturbance || 0, "#94a3b8")}<b>{millions(report.disturbance)}</b></div>
-                    
-                  </div>
-                  <p className="rr-total"><span>Total estimate</span><b>{rwfM(report.totalCost)}</b></p>
-                </>
-              ) : <p className="rr-hint">{report?.error || "Finish a line to calculate the reserve."}</p>}
             </section>
             <section className="rr-card">
               <h3>Next steps</h3>
@@ -727,17 +808,17 @@ export default function CostPlan({
               <h2>Rates, widths and workflow rules</h2>
             </div>
             <div className="rr-actions">
-              <button type="button" className="solid" onClick={() => onLand(Number(areaKind === "modern" ? zoneRates.modern : zoneRates.rural) || landRate)}>Save changes</button>
+              <button type="button" className="solid" onClick={() => onLand(Number(areaKind === "urban" ? zoneRates.urban : zoneRates.rural) || landRate)}>Save changes</button>
             </div>
           </div>
           <section className="rr-page">
-            <p className="rr-hint">Choose Modern or Rural on Map and budget. That choice sets the land rate per m². Peri-urban and agricultural rates stay on this screen until you use them.</p>
+            <p className="rr-hint">Choose Urban or Rural on Map and budget. That choice sets the land rate per m². Peri-urban and agricultural rates stay on this screen until you use them.</p>
             <div className="rr-rates">
               <section className="rr-card">
                 <h3>Land rates by area</h3>
                 <table className="rr-table rr-mini">
                   <tbody>
-                    {[["modern", "Modern"], ["rural", "Rural"], ["peri", "Peri-urban"], ["agri", "Agricultural"]].map(([key, label]) => (
+                    {[["urban", "Urban"], ["rural", "Rural"], ["peri", "Peri-urban"], ["agri", "Agricultural"]].map(([key, label]) => (
                       <tr key={key}>
                         <td>{label}{key === areaKind ? " · used" : ""}</td>
                         <td><input value={zoneRates[key]} onChange={(event) => {
@@ -786,6 +867,37 @@ export default function CostPlan({
             </div>
           </section>
         </>
+      )}
+      {saveOpen && (
+        <div className="rr-modal-backdrop in" onMouseDown={() => setSaveOpen(false)}>
+          <div className="rr-modal" role="dialog" aria-modal="true" aria-labelledby="rr-scenario-title" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 id="rr-scenario-title">Save this scenario</h2>
+            {!projectId && <p>Create a project first. This line stays on the map, and you can save it once the project exists.</p>}
+            {projectId && full && <p>This project already has 3 scenarios. Choose one on the map, or create another project.</p>}
+            {projectId && !full && <p>Name this alignment to keep it. You can save 3 scenarios in this project, then choose any one to show it on the map.</p>}
+            {report?.error && <p>{report.error}</p>}
+            {projectId && !full && (
+              <label>
+                Scenario name
+                <input
+                  value={scenarioName}
+                  autoFocus
+                  placeholder="Scenario name"
+                  onChange={(event) => setScenarioName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") confirmSave();
+                    if (event.key === "Escape") setSaveOpen(false);
+                  }}
+                />
+              </label>
+            )}
+            <div className="rr-actions">
+              <button type="button" onClick={() => setSaveOpen(false)}>Not now</button>
+              {!projectId && <button type="button" className="solid" onClick={() => setProjectOpen(true)}>Create project</button>}
+              {projectId && <button type="button" className="solid" disabled={full || busy || !ready || Boolean(report?.error)} onClick={confirmSave}>Save scenario</button>}
+            </div>
+          </div>
+        </div>
       )}
       <Modal open={projectOpen} name={projectDraft} onName={setProjectDraft} onCreate={createProject} onClose={closeProject} />
     </>

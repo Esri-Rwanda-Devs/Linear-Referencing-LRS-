@@ -401,8 +401,8 @@ export const BUILDING_AFFECT_METERS = 2;
 export const WINDOW_KM = 2;
 /** Land inside the reserve, per square metre of parcel overlap. Sample rural rate. */
 export const PARCEL_RATE_RWF = 800;
-/** Sample modern (urban) land rate. The budgeting screen chooses modern or rural. */
-export const MODERN_PARCEL_RATE_RWF = 8000;
+/** Sample urban (urban) land rate. The budgeting screen chooses urban or rural. */
+export const URBAN_PARCEL_RATE_RWF = 8000;
 /** Building footprint inside the reserve, per square metre. Editable in the budgeting panel. */
 export const BUILDING_RATE_RWF = 15000;
 /** Disturbance compensation, as a percent of land plus building cost. */

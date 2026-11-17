@@ -1238,6 +1238,7 @@ main.focus-chart .map-pane { overflow: hidden; visibility: hidden; }
   background: var(--color-on-accent);
 }
 :root[data-theme="dark"] input[type="checkbox"]:checked { background: var(--color-accent); border-color: var(--color-accent); }
+:root[data-theme="dark"] select { background: var(--color-input-bg); color: var(--color-text); border-color: var(--color-border); }
 :root[data-theme="dark"] input[type="checkbox"]:checked::before { transform: scale(1); }
 :root[data-theme="dark"] input[type="range"] { accent-color: var(--color-info); color-scheme: dark; }
 :root[data-theme="dark"] .profile-container { color: var(--color-text); }

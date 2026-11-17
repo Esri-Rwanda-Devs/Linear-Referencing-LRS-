@@ -9,6 +9,11 @@ import { FiLogOut } from "react-icons/fi";
 import { BsDash } from "react-icons/bs";
 import { PiFilePdfFill, PiMicrosoftExcelLogoFill } from "react-icons/pi";
 import { FaRoute } from "react-icons/fa";
+import { FaPlus } from "react-icons/fa6";
+import { MdOutlineDraw } from "react-icons/md";
+import { GiJoin } from "react-icons/gi";
+import { TbRulerMeasure } from "react-icons/tb";
+import { RiDeleteBin6Line } from "react-icons/ri";
 
 
 
@@ -30,4 +35,9 @@ export const assetIcons = {
   ExcelLogo: PiMicrosoftExcelLogoFill,
   PdfLogo: PiFilePdfFill,
   Route: FaRoute,
+  Plus: FaPlus,
+  Draw: MdOutlineDraw,
+  Join: GiJoin,
+  Ruler: TbRulerMeasure,
+  Delete: RiDeleteBin6Line,
 };

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 function Modal({ open, name, onName, onCreate, onClose }) {
   const [present, setPresent] = useState(open);
   const [visible, setVisible] = useState(false);
+  const [zone, setZone] = useState("urban");
+
   useEffect(() => {
     if (open) {
       setPresent(true);
@@ -14,6 +16,7 @@ function Modal({ open, name, onName, onCreate, onClose }) {
     return () => window.clearTimeout(timer);
   }, [open]);
   if (!present) return null;
+  const onZone = (value) => setZone(value);
   return (
     <div className={`rr-modal-backdrop${visible ? " in" : ""}`} onMouseDown={onClose}>
       <div
@@ -24,7 +27,7 @@ function Modal({ open, name, onName, onCreate, onClose }) {
         onMouseDown={(event) => event.stopPropagation()}
       >
         <h2 id="rr-project-title">Create a project</h2>
-        <p>A project holds up to 3 scenarios. Comparison uses only the scenarios in the project you select.</p>
+        <p>Create a new project to store your scenarios.</p>
         <label>
           Project name
           <input
@@ -38,6 +41,16 @@ function Modal({ open, name, onName, onCreate, onClose }) {
               if (event.key === "Escape") onClose();
             }}
           />
+        </label>
+        <label className="rr-label">
+          Project Zone
+          <select
+            value={zone}
+            onChange={(event) => onZone(event.target.value)}
+          >
+            <option value="urban">Urban</option>
+            <option value="rural">Rural</option>
+          </select>
         </label>
         <div className="rr-actions">
           <button type="button" onClick={onClose}>Cancel</button>

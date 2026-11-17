@@ -328,6 +328,7 @@ export default function App() {
   const [planReport, setPlanReport] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planActive, setPlanActive] = useState(null);
+  const [planSaveTick, setPlanSaveTick] = useState(0);
   const planVerticesRef = useRef([]);
   const planWidthRef = useRef(20);
   const planRatesRef = useRef({
@@ -1075,6 +1076,7 @@ export default function App() {
       setPlanEdit(false);
       setPlanActive(null);
       measurePlan(next, planWidthRef.current);
+      setPlanSaveTick((tick) => tick + 1);
     },
     onPlanCommit: (vertices) => {
       const next = planSnapRef.current && route?.vertices?.length
@@ -1459,6 +1461,7 @@ export default function App() {
               contingencyPct={contingencyPct}
               busy={planBusy}
               report={planReport}
+              savePrompt={planSaveTick}
               options={planOptions}
               activeId={planActive}
               note={planNote}
@@ -1565,6 +1568,7 @@ export default function App() {
                 setPlanEdit(false);
                 setPlanActive(null);
                 measurePlan(planVerticesRef.current, planWidthRef.current);
+                setPlanSaveTick((tick) => tick + 1);
               }}
               onReshape={() => {
                 if (planVerticesRef.current.length < 2) return;
