@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_SERVICES, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
+import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
 import { distanceToPathM, insertOnPath, pathLengthM, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
-import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents } from "../services/lrsService";
+import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents, signInToLrs } from "../services/lrsService";
 import { PMS_COLORS } from "../../pavement/pms";
 import { markerSymbol } from "../icons";
 
@@ -1220,7 +1220,6 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const planHit = new SimpleFillSymbol({ color: [249, 115, 22, 0.55], outline: { color: [194, 65, 12, 1], width: 1 } });
       const planMark = (color) => new SimpleMarkerSymbol({ style: "circle", color, size: 11, outline: { color: [255, 255, 255], width: 2 } });
       const planBuildingFill = new SimpleFillSymbol({ color: [153, 27, 27, 0.9], outline: { color: [127, 29, 29, 1], width: 1 } });
-      const planBuildingMark = new SimpleMarkerSymbol({ style: "square", color: [153, 27, 27, 0.95], size: 9, outline: { color: [255, 255, 255], width: 1 } });
       const reservePolygon = (vertices, widthM) => {
         if (!vertices || vertices.length < 2) return null;
         const width = Math.max(Number(widthM) || 0, 1);
@@ -1303,16 +1302,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           return false;
         }
       };
-      const serviceCount = async (name, layerId, box) => {
-        const params = new URLSearchParams({ ...parcelBoxParams(box), returnCountOnly: "true" });
-        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${layerId}/query?${params}`).then((response) => response.json());
-        if (data.error) return null;
-        return Number(data.count) || 0;
-      };
-      const serviceFeatures = async (name, layerId, box) => {
+      const footprintFeatures = async (box) => {
+        const { token } = await signInToLrs();
         const features = [];
         let offset = 0;
-        for (let page = 0; page < 3; page += 1) {
+        for (let page = 0; page < 5; page += 1) {
           const params = new URLSearchParams({
             ...parcelBoxParams(box),
             outSR: "4326",
@@ -1320,9 +1314,12 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             returnGeometry: "true",
             resultOffset: String(offset),
             resultRecordCount: "2000",
+            token,
           });
-          const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${layerId}/query?${params}`).then((response) => response.json());
-          if (data.error) throw new Error(data.error.message || `Could not load ${name}`);
+          const response = await fetch(`${BUILDING_FOOTPRINT_URL}/query?${params}`, { signal: AbortSignal.timeout(20000) });
+          if (!response.ok) throw new Error(`Footprints failed ${response.status}`);
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message || "Could not load building footprints");
           const pageFeatures = data.features || [];
           features.push(...pageFeatures);
           if (!data.exceededTransferLimit || !pageFeatures.length) break;
@@ -1330,7 +1327,14 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         }
         return features;
       };
-      const recordedFootprint = (attr) => [attr.area_new, attr.area, attr.size].map(Number).find((value) => value > 1 && value < 100000) || 0;
+      const geographicRings = (rings) => (rings || []).map((ring) => {
+        if (!ring?.length || Math.abs(ring[0][0]) <= 180) return ring;
+        return ring.map((point) => {
+          const [lon, lat] = webMercatorUtils.xyToLngLat(point[0], point[1]);
+          return [lon, lat];
+        });
+      });
+      const recordedFootprint = (attr) => [attr.Shape__Area, attr.shape__area, attr.area_new, attr.area, attr.size].map(Number).find((value) => value > 1 && value < 2000000) || 0;
       const estimatePlan = async (vertices, widthM) => {
         planSettled = true;
         const path = (vertices || []).filter((point) => point?.length === 2);
@@ -1409,24 +1413,14 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           planLayer.add(new Graphic({ geometry: hit, symbol: planHit }));
         });
         parcels.sort((a, b) => b.sqm - a.sqm);
-        const buildingCounts = await Promise.all(BUILDING_SERVICES.map(async (service) => {
-          try {
-            return [service, await serviceCount(service.name, service.layerId, box)];
-          } catch (error) {
-            console.warn(`[LRS] Building count failed for ${service.name}`, error);
-            return [service, null];
-          }
-        }));
-        const buildingServices = buildingCounts.filter(([, count]) => count == null || count > 0).map(([service]) => service);
-        const buildingBatches = await Promise.all(buildingServices.map(async (service) => {
-          try {
-            const features = await serviceFeatures(service.name, service.layerId, box);
-            return features.map((feature) => ({ feature, service }));
-          } catch (error) {
-            console.warn(`[LRS] Buildings failed for ${service.name}`, error);
-            return [];
-          }
-        }));
+        let footprintCount = null;
+        let loadedFootprints = [];
+        try {
+          loadedFootprints = await footprintFeatures(box);
+          footprintCount = loadedFootprints.length;
+        } catch (error) {
+          console.warn("[LRS] Building footprints failed", error);
+        }
         let affectZone = polygon;
         try {
           const expanded = geometryEngine.geodesicBuffer(polygon, BUILDING_AFFECT_METERS, "meters");
@@ -1436,60 +1430,51 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           /* buildings are tested against the reserve itself */
         }
         const buildings = [];
-        buildingBatches.flat().forEach(({ feature, service }) => {
+        if (footprintCount > 0) loadedFootprints.forEach((feature) => {
           const attr = feature.attributes || {};
-          const rings = feature.geometry?.rings;
-          const pointGeom = feature.geometry?.x != null ? new Point({ longitude: feature.geometry.x, latitude: feature.geometry.y }) : null;
+          const rings = geographicRings(feature.geometry?.rings);
+          if (!rings.length) return;
           let sqm = 0;
           let footprint = 0;
           let near = false;
           let drawGeom = null;
           try {
-            if (rings?.length) {
-              const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
-              try {
-                footprint = Math.abs(geometryEngine.geodesicArea(geom, "square-meters")) || 0;
-              } catch {
-                footprint = 0;
-              }
-              if (!(footprint > 0.05)) footprint = recordedFootprint(attr);
-              const overlaps = geometryEngine.intersects(geom, polygon);
-              const close = overlaps || geometryEngine.intersects(geom, affectZone);
-              if (!close || !(footprint > 0.05)) return;
-              near = !overlaps;
-              sqm = footprint;
-              drawGeom = geom;
-              if (overlaps) {
-                const hit = geometryEngine.intersect(geom, polygon);
-                const taken = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
-                if (taken >= 0.05) sqm = taken;
-              }
-            } else if (pointGeom) {
-              const overlaps = geometryEngine.intersects(polygon, pointGeom);
-              const close = overlaps || geometryEngine.intersects(affectZone, pointGeom);
-              if (!close) return;
-              footprint = recordedFootprint(attr);
-              sqm = footprint;
-              near = !overlaps;
-              drawGeom = pointGeom;
-            } else return;
+            const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
+            try {
+              footprint = Math.abs(geometryEngine.geodesicArea(geom, "square-meters")) || 0;
+            } catch {
+              footprint = 0;
+            }
+            if (!(footprint > 0.05)) footprint = recordedFootprint(attr);
+            const overlaps = geometryEngine.intersects(geom, polygon);
+            const close = overlaps || geometryEngine.intersects(geom, affectZone);
+            if (!close || !(footprint > 0.05)) return;
+            near = !overlaps;
+            sqm = footprint;
+            drawGeom = geom;
+            if (overlaps) {
+              const hit = geometryEngine.intersect(geom, polygon);
+              const taken = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
+              if (taken >= 0.05) sqm = taken;
+            }
           } catch {
             return;
           }
           if (!(sqm > 0.05)) return;
-          const ring = rings?.length ? simplifyRing(rings[0]) : null;
+          const ring = simplifyRing(rings[0]);
           const center = ring?.length
             ? [ring.reduce((sum, point) => sum + point[0], 0) / ring.length, ring.reduce((sum, point) => sum + point[1], 0) / ring.length]
-            : (pointGeom ? [pointGeom.longitude, pointGeom.latitude] : null);
-          const distanceM = ring ? distanceToPathM(path, ring) : distanceToPathM(path, center);
-          const name = attr.Name_Of_Project || attr.name_of_project || attr.Predicted_Use || attr.Building_Type || attr.building_type || "";
+            : null;
+          const distanceM = ring ? distanceToPathM(path, ring) : null;
+          const type = attr.buildingtype || attr.BuildingType || "";
           buildings.push({
-            key: `${service.name}-${attr.OBJECTID || attr.objectid || attr.upi || buildings.length}`,
-            upi: attr.upi || "",
-            name,
-            use: attr.Predicted_Use || attr.Building_Type || attr.building_type || "",
-            district: attr.district || attr.district_1 || "",
-            kind: rings?.length ? "polygon" : "point",
+            key: `footprint-${attr.objectid || attr.OBJECTID || buildings.length}`,
+            upi: "",
+            name: attr.buildingname || attr.BuildingName || "",
+            use: type || attr.buildingcategory || attr.BuildingCategory || "",
+            district: "",
+            kind: "footprint",
+            height: Number(attr.buildingheight || attr.BuildingHeight) || null,
             footprint,
             near,
             ring,
@@ -1499,7 +1484,6 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             cost: 0,
           });
           if (drawGeom?.rings) planLayer.add(new Graphic({ geometry: drawGeom, symbol: planBuildingFill }));
-          else if (pointGeom) planLayer.add(new Graphic({ geometry: pointGeom, symbol: planBuildingMark }));
         });
         buildings.sort((a, b) => b.sqm - a.sqm);
         const samplePoint = (geometry) => {
@@ -1556,6 +1540,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           corridorSqm,
           parcels,
           buildings,
+          footprintCount,
           assets,
           parcelSqm,
           buildingSqm,

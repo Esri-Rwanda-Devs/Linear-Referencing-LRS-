@@ -1479,6 +1479,21 @@ export default function App() {
               onSelectProject={(id) => {
                 setReserveProjectId(id);
                 setPlanActive(null);
+                setPlanDraw(false);
+                setPlanEdit(false);
+                setPlanMeasure(false);
+                if (!id) {
+                  planVerticesRef.current = [];
+                  setPlanVertices([]);
+                  setPlanReport(null);
+                  setPlanOpen(false);
+                  mapApi.current?.clearPlan?.();
+                  return;
+                }
+                const next = reserveProjects.find((project) => project.id === id);
+                const scenarios = next?.scenarios || [];
+                if (scenarios.length) mapApi.current?.showPlanOptions?.(scenarios, null);
+                else mapApi.current?.clearPlan?.();
               }}
               parcelsOn={parcelsOn}
               aerialOn={aerialOn}
@@ -1630,7 +1645,10 @@ export default function App() {
                 )));
               }}
               onShowAll={() => {
-                mapApi.current?.showPlanOptions?.(planOptions, planActive);
+                setPlanActive(null);
+                setPlanDraw(false);
+                setPlanEdit(false);
+                mapApi.current?.showPlanOptions?.(planOptions, null);
               }}
               onShowOption={(id) => {
                 const option = planOptions.find((item) => item.id === id);

@@ -408,16 +408,6 @@ export const BUILDING_RATE_RWF = 15000;
 /** Disturbance compensation, as a percent of land plus building cost. */
 export const COMPENSATION_PERCENT = 5;
 
-/** Building layers on the same host as the parcels. Polygon layers are measured by overlap; point layers are counted when the point falls in the reserve. */
-export const BUILDING_SERVICES = [
-  { name: "Kigali_Buildings_2023_2025", layerId: 0 },
-  { name: "Buildings_Huye_Cities", layerId: 0 },
-  { name: "Buildings_Rubavu_Cities", layerId: 0 },
-  { name: "Buildings_Rusizi_Cities", layerId: 0 },
-  { name: "Building_Kayonza_urban", layerId: 0 },
-  { name: "Building_Musanze_Cities", layerId: 0 },
-  { name: "Bugesera_Constructions_2023", layerId: 1 },
-  { name: "Rwamagana_Constructions_2023", layerId: 0 },
-  { name: "Construction_Kirehe_Cities", layerId: 0 },
-  { name: "Construction_Nyagatare_Cities", layerId: 0 },
-];
+/** RRMS buildings come only from this footprint layer. An area with no features here is not analysed for buildings. */
+export const BUILDING_FOOTPRINT_URL =
+  "https://gh.space.gov.rw/server/rest/services/KiyovuBuildingFootprint/FeatureServer/4";

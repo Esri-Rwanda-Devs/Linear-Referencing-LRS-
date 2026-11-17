@@ -15,6 +15,7 @@ const SECTIONS = [
   ["rates", "Rates and rules"],
 ];
 const WIDTHS = [20, 30, 40, 60];
+const PAGE_SIZE = 7;
 const PIPELINE = ["Identified", "Valued", "Owner notified", "Paid, not moved", "Moved out", "Demolished"];
 const FILTERS = ["All", "Not paid", "Paid, not moved", "Moved, standing", "Demolished"];
 
@@ -121,7 +122,12 @@ function ProjectSearch({ projects, projectId, onSelect }) {
     </div>
   );
 }
-const hasBuilding = (parcel, buildings) => Boolean(parcel.upi) && (buildings || []).some((building) => building.upi && building.upi === parcel.upi);
+const hasBuilding = (parcel, buildings) => (buildings || []).some((building) => buildingOnParcel(parcel, building));
+const buildingGap = (item) => {
+  if (item?.footprintCount === null) return "Building footprints could not be loaded, so buildings were not analysed.";
+  if (item?.footprintCount === 0) return "No footprints in this area, so buildings were not analysed.";
+  return "No building footprint within 2 m of this reserve.";
+};
 
 function metric(option, key) {
   const report = option.report || {};
@@ -150,6 +156,63 @@ function metricText(value, key, digits) {
   if (value == null) return "—";
   if (key === "land" || key === "buildingCost" || key === "total") return millions(value);
   return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function ScenarioMenu({ projectId, options, activeId, onShow, onShowAll }) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const boxRef = useRef(null);
+  const enabled = Boolean(projectId);
+  const current = (options || []).find((option) => option.id === activeId);
+  const currentIndex = (options || []).findIndex((option) => option.id === activeId);
+  useEffect(() => { setAll(false); setOpen(false); }, [projectId]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event) => {
+      if (!boxRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  const label = !enabled ? "Scenarios" : all ? "All on map" : current ? `${letterOf(currentIndex)} · ${current.label}` : "View scenarios";
+  const chooseOne = (id) => {
+    setAll(false);
+    setOpen(false);
+    onShow(id);
+  };
+  const chooseAll = () => {
+    setAll(true);
+    setOpen(false);
+    onShowAll();
+  };
+  return (
+    <div className={`rr-scenario-menu${open ? " open" : ""}`} ref={boxRef}>
+      <button type="button" className="face" disabled={!enabled} aria-expanded={open} aria-label="Scenarios" onClick={() => enabled && setOpen((value) => !value)}>{label}</button>
+      <i className="caret" aria-hidden="true">▾</i>
+      {open && enabled && (
+        <ul role="listbox">
+          <li role="option" className={all ? "selected" : ""} onPointerDown={(event) => { event.preventDefault(); chooseAll(); }}>All on map</li>
+          {(options || []).map((option, index) => (
+            <li key={option.id} role="option" className={!all && option.id === activeId ? "selected" : ""} onPointerDown={(event) => { event.preventDefault(); chooseOne(option.id); }}>
+              {letterOf(index)} · {option.label} ({formatMetre(option.report?.lengthM)})
+            </li>
+          ))}
+          {!options?.length && <li className="none">No scenarios saved yet</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Pager({ page, pages, total, onPage }) {
+  if (total <= PAGE_SIZE) return null;
+  return (
+    <div className="rr-pager">
+      <button type="button" disabled={page <= 0} onClick={() => onPage(page - 1)}>Previous</button>
+      <span>{page + 1} of {pages}</span>
+      <button type="button" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>Next</button>
+    </div>
+  );
 }
 
 function Switch({ on, disabled, label, onClick }) {
@@ -268,7 +331,7 @@ export default function CostPlan({
   busy, report, options, activeId, note, parcelsOn, aerialOn, parcelStatus, onParcelStatus,
   onWidth, onLand, onBuilding, onDisturbance, onContingency,
   onDraw, onFinish, onReshape, onClear, onSnap, onMeasure, onKeep, onSelect, onShowOption, onRename, onPrefer, onLegal,
-  onNote, onParcels, onAerial, onExportFail, projects, projectId, onCreateProject, onSelectProject, savePrompt,
+  onNote, onParcels, onAerial, onExportFail, projects, projectId, onCreateProject, onSelectProject, onShowAll, savePrompt,
 }) {
   const ready = Boolean(report && !report.error);
   const parcels = report?.parcels || [];
@@ -297,6 +360,18 @@ export default function CostPlan({
   const [saveOpen, setSaveOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
+  const [parcelPage, setParcelPage] = useState(0);
+  const [buildingPage, setBuildingPage] = useState(0);
+  const parcelStamp = parcels.map((parcel) => parcel.key).join("|");
+  const buildingStamp = buildings.map((building) => building.key).join("|");
+  useEffect(() => { setParcelPage(0); }, [parcelStamp]);
+  useEffect(() => { setBuildingPage(0); }, [buildingStamp]);
+  const parcelPages = Math.max(1, Math.ceil(parcels.length / PAGE_SIZE));
+  const buildingPages = Math.max(1, Math.ceil(buildings.length / PAGE_SIZE));
+  const parcelAt = Math.min(parcelPage, parcelPages - 1);
+  const buildingAt = Math.min(buildingPage, buildingPages - 1);
+  const parcelRows = parcels.slice(parcelAt * PAGE_SIZE, parcelAt * PAGE_SIZE + PAGE_SIZE);
+  const buildingRows = buildings.slice(buildingAt * PAGE_SIZE, buildingAt * PAGE_SIZE + PAGE_SIZE);
   const seenSavePrompt = useRef(0);
   useEffect(() => {
     if (!savePrompt || savePrompt === seenSavePrompt.current || busy) return;
@@ -313,6 +388,7 @@ export default function CostPlan({
   const createProject = () => {
     const name = projectDraft.trim();
     if (!name) return;
+    if (projectId) onSelectProject("");
     onCreateProject(name);
     closeProject();
   };
@@ -364,6 +440,7 @@ export default function CostPlan({
             </div>
             <div className="rr-actions">
             <ProjectSearch projects={projects} projectId={projectId} onSelect={onSelectProject} />
+            <ScenarioMenu projectId={projectId} options={options} activeId={activeId} onShow={onShowOption} onShowAll={onShowAll} />
             <button type="button" className="rr-btn solid" onClick={() => setProjectOpen(true)}><assetIcons.Plus size={16} />New project</button>
               {/* <button type="button" disabled={!ready || !projectId || full} onClick={saveCurrent}>{full ? "3 scenarios saved" : "Save scenario"}</button> */}
               <button type="button" className="export-excel" disabled={!ready && options.length === 0} onClick={exportCurrent}><assetIcons.ExcelLogo className="file-logo" aria-hidden="true" /><span>Excel</span></button>
@@ -388,7 +465,7 @@ export default function CostPlan({
               {measuring && <p className="rr-hint">Click the first point, then the second. The distance appears on the map in km. Click again to start over.</p>}
               {snapping && <p className="rr-hint">{routeReady ? `The new road starts and ends on ${routeId}. Points within 80 m stay on the road.` : "Select a base road first. Snap attaches the new road to it."}</p>}
               {drawing && points >= 2 && <button type="button" className="rr-btn solid" onClick={finishLine}>Finish line</button>}
-              {!drawing && ready && !activeId && !saveOpen && <button type="button" className="rr-btn solid" onClick={askToSave}>Save scenario</button>}
+              {/* {!drawing && ready && !activeId && !saveOpen && <button type="button" className="rr-btn solid" onClick={askToSave}>Save scenario</button>} */}
               {busy && <p className="rr-hint">Measuring parcels and buildings…</p>}
             </section>
             <section className="rr-card">
@@ -416,6 +493,7 @@ export default function CostPlan({
                   </button>
                 ))}
               </div>
+              {projectId && options.length > 0 && <button type="button" className="rr-btn" onClick={onShowAll}>All on map</button>}
             </section>
           </aside>
           <aside className="rr-right">
@@ -454,51 +532,58 @@ export default function CostPlan({
             </section>
           </aside>
           <section className="rr-card rr-parcels" id="affected-parcels">
-            <header>
-              <h3>Affected parcels ({ready ? parcels.length : 0})</h3>
-              <button type="button" className="rr-btn" disabled={!ready} onClick={exportCurrent}>Export list</button>
-            </header>
-            <p className="rr-hint">Overlap is approximate until the parcel boundary is cut by the buffer.</p>
-            <table className="rr-table">
-              <thead>
-                <tr><th>Parcel ID</th><th>Parcel area (m²)</th><th>Overlap with reserve</th><th>Building</th><th>Acquisition status</th><th></th></tr>
-              </thead>
-              <tbody>
-                {!ready && <tr><td colSpan={6}>{busy ? "Measuring…" : "Draw and finish an alignment to list parcels."}</td></tr>}
-                {parcels.map((parcel) => (
-                  <tr key={parcel.key}>
-                    <td>{parcelCode(parcel)}</td>
-                    <td>{parcel.recordedSize || Math.round(parcel.sqm).toLocaleString()}</td>
-                    <td>{overlapOf(parcel)}</td>
-                    <td>{hasBuilding(parcel, buildings) ? "Yes" : "No"}</td>
-                    <td>{parcelStatus[parcel.key] || "Not started"}</td>
-                    <td><button type="button" className="link" onClick={() => { setSelectedKey(parcel.key); onSection("register"); }}>Open</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <header className="rr-buildings">
-              <h3>Affected buildings ({ready ? buildings.length : 0})</h3>
-            </header>
-            <p className="rr-hint">Footprints come from the building layers. A building within 2 m of the reserve is included. Price is the affected area × {formatRwf(buildingRate)} per m².</p>
-            <table className="rr-table">
-              <thead>
-                <tr><th>Building</th><th>Use</th><th>Footprint (m²)</th><th>Affected (m²)</th><th>Price</th></tr>
-              </thead>
-              <tbody>
-                {!ready && <tr><td colSpan={5}>{busy ? "Measuring…" : "Draw and finish an alignment to price building footprints."}</td></tr>}
-                {buildings.map((building) => (
-                  <tr key={building.key}>
-                    <td>{building.name || building.upi || "Building"}{building.near ? " · within 2 m" : ""}</td>
-                    <td>{building.use || "—"}</td>
-                    <td>{Math.round(building.footprint || building.sqm).toLocaleString()}</td>
-                    <td>{Math.round(building.sqm).toLocaleString()}</td>
-                    <td>{formatRwf(building.cost)}</td>
-                  </tr>
-                ))}
-                {ready && buildings.length === 0 && <tr><td colSpan={5}>No building footprint within 2 m of this reserve.</td></tr>}
-              </tbody>
-            </table>
+            <div className={`rr-affected${parcels.length && buildings.length ? "" : " single"}`}>
+              <div>
+                <header>
+                  <h3>Affected parcels ({ready ? parcels.length : 0})</h3>
+                  <button type="button" className="rr-btn" disabled={!ready} onClick={exportCurrent}>Export list</button>
+                </header>
+                <table className="rr-table">
+                  <thead>
+                    <tr><th>Parcel ID</th><th>Parcel area (m²)</th><th>Overlap with reserve</th><th>Building</th><th>Acquisition status</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {!ready && <tr><td colSpan={6}>{busy ? "Measuring…" : "Draw and finish an alignment to list parcels."}</td></tr>}
+                    {parcelRows.map((parcel) => (
+                      <tr key={parcel.key}>
+                        <td>{parcelCode(parcel)}</td>
+                        <td>{parcel.recordedSize || Math.round(parcel.sqm).toLocaleString()}</td>
+                        <td>{overlapOf(parcel)}</td>
+                        <td>{hasBuilding(parcel, buildings) ? "Yes" : "No"}</td>
+                        <td>{parcelStatus[parcel.key] || "Not started"}</td>
+                        <td><button type="button" className="link" onClick={() => { setSelectedKey(parcel.key); onSection("register"); }}>Open</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Pager page={parcelAt} pages={parcelPages} total={parcels.length} onPage={setParcelPage} />
+              </div>
+              {parcels.length > 0 && buildings.length > 0 && <i className="rr-affected-line" aria-hidden="true" />}
+              <div>
+                <header>
+                  <h3>Affected buildings ({ready ? buildings.length : 0})</h3>
+                </header>
+                <table className="rr-table">
+                  <thead>
+                    <tr><th>Building</th><th>Use</th><th>Footprint (m²)</th><th>Affected (m²)</th><th>Price</th></tr>
+                  </thead>
+                  <tbody>
+                    {!ready && <tr><td colSpan={5}>{busy ? "Measuring…" : "Draw and finish an alignment to price building footprints."}</td></tr>}
+                    {buildingRows.map((building) => (
+                      <tr key={building.key}>
+                        <td>{building.name || building.use || "Building"}{building.near ? " · within 2 m" : ""}</td>
+                        <td>{building.use || "—"}</td>
+                        <td>{Math.round(building.footprint || building.sqm).toLocaleString()}</td>
+                        <td>{Math.round(building.sqm).toLocaleString()}</td>
+                        <td>{formatRwf(building.cost)}</td>
+                      </tr>
+                    ))}
+                    {ready && buildings.length === 0 && <tr><td colSpan={5}>{buildingGap(report)}</td></tr>}
+                  </tbody>
+                </table>
+                <Pager page={buildingAt} pages={buildingPages} total={buildings.length} onPage={setBuildingPage} />
+              </div>
+            </div>
           </section>
         </>
       )}
@@ -564,8 +649,8 @@ export default function CostPlan({
                       </select>
                     </label>
                     <div className="rr-actions">
-                      <button type="button" className="solid" onClick={() => onParcelStatus(selected.key, "Moved out")}>Record move-out</button>
-                      <button type="button" onClick={() => onParcelStatus(selected.key, "Demolished")}>Mark demolished</button>
+                      <button type="button"  className="parcel-move-out" onClick={() => onParcelStatus(selected.key, "Moved out")}>Record move-out</button>
+                      <button type="button"  className="parcel-demolished" onClick={() => onParcelStatus(selected.key, "Demolished")}>Mark demolished</button>
                     </div>
                   </>
                 ) : <p className="rr-hint">Select a parcel.</p>}
@@ -684,9 +769,9 @@ export default function CostPlan({
                 <thead><tr><th>Structure</th><th>Use</th><th>Footprint (m²)</th><th>Affected (m²)</th><th>Price</th></tr></thead>
                 <tbody>
                   {(source?.buildings || []).map((building) => (
-                    <tr key={building.key}><td>{building.name || building.upi || "Building"}</td><td>{building.use || "—"}</td><td>{Math.round(building.footprint || building.sqm || 0).toLocaleString()}</td><td>{Math.round(building.sqm || 0).toLocaleString()}</td><td>{formatRwf(building.cost)}</td></tr>
+                    <tr key={building.key}><td>{building.name || building.use || "Building"}</td><td>{building.use || "—"}</td><td>{Math.round(building.footprint || building.sqm || 0).toLocaleString()}</td><td>{Math.round(building.sqm || 0).toLocaleString()}</td><td>{formatRwf(building.cost)}</td></tr>
                   ))}
-                  {(source?.buildings || []).length === 0 && <tr><td colSpan={5}>No buildings were found inside the current reserve.</td></tr>}
+                  {(source?.buildings || []).length === 0 && <tr><td colSpan={5}>{buildingGap(source)}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -859,7 +944,7 @@ export default function CostPlan({
                   <tbody>
                     <tr><td>Road network and measures</td><td>Road Location Reference system</td></tr>
                     <tr><td>Parcels (cadastre)</td><td>Land administration services</td></tr>
-                    <tr><td>Buildings</td><td>Building footprint layers</td></tr>
+                    <tr><td>Buildings</td><td>Kiyovu building footprints</td></tr>
                     <tr><td>Aerial photos</td><td>Satellite basemap</td></tr>
                   </tbody>
                 </table>
@@ -867,6 +952,15 @@ export default function CostPlan({
             </div>
           </section>
         </>
+      )}
+      {busy && (
+        <div className="rr-loader" role="status" aria-live="polite">
+          <div className="rr-loader-card">
+            <span className="rr-spinner" aria-hidden="true" />
+            <p>Analyzing the reserve</p>
+            
+          </div>
+        </div>
       )}
       {saveOpen && (
         <div className="rr-modal-backdrop in" onMouseDown={() => setSaveOpen(false)}>
@@ -899,7 +993,7 @@ export default function CostPlan({
           </div>
         </div>
       )}
-      <Modal open={projectOpen} name={projectDraft} onName={setProjectDraft} onCreate={createProject} onClose={closeProject} />
+      <Modal open={projectOpen} name={projectDraft} note={projectId ? "The project that is open will be closed first." : ""} onName={setProjectDraft} onCreate={createProject} onClose={closeProject} />
     </>
   );
 }

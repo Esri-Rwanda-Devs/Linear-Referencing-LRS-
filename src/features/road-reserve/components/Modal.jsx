@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-function Modal({ open, name, onName, onCreate, onClose }) {
+function Modal({ open, name, onName, onCreate, onClose, note = "" }) {
   const [present, setPresent] = useState(open);
   const [visible, setVisible] = useState(false);
   const [zone, setZone] = useState("urban");
@@ -28,6 +28,7 @@ function Modal({ open, name, onName, onCreate, onClose }) {
       >
         <h2 id="rr-project-title">Create a project</h2>
         <p>Create a new project to store your scenarios.</p>
+        {note ? <p>{note}</p> : null}
         <label>
           Project name
           <input
