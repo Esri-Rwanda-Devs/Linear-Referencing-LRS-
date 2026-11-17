@@ -20,7 +20,6 @@ import {
   LRS_LAYER_DEFS,
   PARCEL_RATE_RWF,
   REQUESTED_ITEM,
-  SNAP_METERS,
   WINDOW_KM,
 } from "../config";
 import {
@@ -55,7 +54,7 @@ import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
 import Overview from "../features/overview/components/Overview";
-import { appendVertex, applyRates, attachAlignment, snappedRoadPoint } from "../features/cost/utils/corridor";
+import { alignOverRoad, appendVertex, applyRates, attachEndOnRoad, lineLengthM } from "../features/cost/utils/corridor";
 import { assetIcons } from "../assets";
 
 const STORE = "rwanda-lrs-projects";
@@ -302,6 +301,7 @@ export default function App() {
   const [planDraw, setPlanDraw] = useState(false);
   const [planMeasure, setPlanMeasure] = useState(false);
   const [planEdit, setPlanEdit] = useState(false);
+  const [planVertexMode, setPlanVertexMode] = useState(null);
   const [planVertices, setPlanVertices] = useState([]);
   const [planWidth, setPlanWidth] = useState(20);
   const [landRate, setLandRate] = useState(PARCEL_RATE_RWF);
@@ -311,9 +311,19 @@ export default function App() {
   const [reserveSection, setReserveSection] = useState("budget");
   const [planSnap, setPlanSnap] = useState(false);
   const [aerialOn, setAerialOn] = useState(true);
+  const [riversOn, setRiversOn] = useState(true);
+  const [buildingsOn, setBuildingsOn] = useState(true);
   const [parcelStatus, setParcelStatus] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-status") || "{}");
+      return saved && typeof saved === "object" ? saved : {};
+    } catch {
+      return {};
+    }
+  });
+  const [parcelProofs, setParcelProofs] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-proofs") || "{}");
       return saved && typeof saved === "object" ? saved : {};
     } catch {
       return {};
@@ -331,6 +341,8 @@ export default function App() {
   const [planSaveTick, setPlanSaveTick] = useState(0);
   const planVerticesRef = useRef([]);
   const planWidthRef = useRef(20);
+  const planActiveRef = useRef(null);
+  planActiveRef.current = planActive;
   const planRatesRef = useRef({
     land: PARCEL_RATE_RWF,
     building: BUILDING_RATE_RWF,
@@ -369,6 +381,13 @@ export default function App() {
       /* Status stays in memory for this session. */
     }
   }, [parcelStatus]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("rwanda-lrs-parcel-proofs", JSON.stringify(parcelProofs));
+    } catch {
+      /* Proof files can exceed the browser store; they stay in memory this session. */
+    }
+  }, [parcelProofs]);
 
   useEffect(() => {
     loadRouteCatalog()
@@ -996,6 +1015,7 @@ export default function App() {
     if (costPage) return;
     setPlanDraw(false);
     setPlanEdit(false);
+    setPlanVertexMode(null);
     setPlanMeasure(false);
     planVerticesRef.current = [];
     setPlanVertices([]);
@@ -1003,14 +1023,58 @@ export default function App() {
     setPlanOpen(false);
     mapApi.current?.clearPlan?.();
   }, [costPage]);
+  const persistScenarioGeometry = (id, vertices, width, report) => {
+    if (!id || !vertices?.length) return;
+    const path = vertices.map((point) => [...point]);
+    setReserveProjects((current) =>
+      current.map((project) =>
+        project.id !== reserveProjectId
+          ? project
+          : {
+              ...project,
+              scenarios: project.scenarios.map((item) =>
+                item.id !== id
+                  ? item
+                  : {
+                      ...item,
+                      vertices: path,
+                      width: width ?? item.width,
+                      report: report || item.report,
+                    },
+              ),
+            },
+      ),
+    );
+  };
+  const loadScenarioForEdit = (id) => {
+    const option = planOptions.find((item) => item.id === id);
+    if (!option?.vertices?.length) return false;
+    const vertices = option.vertices.map((point) => [...point]);
+    planVerticesRef.current = vertices;
+    setPlanVertices(vertices);
+    setPlanWidth(option.width);
+    setPlanReport(applyRates(option.report, planRatesRef.current));
+    setPlanActive(id);
+    setPlanOpen(true);
+    mapApi.current?.drawReserve?.(vertices, option.width);
+    mapApi.current?.paintRivers?.(option.report?.rivers);
+    return vertices.length >= 2;
+  };
   const measurePlan = (vertices, width) => {
     setPlanReport(null);
     setPlanOpen(true);
     setPlanBusy(true);
     const rates = planRatesRef.current;
+    const activeId = planActiveRef.current;
+    const path = (vertices || []).map((point) => [...point]);
+    if (activeId) persistScenarioGeometry(activeId, path, width);
     mapApi.current
       .estimatePlan(vertices, width)
-      .then((report) => setPlanReport(applyRates(report, rates)))
+      .then((report) => {
+        const applied = applyRates(report, rates);
+        setPlanReport(applied);
+        if (activeId) persistScenarioGeometry(activeId, path, width, applied);
+      })
       .catch((error) =>
         setPlanReport({
           error: error.message || "Could not measure this reserve.",
@@ -1023,9 +1087,11 @@ export default function App() {
   };
   const snappedPlanPoint = (longitude, latitude, finish = false) => {
     const point = [longitude, latitude];
-    if (!planSnapRef.current || !route?.vertices?.length) return point;
-    const start = planVerticesRef.current.length === 0;
-    return snappedRoadPoint(route.vertices, point, { force: start || finish, snapM: SNAP_METERS });
+    if (!planSnapRef.current || !route?.vertices?.length || !finish) return point;
+    const current = planVerticesRef.current;
+    if (!current.length) return point;
+    const tied = attachEndOnRoad([...current, point], route.vertices);
+    return tied[tied.length - 1] || point;
   };
   const mapRef = useRoadMap({
     mapApi,
@@ -1056,9 +1122,12 @@ export default function App() {
     editing: editingPage,
     pavement: pavementPage,
     planning: costPage && parcelsOn,
+    rivers: costPage && riversOn,
+    buildings: costPage && buildingsOn,
     planDraw,
     planMeasure,
     planEdit,
+    planVertexMode: planVertexMode || "move",
     planVertices,
     planWidth,
     planSnapPoint: snappedPlanPoint,
@@ -1073,20 +1142,23 @@ export default function App() {
       planVerticesRef.current = next;
       setPlanVertices(next);
       setPlanDraw(false);
-      setPlanEdit(false);
-      setPlanActive(null);
+      const editingScenario = Boolean(planActiveRef.current);
+      setPlanEdit(editingScenario);
+      setPlanVertexMode(editingScenario ? "move" : null);
       measurePlan(next, planWidthRef.current);
-      setPlanSaveTick((tick) => tick + 1);
+      if (!editingScenario) setPlanSaveTick((tick) => tick + 1);
     },
     onPlanCommit: (vertices) => {
       const next = planSnapRef.current && route?.vertices?.length
-        ? attachAlignment(vertices, route.vertices, SNAP_METERS)
+        ? attachEndOnRoad(vertices, route.vertices)
         : vertices;
       planVerticesRef.current = next;
       setPlanVertices(next);
       setPlanDraw(false);
       setPlanEdit(true);
-      setPlanActive(null);
+      setPlanVertexMode((mode) =>
+        mode === "shift" ? "shift" : mode === "continue" ? "move" : mode || "move",
+      );
       measurePlan(next, planWidthRef.current);
     },
     placing: placingId != null,
@@ -1444,6 +1516,7 @@ export default function App() {
           {costPage && (
             <CostPlan
               section={reserveSection}
+              onLayout={() => mapApi.current?.view?.resize?.()}
               onSection={setReserveSection}
               catalog={catalog}
               routeId={route?.id || routeId}
@@ -1451,7 +1524,8 @@ export default function App() {
               onSelectRoute={selectRoute}
               drawing={planDraw}
               measuring={planMeasure}
-              editing={planEdit}
+              editing={planEdit || planVertexMode != null}
+              vertexMode={planVertexMode}
               snapping={planSnap}
               vertices={planVertices}
               width={planWidth}
@@ -1497,8 +1571,28 @@ export default function App() {
               }}
               parcelsOn={parcelsOn}
               aerialOn={aerialOn}
+              riversOn={riversOn}
+              buildingsOn={buildingsOn}
               parcelStatus={parcelStatus}
-              onParcelStatus={(key, status) => setParcelStatus((current) => ({ ...current, [key]: status }))}
+              parcelProofs={parcelProofs}
+              onParcelStatus={(key, status, proofs = []) => {
+                setParcelStatus((current) => ({ ...current, [key]: status }));
+                if (!proofs.length) return;
+                const stamped = proofs.map((proof) => ({
+                  ...proof,
+                  status,
+                }));
+                setParcelProofs((current) => ({
+                  ...current,
+                  [key]: [...(current[key] || []), ...stamped],
+                }));
+              }}
+              onRemoveParcelProof={(key, proofId) => {
+                setParcelProofs((current) => ({
+                  ...current,
+                  [key]: (current[key] || []).filter((proof) => proof.id !== proofId),
+                }));
+              }}
               onNote={(note) => {
                 setReserveProjects((current) => current.map((project) => (
                   project.id === reserveProjectId ? { ...project, note } : project
@@ -1530,6 +1624,7 @@ export default function App() {
                   if (!value) {
                     setPlanDraw(false);
                     setPlanEdit(false);
+                    setPlanVertexMode(null);
                   }
                   return !value;
                 });
@@ -1539,17 +1634,51 @@ export default function App() {
                 setPlanSnap(next);
                 if (!next) return;
                 if (!route?.vertices?.length) {
-                  setStatus("Select a base road. Snap attaches the new road to it.");
+                  setStatus("Select a base road. Snap joins the end of the new reserve to it.");
                   return;
                 }
                 if (planVerticesRef.current.length >= 2) {
-                  const tied = attachAlignment(planVerticesRef.current, route.vertices, SNAP_METERS);
+                  const current = planVerticesRef.current;
+                  const tied = attachEndOnRoad(current, route.vertices);
+                  const moved = lineLengthM(current[current.length - 1], tied[tied.length - 1]) > 0.5;
                   planVerticesRef.current = tied;
                   setPlanVertices(tied);
-                  measurePlan(tied, planWidthRef.current);
+                  if (!moved) setStatus("Aim the last part of the reserve at the road. Snap keeps that direction and joins the end.");
+                  else measurePlan(tied, planWidthRef.current);
                 }
               }}
+              onAlign={() => {
+                if (!route?.vertices?.length) {
+                  setStatus("Select a base road. Align draws the new reserve on top of it.");
+                  return;
+                }
+                if (planVerticesRef.current.length < 2) {
+                  setStatus("Draw the new reserve first, then align it with the road.");
+                  return;
+                }
+                const wrapped = alignOverRoad(planVerticesRef.current, route.vertices);
+                if (!wrapped) {
+                  setStatus("The new reserve does not span the selected road.");
+                  return;
+                }
+                planVerticesRef.current = wrapped;
+                setPlanVertices(wrapped);
+                setPlanDraw(false);
+                setPlanEdit(false);
+                setPlanVertexMode(null);
+                setPlanActive(null);
+                measurePlan(wrapped, planWidthRef.current);
+              }}
               onParcels={() => setParcelsOn((value) => !value)}
+              onRivers={() => setRiversOn((value) => !value)}
+              onBuildings={() => setBuildingsOn((value) => !value)}
+              onShowParcel={(parcel) => {
+                setReserveSection("budget");
+                requestAnimationFrame(() => {
+                  mapApi.current?.view?.resize?.();
+                  mapApi.current?.focusPlanParcel?.(parcel);
+                });
+              }}
               onAerial={() => {
                 setAerialOn((value) => {
                   const next = !value;
@@ -1558,7 +1687,12 @@ export default function App() {
                   return next;
                 });
               }}
-              onSelect={(id) => setPlanActive(id)}
+              onSelect={(id) => {
+                if (!loadScenarioForEdit(id)) setPlanActive(id);
+                setPlanDraw(false);
+                setPlanEdit(false);
+                setPlanVertexMode(null);
+              }}
               onLegal={(id, legal) => {
                 setReserveProjects((current) => current.map((project) => (
                   project.id === reserveProjectId
@@ -1570,6 +1704,7 @@ export default function App() {
                 setPlanMeasure(false);
                 setPlanDraw(true);
                 setPlanEdit(false);
+                setPlanVertexMode(null);
                 setPlanActive(null);
                 planVerticesRef.current = [];
                 setPlanVertices([]);
@@ -1579,16 +1714,57 @@ export default function App() {
               }}
               onFinish={() => {
                 if (planVerticesRef.current.length < 2) return;
+                const vertices = planSnap && route?.vertices?.length
+                  ? attachEndOnRoad(planVerticesRef.current, route.vertices)
+                  : planVerticesRef.current;
+                planVerticesRef.current = vertices;
+                setPlanVertices(vertices);
                 setPlanDraw(false);
-                setPlanEdit(false);
-                setPlanActive(null);
-                measurePlan(planVerticesRef.current, planWidthRef.current);
-                setPlanSaveTick((tick) => tick + 1);
+                const editingScenario = Boolean(planActiveRef.current);
+                setPlanEdit(editingScenario);
+                setPlanVertexMode(editingScenario ? "move" : null);
+                measurePlan(vertices, planWidthRef.current);
+                if (!editingScenario) setPlanSaveTick((tick) => tick + 1);
               }}
               onReshape={() => {
-                if (planVerticesRef.current.length < 2) return;
+                if (!planVertexMode) {
+                  if (planActive) loadScenarioForEdit(planActive);
+                  else if (planVerticesRef.current.length < 2 && planOptions[0]) {
+                    loadScenarioForEdit(planOptions[0].id);
+                  }
+                }
+                if (planVerticesRef.current.length < 2) {
+                  setStatus("Select a saved scenario or draw an alignment first, then edit vertices.");
+                  return;
+                }
+                setPlanMeasure(false);
                 setPlanDraw(false);
                 setPlanEdit(true);
+                setPlanVertexMode("move");
+                mapApi.current?.drawReserve?.(
+                  planVerticesRef.current,
+                  planWidthRef.current,
+                );
+              }}
+              onVertexMode={(mode) => {
+                if (!planVertexMode && planActive) loadScenarioForEdit(planActive);
+                if (planVerticesRef.current.length < 1) {
+                  setStatus("Select a saved scenario or draw an alignment first.");
+                  return;
+                }
+                if (mode !== "continue" && planVerticesRef.current.length < 2) {
+                  setStatus("Add at least two points before moving or shifting.");
+                  return;
+                }
+                setPlanMeasure(false);
+                setPlanVertexMode(mode);
+                if (mode === "continue") {
+                  setPlanDraw(true);
+                  setPlanEdit(false);
+                } else {
+                  setPlanDraw(false);
+                  setPlanEdit(true);
+                }
                 mapApi.current?.drawReserve?.(
                   planVerticesRef.current,
                   planWidthRef.current,
@@ -1596,7 +1772,6 @@ export default function App() {
               }}
               onApply={() => {
                 if (planVerticesRef.current.length < 2) return;
-                setPlanActive(null);
                 measurePlan(planVerticesRef.current, planWidthRef.current);
               }}
               onKeep={(label) => {
@@ -1648,33 +1823,37 @@ export default function App() {
                 setPlanActive(null);
                 setPlanDraw(false);
                 setPlanEdit(false);
+                setPlanVertexMode(null);
                 mapApi.current?.showPlanOptions?.(planOptions, null);
               }}
               onShowOption={(id) => {
-                const option = planOptions.find((item) => item.id === id);
-                if (!option) return;
-                planVerticesRef.current = option.vertices;
-                setPlanVertices(option.vertices);
-                setPlanWidth(option.width);
-                setPlanReport(applyRates(option.report, planRatesRef.current));
+                loadScenarioForEdit(id);
                 setPlanDraw(false);
                 setPlanEdit(false);
-                setPlanActive(id);
-                setPlanOpen(true);
-                mapApi.current?.drawReserve?.(option.vertices, option.width);
+                setPlanVertexMode(null);
               }}
               onRemoveOption={(id) => {
+                const remaining = (reserveProject?.scenarios || []).filter((item) => item.id !== id);
                 setReserveProjects((current) => current.map((project) => (
                   project.id === reserveProjectId
                     ? { ...project, scenarios: project.scenarios.filter((item) => item.id !== id) }
                     : project
                 )));
+                const wasShowing = planActive === id;
                 setPlanActive((current) => (current === id ? null : current));
+                if (!remaining.length || wasShowing) {
+                  planVerticesRef.current = [];
+                  setPlanVertices([]);
+                  setPlanReport(null);
+                }
+                if (remaining.length) mapApi.current?.showPlanOptions?.(remaining, wasShowing ? null : planActive);
+                else mapApi.current?.clearPlan?.();
               }}
               onOpen={() => setPlanOpen(true)}
               onClear={() => {
                 setPlanDraw(false);
                 setPlanEdit(false);
+                setPlanVertexMode(null);
                 setPlanActive(null);
                 planVerticesRef.current = [];
                 setPlanVertices([]);

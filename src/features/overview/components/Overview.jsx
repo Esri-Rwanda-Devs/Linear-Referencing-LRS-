@@ -2,15 +2,35 @@ import { useEffect, useMemo, useState } from "react";
 import { assetIcons } from "../../../assets";
 import { VALUE_COLORS } from "../../../config";
 import { iconUrl } from "../../mapping/icons";
-import { countOverviewArea, groupOverviewTypes, loadBoundaryChoices, loadBoundaryLevels, loadOverview } from "../../mapping/services/lrsService";
+import {
+  countOverviewArea,
+  groupOverviewTypes,
+  loadBoundaryChoices,
+  loadBoundaryLevels,
+  loadOverview,
+} from "../../mapping/services/lrsService";
 import "./Overview.css";
 
-const numberText = (value) => (Number.isFinite(value) ? value.toLocaleString() : "—");
+const numberText = (value) =>
+  Number.isFinite(value) ? value.toLocaleString() : "—";
 
-const POINT_RANK = ["Bridges", "Culverts", "Cameras", "Traffic", "Accidents", "Transformers", "LV Supports", "MV Supports", "Point Assets", "KM Stones"];
+const POINT_RANK = [
+  "Bridges",
+  "Culverts",
+  "Cameras",
+  "Traffic",
+  "Accidents",
+  "Transformers",
+  "LV Supports",
+  "MV Supports",
+  "Point Assets",
+  "KM Stones",
+];
 
 function rankOf(title) {
-  const at = POINT_RANK.findIndex((name) => name.toLowerCase() === String(title).toLowerCase());
+  const at = POINT_RANK.findIndex(
+    (name) => name.toLowerCase() === String(title).toLowerCase(),
+  );
   return at < 0 ? POINT_RANK.length : at;
 }
 
@@ -21,7 +41,11 @@ function plural(label) {
 
 function typeColor(layerId, name, fallback) {
   const colors = VALUE_COLORS[layerId]?.colors || {};
-  const key = String(name).toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const key = String(name)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return colors[key] || fallback || "#94a3b8";
 }
 
@@ -33,7 +57,12 @@ function Bars({ items }) {
       {items.map((item) => (
         <li key={item.name}>
           <span title={item.name}>{item.name}</span>
-          <i style={{ width: `${Math.max(6, (item.count / max) * 100)}%`, background: item.color }} />
+          <i
+            style={{
+              width: `${Math.max(6, (item.count / max) * 100)}%`,
+              background: item.color,
+            }}
+          />
           <b>{numberText(item.count)}</b>
         </li>
       ))}
@@ -65,18 +94,32 @@ function LengthChart({ title, items, loading, caption, mark }) {
   return (
     <article className="ov-asset ov-chart">
       <header>
-        <span><CardMark item={mark} />Length per {title}</span>
+        <span>
+          <CardMark item={mark} />
+          Length per {title}
+        </span>
         <b>{measured.length ? `${kmText(total)} km` : ""}</b>
       </header>
       {caption && <em>{caption}</em>}
       {loading && <p className="ov-empty">Measuring…</p>}
-      {!loading && !measured.length && <p className="ov-empty">{items.length ? "Length is not available for this layer." : "No types match the filters."}</p>}
+      {!loading && !measured.length && (
+        <p className="ov-empty">
+          {items.length
+            ? "Length is not available for this layer."
+            : "No types match the filters."}
+        </p>
+      )}
       {!loading && measured.length > 0 && (
         <div className="ov-chart-body">
           <div className="ov-chart-axis">
-            {ticks.map((value) => <span key={value}>{kmText(value)}</span>)}
+            {ticks.map((value) => (
+              <span key={value}>{kmText(value)}</span>
+            ))}
           </div>
-          <div className="ov-chart-plot" style={{ "--ov-ticks": ticks.length - 1 }}>
+          <div
+            className="ov-chart-plot"
+            style={{ "--ov-ticks": ticks.length - 1 }}
+          >
             {measured.map((item) => (
               <div
                 key={item.name}
@@ -91,7 +134,11 @@ function LengthChart({ title, items, loading, caption, mark }) {
           </div>
           <div />
           <div className="ov-chart-labels">
-            {measured.map((item) => <span key={item.name} title={item.name}>{item.name}</span>)}
+            {measured.map((item) => (
+              <span key={item.name} title={item.name}>
+                {item.name}
+              </span>
+            ))}
           </div>
         </div>
       )}
@@ -163,7 +210,10 @@ export default function Overview({ query = "", onQuery }) {
         setChoices({ [found[0].id]: names });
       })
       .catch((reason) => {
-        if (!dead) setBoundaryNote(reason.message || "Could not load administrative boundaries.");
+        if (!dead)
+          setBoundaryNote(
+            reason.message || "Could not load administrative boundaries.",
+          );
       })
       .finally(() => {
         if (!dead) setLoadingKey("");
@@ -248,14 +298,24 @@ export default function Overview({ query = "", onQuery }) {
       value: nextSelected[level.id],
     }));
     loadBoundaryChoices(child, parents)
-      .then((names) => setChoices((current) => ({ ...current, [child.id]: names })))
-      .catch((reason) => setBoundaryNote(reason.message || "Could not load the next boundary."))
+      .then((names) =>
+        setChoices((current) => ({ ...current, [child.id]: names })),
+      )
+      .catch((reason) =>
+        setBoundaryNote(reason.message || "Could not load the next boundary."),
+      )
       .finally(() => setLoadingKey(""));
   };
 
   const roads = rows.find((item) => item.route);
   const points = useMemo(
-    () => rows.filter((item) => item.kind === "point").sort((a, b) => rankOf(a.title) - rankOf(b.title) || a.title.localeCompare(b.title)),
+    () =>
+      rows
+        .filter((item) => item.kind === "point")
+        .sort(
+          (a, b) =>
+            rankOf(a.title) - rankOf(b.title) || a.title.localeCompare(b.title),
+        ),
     [rows],
   );
   const lines = useMemo(
@@ -263,7 +323,12 @@ export default function Overview({ query = "", onQuery }) {
     [rows],
   );
   const needle = query.trim().toLowerCase();
-  const matches = (item) => !needle || item.title.toLowerCase().includes(needle) || (item.groups || []).some((group) => group.name.toLowerCase().includes(needle));
+  const matches = (item) =>
+    !needle ||
+    item.title.toLowerCase().includes(needle) ||
+    (item.groups || []).some((group) =>
+      group.name.toLowerCase().includes(needle),
+    );
   const shownRoads = scope !== "line" && roads && matches(roads);
   const shownPoints = scope === "line" ? [] : points.filter(matches);
   const shownLines = scope === "point" ? [] : lines.filter(matches);
@@ -271,7 +336,11 @@ export default function Overview({ query = "", onQuery }) {
 
   const figure = (item) => {
     if (!active) return item.count;
-    if (!areaCounts || !Object.prototype.hasOwnProperty.call(areaCounts, item.id)) return null;
+    if (
+      !areaCounts ||
+      !Object.prototype.hasOwnProperty.call(areaCounts, item.id)
+    )
+      return null;
     return areaCounts[item.id];
   };
 
@@ -279,13 +348,25 @@ export default function Overview({ query = "", onQuery }) {
   const lineCards = shownLines.map((item) => {
     const count = figure(item);
     const missing = Boolean(active) && areaCounts && count == null;
-    const scoped = typeGroups && Object.prototype.hasOwnProperty.call(typeGroups, item.id) && typeGroups[item.id] != null;
-    const source = scoped ? typeGroups[item.id] : (item.groups || []);
+    const scoped =
+      typeGroups &&
+      Object.prototype.hasOwnProperty.call(typeGroups, item.id) &&
+      typeGroups[item.id] != null;
+    const source = scoped ? typeGroups[item.id] : item.groups || [];
     const titleHit = !needle || item.title.toLowerCase().includes(needle);
     const groups = source
       .filter((group) => titleHit || group.name.toLowerCase().includes(needle))
-      .map((group) => ({ ...group, color: typeColor(item.id, group.name, item.swatch) }));
-    return { item, count, missing, groups, national: Boolean(active) && !scoped };
+      .map((group) => ({
+        ...group,
+        color: typeColor(item.id, group.name, item.swatch),
+      }));
+    return {
+      item,
+      count,
+      missing,
+      groups,
+      national: Boolean(active) && !scoped,
+    };
   });
 
   return (
@@ -295,7 +376,15 @@ export default function Overview({ query = "", onQuery }) {
           <p>Overview</p>
           <h2>Network statistics</h2>
         </div>
-        <span>{loading ? "Counting layers…" : error || boundaryNote || (areaLoading ? `Counting ${place}…` : "Choose a province to open the next boundary.")}</span>
+        <span>
+          {loading
+            ? "Counting layers…"
+            : error ||
+              boundaryNote ||
+              (areaLoading
+                ? `Counting ${place}…`
+                : "Choose a province to open the next boundary.")}
+        </span>
       </header>
       <div className="ov-toolbar">
         <div className="ov-filter">
@@ -306,7 +395,12 @@ export default function Overview({ query = "", onQuery }) {
               ["point", "Point assets"],
               ["line", "Line events"],
             ].map(([id, label]) => (
-              <button key={id} type="button" className={scope === id ? "on" : ""} onClick={() => setScope(id)}>
+              <button
+                key={id}
+                type="button"
+                className={scope === id ? "on" : ""}
+                onClick={() => setScope(id)}
+              >
                 {label}
               </button>
             ))}
@@ -323,7 +417,8 @@ export default function Overview({ query = "", onQuery }) {
         <div className="ov-cascade">
           {levels.map((level, index) => {
             const previous = levels[index - 1];
-            const enabled = index === 0 || Boolean(previous && selected[previous.id]);
+            const enabled =
+              index === 0 || Boolean(previous && selected[previous.id]);
             return (
               <label key={level.id} className={enabled ? "" : "is-off"}>
                 <span>{level.label}</span>
@@ -332,9 +427,15 @@ export default function Overview({ query = "", onQuery }) {
                   disabled={!enabled}
                   onChange={(event) => choose(index, event.target.value)}
                 >
-                  <option value="">{loadingKey === level.id ? "Loading…" : `All ${plural(level.label)}`}</option>
+                  <option value="">
+                    {loadingKey === level.id
+                      ? "Loading…"
+                      : `All ${plural(level.label)}`}
+                  </option>
                   {(choices[level.id] || []).map((name) => (
-                    <option key={name} value={name}>{name}</option>
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -350,8 +451,18 @@ export default function Overview({ query = "", onQuery }) {
               {shownRoads && (
                 <CountCard
                   item={{ ...roads, title: "Roads", swatch: roads.swatch }}
-                  count={figure(roads) == null && active ? roads.count : figure(roads)}
-                  caption={figure(roads) == null && active ? "National route codes" : (place ? `${place} route codes` : "TOTAL")}
+                  count={
+                    figure(roads) == null && active
+                      ? roads.count
+                      : figure(roads)
+                  }
+                  caption={
+                    figure(roads) == null && active
+                      ? "National route codes"
+                      : place
+                        ? `${place} route codes`
+                        : "TOTAL"
+                  }
                   loading={areaLoading && Boolean(active)}
                 />
               )}
@@ -363,7 +474,7 @@ export default function Overview({ query = "", onQuery }) {
                     key={item.id}
                     item={item}
                     count={missing ? item.count : count}
-                    caption={missing ? "No boundary field" : (place || "Total")}
+                    caption={missing ? "No boundary field" : place || "Total"}
                     loading={areaLoading && Boolean(active)}
                   />
                 );
@@ -404,15 +515,22 @@ export default function Overview({ query = "", onQuery }) {
                   mark={item}
                   items={groups}
                   loading={loading || typesPending}
-                  caption={national ? `National · no ${active.label.toLowerCase()} field` : ""}
+                  caption={
+                    national
+                      ? `National · no ${active.label.toLowerCase()} field`
+                      : ""
+                  }
                 />
               ))}
             </div>
           </section>
         )}
-        {!loading && !shownRoads && shownPoints.length === 0 && shownLines.length === 0 && (
-          <p className="ov-empty">Nothing matches that filter.</p>
-        )}
+        {!loading &&
+          !shownRoads &&
+          shownPoints.length === 0 &&
+          shownLines.length === 0 && (
+            <p className="ov-empty">Nothing matches that filter.</p>
+          )}
       </div>
     </section>
   );

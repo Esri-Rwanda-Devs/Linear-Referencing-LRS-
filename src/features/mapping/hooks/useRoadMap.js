@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS } from "../../../config";
+import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
 import { distanceToPathM, insertOnPath, pathLengthM, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents, signInToLrs } from "../services/lrsService";
@@ -76,7 +76,7 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, pavement = false, planDraw = false, planMeasure = false, planVertices = null, planEdit = false, planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, planSnapPoint, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, rivers = false, buildings = false, pavement = false, planDraw = false, planMeasure = false, planVertices = null, planEdit = false, planVertexMode = "move", planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, planSnapPoint, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const busyRef = useRef(routeLoadingRef);
@@ -96,6 +96,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   const planDrawRef = useRef(planDraw);
   const planMeasureRef = useRef(planMeasure);
   const planEditRef = useRef(planEdit);
+  const planVertexModeRef = useRef(planVertexMode);
   const planClickRef = useRef(onPlanClick);
   const planFinishRef = useRef(onPlanFinish);
   const planCommitRef = useRef(onPlanCommit);
@@ -105,6 +106,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   planDrawRef.current = planDraw;
   planMeasureRef.current = planMeasure;
   planEditRef.current = planEdit;
+  planVertexModeRef.current = planVertexMode;
   planClickRef.current = onPlanClick;
   planFinishRef.current = onPlanFinish;
   planCommitRef.current = onPlanCommit;
@@ -821,6 +823,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       let dragIndex = -1;
       let dragVertices = null;
+      let dragStartVertices = null;
+      let dragOrigin = null;
       let suppressPlanClick = false;
       const vertexAt = (event) => {
         const vertices = dragVertices || planVerticesRef.current || [];
@@ -839,11 +843,15 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       view.on("pointer-down", (event) => {
         if (!planEditRef.current || planDrawRef.current) return;
+        const mode = planVertexModeRef.current || "move";
+        if (mode !== "move" && mode !== "shift") return;
         const index = vertexAt(event);
         if (index < 0) return;
         event.stopPropagation();
         dragIndex = index;
-        dragVertices = (planVerticesRef.current || []).map((vertex) => [...vertex]);
+        dragStartVertices = (planVerticesRef.current || []).map((vertex) => [...vertex]);
+        dragVertices = dragStartVertices.map((vertex) => [...vertex]);
+        dragOrigin = [event.mapPoint.longitude, event.mapPoint.latitude];
         suppressPlanClick = true;
       });
       view.on("pointer-up", () => {
@@ -851,6 +859,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const next = dragVertices.map((vertex) => [...vertex]);
         dragIndex = -1;
         dragVertices = null;
+        dragStartVertices = null;
+        dragOrigin = null;
         planCommitRef.current?.(next);
       });
       view.on("double-click", (event) => {
@@ -888,8 +898,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             planClickRef.current?.(longitude, latitude);
             return;
           }
-          const next = insertOnPath(planVerticesRef.current, [longitude, latitude]);
-          if (next) planCommitRef.current?.(next);
+          if ((planVertexModeRef.current || "move") === "move") {
+            const next = insertOnPath(planVerticesRef.current, [longitude, latitude]);
+            if (next) planCommitRef.current?.(next);
+          }
           return;
         }
         if (busyRef.current?.current) return;
@@ -1069,13 +1081,19 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       const parcelIds = new globalThis.Map();
       const parcelLayerId = async (name) => {
-        if (parcelIds.has(name)) return parcelIds.get(name);
-        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer?f=json`).then((response) => response.json());
-        const layers = data.layers || [];
-        const match = layers.find((layer) => /parcel/i.test(layer.name || "")) || layers[0];
-        const id = match ? match.id : 0;
-        parcelIds.set(name, id);
-        return id;
+        if (parcelIds.has(name)) {
+          const cached = parcelIds.get(name);
+          if (cached == null) throw new Error(`Could not open ${name}`);
+          return cached;
+        }
+        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer?f=json`, { signal: AbortSignal.timeout(15000) }).then((response) => response.json());
+        if (data.error || !(data.layers || []).length) {
+          parcelIds.set(name, null);
+          throw new Error(data.error?.message || `Could not open ${name}`);
+        }
+        const match = data.layers.find((layer) => /parcel/i.test(layer.name || "")) || data.layers[0];
+        parcelIds.set(name, match.id);
+        return match.id;
       };
       const parcelBoxParams = (box) => ({
         f: "json",
@@ -1088,15 +1106,16 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const parcelCount = async (name, box) => {
         const id = await parcelLayerId(name);
         const params = new URLSearchParams({ ...parcelBoxParams(box), returnCountOnly: "true" });
-        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`).then((response) => response.json());
+        const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`, { signal: AbortSignal.timeout(15000) }).then((response) => response.json());
         if (data.error) return null;
         return Number(data.count) || 0;
       };
-      const parcelFeatures = async (name, box) => {
+      const parcelFeatures = async (name, box, simplify) => {
         const id = await parcelLayerId(name);
         const features = [];
         let offset = 0;
-        for (let page = 0; page < 3; page += 1) {
+        const span = Math.max(Math.abs(box.xmax - box.xmin), Math.abs(box.ymax - box.ymin));
+        for (let page = 0; page < 4; page += 1) {
           const params = new URLSearchParams({
             ...parcelBoxParams(box),
             outSR: "4326",
@@ -1106,7 +1125,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             resultOffset: String(offset),
             resultRecordCount: "2000",
           });
-          const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`).then((response) => response.json());
+          if (simplify) params.set("maxAllowableOffset", String(Math.max(span / 900, 0.00002)));
+          const data = await fetch(`${PARCELS_ROOT}/${name}/FeatureServer/${id}/query?${params}`, { signal: AbortSignal.timeout(20000) }).then((response) => response.json());
           if (data.error) throw new Error(data.error.message || `Could not load ${name}`);
           const pageFeatures = data.features || [];
           features.push(...pageFeatures);
@@ -1143,7 +1163,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const names = counts.filter(([, count]) => count == null || count > 0).map(([name]) => name);
           const batches = await Promise.all(names.map(async (name) => {
             try {
-              return await parcelFeatures(name, box);
+              return await parcelFeatures(name, box, true);
             } catch (error) {
               console.warn(`[LRS] Parcels failed for ${name}`, error);
               return [];
@@ -1161,7 +1181,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             })];
           });
           parcelLayer.removeAll();
-          if (graphics.length) parcelLayer.addMany(graphics);
+          if (graphics.length) {
+            parcelLayer.addMany(graphics);
+            const belowPlan = map.layers.indexOf(planLayer);
+            if (belowPlan > 0) map.reorder(parcelLayer, belowPlan);
+          }
         } catch (error) {
           if (token === parcelToken) parcelKey = "";
           console.warn("[LRS] Could not draw parcels", error);
@@ -1173,6 +1197,109 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       };
       const planLayer = new GraphicsLayer({ id: "lrs-plan", listMode: "hide" });
       map.add(planLayer, Math.max(map.layers.indexOf(placeLayer), 0));
+      const riverLayer = new FeatureLayer({
+        url: `${WATER}/0`,
+        id: "lrs-rivers",
+        title: "Rivers",
+        outFields: ["name", "type", "objectid"],
+        renderer: {
+          type: "simple",
+          symbol: new SimpleLineSymbol({ color: [37, 99, 235, 0.95], width: 2.4, cap: "round", join: "round" }),
+        },
+        popupEnabled: false,
+        listMode: "hide",
+        visible: false,
+      });
+      map.add(riverLayer, Math.max(map.layers.indexOf(planLayer) - 1, 0));
+      const showRivers = (on, token) => {
+        riverLayer.visible = Boolean(on);
+        if (token) riverLayer.customParameters = { token };
+      };
+      const areaRiverLayer = new GraphicsLayer({ id: "lrs-area-rivers", listMode: "hide" });
+      map.add(areaRiverLayer, Math.max(map.layers.indexOf(planLayer), 0));
+      let areaRiverTicket = 0;
+      const clearAreaRivers = () => {
+        areaRiverTicket += 1;
+        areaRiverLayer.removeAll();
+      };
+      const loadAreaRivers = async (groups) => {
+        const envelopes = (groups || []).map((points) => {
+          const usable = (points || []).filter((point) => point?.length === 2);
+          if (usable.length < 2) return null;
+          const pad = 0.005;
+          return {
+            xmin: Math.min(...usable.map((point) => point[0])) - pad,
+            ymin: Math.min(...usable.map((point) => point[1])) - pad,
+            xmax: Math.max(...usable.map((point) => point[0])) + pad,
+            ymax: Math.max(...usable.map((point) => point[1])) + pad,
+          };
+        }).filter(Boolean);
+        if (!envelopes.length) {
+          clearAreaRivers();
+          return;
+        }
+        const ticket = areaRiverTicket + 1;
+        areaRiverTicket = ticket;
+        try {
+          const { token } = await signInToLrs();
+          if (ticket !== areaRiverTicket) return;
+          const pages = await Promise.all(envelopes.map(async (box) => {
+            const params = new URLSearchParams({
+              ...parcelBoxParams(box),
+              outSR: "4326",
+              outFields: "objectid,name",
+              returnGeometry: "true",
+              resultRecordCount: "500",
+              token,
+            });
+            const response = await fetch(`${WATER}/0/query?${params}`, { signal: AbortSignal.timeout(20000) });
+            if (!response.ok) return [];
+            const data = await response.json();
+            if (data.error) return [];
+            return data.features || [];
+          }));
+          if (ticket !== areaRiverTicket) return;
+          areaRiverLayer.removeAll();
+          const symbol = new SimpleLineSymbol({ color: [56, 189, 248, 1], width: 3, cap: "round", join: "round" });
+          const seen = new Set();
+          const graphics = [];
+          pages.flat().forEach((feature) => {
+            const paths = feature.geometry?.paths;
+            const id = feature.attributes?.objectid || feature.attributes?.OBJECTID;
+            if (!paths?.length || (id && seen.has(id))) return;
+            if (id) seen.add(id);
+            graphics.push(new Graphic({
+              geometry: new Polyline({ paths, spatialReference: { wkid: 4326 } }),
+              symbol,
+              attributes: { name: feature.attributes?.name || "River" },
+            }));
+          });
+          if (ticket === areaRiverTicket) areaRiverLayer.addMany(graphics);
+        } catch (error) {
+          if (ticket === areaRiverTicket) console.warn("[LRS] Area rivers failed", error);
+        }
+      };
+      const buildingLayer = new FeatureLayer({
+        url: BUILDING_FOOTPRINT_URL,
+        id: "lrs-buildings",
+        title: "Building footprints",
+        outFields: ["objectid", "buildingname", "buildingtype"],
+        renderer: {
+          type: "simple",
+          symbol: new SimpleFillSymbol({
+            color: [153, 27, 27, 0.55],
+            outline: { color: [255, 255, 255, 0.95], width: 0.7 },
+          }),
+        },
+        popupEnabled: false,
+        listMode: "hide",
+        visible: false,
+      });
+      map.add(buildingLayer, Math.max(map.layers.indexOf(planLayer) - 1, 0));
+      const showBuildings = (on, token) => {
+        buildingLayer.visible = Boolean(on);
+        if (token) buildingLayer.customParameters = { token };
+      };
       const measureLayer = new GraphicsLayer({ id: "lrs-measure", listMode: "hide" });
       map.add(measureLayer);
       const measureLine = new SimpleLineSymbol({ color: [29, 78, 216, 1], width: 2.5, cap: "round" });
@@ -1256,6 +1383,17 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         return polygon;
       };
       const PLAN_INK = [[37, 99, 235], [22, 163, 74], [217, 119, 6], [124, 58, 237], [220, 38, 38]];
+      const riverSymbol = new SimpleLineSymbol({ color: [37, 99, 235, 1], width: 3, cap: "round", join: "round" });
+      const paintRivers = (rivers) => {
+        (rivers || []).forEach((river) => {
+          if (!river?.path || river.path.length < 2) return;
+          planLayer.add(new Graphic({
+            geometry: new Polyline({ paths: [river.path], spatialReference: { wkid: 4326 } }),
+            symbol: riverSymbol,
+            attributes: { river: river.key || river.name },
+          }));
+        });
+      };
       const showPlanOptions = (options, activeId) => {
         planLayer.removeAll();
         (options || []).forEach((option, index) => {
@@ -1277,11 +1415,19 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             geometry: new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }),
             symbol: new SimpleLineSymbol({ color: [...ink, 1], width: active ? 3 : 1.6, style: active ? "solid" : "short-dash" }),
           }));
+          paintRivers(option.report?.rivers);
         });
       };
       let planSettled = false;
       paintPlanPreview = (longitude, latitude) => {
-        if (dragIndex >= 0 && dragVertices) {
+        if (dragIndex >= 0 && dragVertices && dragStartVertices && dragOrigin) {
+          if ((planVertexModeRef.current || "move") === "shift") {
+            const dx = longitude - dragOrigin[0];
+            const dy = latitude - dragOrigin[1];
+            dragVertices = dragStartVertices.map(([x, y]) => [x + dx, y + dy]);
+            drawReserve(dragVertices, planWidthRef.current);
+            return;
+          }
           const end = dragIndex === 0 || dragIndex === dragVertices.length - 1;
           const snapped = planSnapPointRef.current?.(longitude, latitude, end);
           dragVertices[dragIndex] = snapped || [longitude, latitude];
@@ -1534,6 +1680,54 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         }
         const parcelSqm = parcels.reduce((sum, parcel) => sum + parcel.sqm, 0);
         const buildingSqm = buildings.reduce((sum, building) => sum + (building.sqm || 0), 0);
+        let rivers = null;
+        try {
+          const { token } = await signInToLrs();
+          const params = new URLSearchParams({
+            ...parcelBoxParams(box),
+            outSR: "4326",
+            outFields: "objectid,name,type",
+            returnGeometry: "true",
+            resultRecordCount: "200",
+            token,
+          });
+          const response = await fetch(`${WATER}/0/query?${params}`, { signal: AbortSignal.timeout(20000) });
+          if (response.ok) {
+            const data = await response.json();
+            if (!data.error) {
+              rivers = [];
+              const alignment = new Polyline({ paths: [path], spatialReference: { wkid: 4326 } });
+              const riverLine = new SimpleLineSymbol({ color: [37, 99, 235, 1], width: 3, cap: "round", join: "round" });
+              (data.features || []).forEach((feature) => {
+                const paths = feature.geometry?.paths;
+                if (!paths?.length) return;
+                const line = new Polyline({ paths, spatialReference: { wkid: 4326 } });
+                let crosses = false;
+                try { crosses = geometryEngine.intersects(line, polygon) || geometryEngine.intersects(line, alignment); } catch { crosses = false; }
+                if (!crosses) return;
+                const attr = feature.attributes || {};
+                const river = {
+                  key: `river-${attr.objectid || attr.OBJECTID || rivers.length}`,
+                  name: attr.name || "River",
+                  path: simplifyRing(paths[0], 80),
+                };
+                rivers.push(river);
+                planLayer.add(new Graphic({ geometry: line, symbol: riverLine, attributes: { river: river.key } }));
+                parcels.forEach((parcel) => {
+                  if (!parcel.ring?.length) return;
+                  const geom = new Polygon({ rings: [[...parcel.ring, parcel.ring[0]]], spatialReference: { wkid: 4326 } });
+                  let onParcel = false;
+                  try { onParcel = geometryEngine.intersects(geom, line); } catch { onParcel = false; }
+                  if (!onParcel) return;
+                  parcel.rivers = parcel.rivers || [];
+                  if (!parcel.rivers.includes(river.name)) parcel.rivers.push(river.name);
+                });
+              });
+            }
+          }
+        } catch (error) {
+          console.warn("[LRS] Rivers failed", error);
+        }
         return {
           lengthM,
           widthM: width,
@@ -1541,6 +1735,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           parcels,
           buildings,
           footprintCount,
+          rivers,
           assets,
           parcelSqm,
           buildingSqm,
@@ -1549,10 +1744,29 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       view.watch("stationary", (isStationary) => {
         if (isStationary) refreshParcels();
       });
+      const focusPlanParcel = (parcel) => {
+        const ring = parcel?.ring;
+        if (!ring?.length) return;
+        const closed = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring : [...ring, ring[0]];
+        const polygon = new Polygon({ rings: [closed], spatialReference: { wkid: 4326 } });
+        const stale = planLayer.graphics.filter((graphic) => graphic.attributes?.focusParcel).toArray();
+        if (stale.length) planLayer.removeMany(stale);
+        planLayer.add(new Graphic({
+          geometry: polygon,
+          attributes: { focusParcel: parcel.key || true },
+          symbol: new SimpleFillSymbol({
+            color: [250, 204, 21, 0.28],
+            outline: { color: [202, 138, 4, 1], width: 3 },
+          }),
+        }));
+        view.goTo(polygon.extent.expand(2.2), { duration: 600 }).catch(() => {});
+      };
       const clearPlan = () => {
         planSettled = false;
         dragIndex = -1;
         dragVertices = null;
+        dragStartVertices = null;
+        dragOrigin = null;
         planLayer.removeAll();
       };
       const setPavementMode = (on, onPick) => {
@@ -1620,7 +1834,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, clearPlan, clearMeasure, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, paintRivers, focusPlanParcel, showRivers, showBuildings, loadAreaRivers, clearAreaRivers, clearPlan, clearMeasure, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -2046,6 +2260,37 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
   useEffect(() => {
     api.current?.setParcels?.(planning);
   }, [planning, ready]);
+  useEffect(() => {
+    const bag = api.current;
+    if (!bag?.loadAreaRivers) return undefined;
+    if (!rivers) {
+      bag.clearAreaRivers?.();
+      bag.showRivers?.(false);
+      return undefined;
+    }
+    const groups = [route?.vertices, planVertices].filter((path) => (path || []).filter((point) => point?.length === 2).length >= 2);
+    if (!groups.length) {
+      bag.clearAreaRivers?.();
+      return undefined;
+    }
+    const timer = window.setTimeout(() => bag.loadAreaRivers(groups), 300);
+    return () => window.clearTimeout(timer);
+  }, [rivers, route, planVertices, ready]);
+  useEffect(() => {
+    let stop = false;
+    const bag = api.current;
+    if (!bag?.showBuildings) return undefined;
+    if (!buildings) {
+      bag.showBuildings(false);
+      return undefined;
+    }
+    signInToLrs().then(({ token }) => {
+      if (!stop) bag.showBuildings(true, token);
+    }).catch(() => {
+      if (!stop) bag.showBuildings(false);
+    });
+    return () => { stop = true; };
+  }, [buildings, ready]);
 
   useEffect(() => {
     const bag = api.current;

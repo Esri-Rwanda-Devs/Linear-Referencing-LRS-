@@ -43,6 +43,78 @@ export function insertOnPath(vertices, point, maxM = 18) {
   return next;
 }
 
+/** Where the straight line through origin and end meets a road segment. */
+function lineMeetsSegment(origin, end, start, stop) {
+  const rx = end[0] - origin[0];
+  const ry = end[1] - origin[1];
+  const sx = stop[0] - start[0];
+  const sy = stop[1] - start[1];
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-14) return null;
+  const qx = start[0] - origin[0];
+  const qy = start[1] - origin[1];
+  const along = (qx * sy - qy * sx) / denom;
+  const across = (qx * ry - qy * rx) / denom;
+  if (across < -1e-6 || across > 1 + 1e-6) return null;
+  return [origin[0] + along * rx, origin[1] + along * ry];
+}
+
+/** Move only the end of the reserve onto the road, along the direction it was drawn. */
+export function attachEndOnRoad(vertices, roadVertices) {
+  if (!vertices || vertices.length < 2 || !roadVertices || roadVertices.length < 2) return vertices || [];
+  const origin = vertices[vertices.length - 2];
+  const end = vertices[vertices.length - 1];
+  if (lineLengthM(origin, end) < 0.5) return vertices;
+  let best = null;
+  for (let index = 0; index < roadVertices.length - 1; index += 1) {
+    const point = lineMeetsSegment(origin, end, roadVertices[index], roadVertices[index + 1]);
+    if (!point) continue;
+    const distance = lineLengthM(end, point);
+    if (!best || distance < best.distance) best = { distance, point };
+  }
+  if (!best) return vertices;
+  const next = vertices.map((point) => [point[0], point[1]]);
+  next[next.length - 1] = best.point;
+  return next;
+}
+
+/** The part of the road between the new reserve's start and end, so the reserve lies on the road. */
+export function alignOverRoad(vertices, roadVertices) {
+  if (!vertices || vertices.length < 2 || !roadVertices || roadVertices.length < 2) return null;
+  const from = locateOnPath(roadVertices, vertices[0]);
+  const to = locateOnPath(roadVertices, vertices[vertices.length - 1]);
+  if (!from || !to || Math.abs(from.along - to.along) < 1) return null;
+  const forward = from.along <= to.along;
+  const start = forward ? from : to;
+  const end = forward ? to : from;
+  const path = [[start.point[0], start.point[1]]];
+  for (let index = start.index + 1; index <= end.index; index += 1) path.push([roadVertices[index][0], roadVertices[index][1]]);
+  if (lineLengthM(path[path.length - 1], end.point) > 0.5) path.push([end.point[0], end.point[1]]);
+  const cleaned = path.filter((point, index) => index === 0 || lineLengthM(path[index - 1], point) >= 0.5);
+  if (cleaned.length < 2) return null;
+  return forward ? cleaned : cleaned.reverse();
+}
+
+function locateOnPath(vertices, point) {
+  if (!vertices || vertices.length < 2 || !point) return null;
+  let best = null;
+  let travelled = 0;
+  for (let index = 0; index < vertices.length - 1; index += 1) {
+    const start = vertices[index];
+    const end = vertices[index + 1];
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const length2 = dx * dx + dy * dy || 1e-12;
+    const t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2));
+    const projected = [start[0] + dx * t, start[1] + dy * t];
+    const distance = lineLengthM(projected, point);
+    const along = travelled + lineLengthM(start, projected);
+    if (!best || distance < best.distance) best = { distance, point: projected, index, along };
+    travelled += lineLengthM(start, end);
+  }
+  return best;
+}
+
 /** Pull a point onto the road. Ends are always attached; other points attach only when they are already near the road. */
 export function snappedRoadPoint(roadVertices, point, { force = false, snapM = 80 } = {}) {
   const near = closestOnPath(roadVertices, point);

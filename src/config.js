@@ -318,7 +318,7 @@ export const LRS_LAYER_DEFS = [
 /** Hosted district cadastral layers. Each service is `{name}/FeatureServer/0`. */
 export const PARCELS_ROOT =
   "https://services7.arcgis.com/htgaiKX6RV2DDGgK/ArcGIS/rest/services";
-export const PARCEL_MIN_SCALE = 20000;
+export const PARCEL_MIN_SCALE = 80000;
 export const PARCEL_SERVICES = [
   "Bugesera_Parcels",
   "Burera_Parcels",
