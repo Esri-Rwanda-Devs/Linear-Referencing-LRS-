@@ -88,7 +88,16 @@ const readProofFile = (file) =>
     reader.onerror = () => reject(new Error("Could not read that file."));
     reader.readAsDataURL(file);
   });
-function StatusProofModal({ open, parcelLabel, status, files, error, onFiles, onConfirm, onClose }) {
+function StatusProofModal({
+  open,
+  parcelLabel,
+  status,
+  files,
+  error,
+  onFiles,
+  onConfirm,
+  onClose,
+}) {
   const [present, setPresent] = useState(open);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -118,7 +127,9 @@ function StatusProofModal({ open, parcelLabel, status, files, error, onFiles, on
         <h2 id="rr-status-proof-title">Attach proof of documents</h2>
         <p>
           Change <b>{parcelLabel}</b> to <b>{status}</b>
-          {needsProof ? ". Attach at least one proof document." : ". Proof is optional."}
+          {needsProof
+            ? ". Attach at least one proof document."
+            : ". Proof is optional."}
         </p>
         <label>
           Proof documents
@@ -775,7 +786,10 @@ function statusClass(status) {
 function printComparison(options, note) {
   const list = options || [];
   const head = list
-    .map((option, index) => `<th>${letterOf(index)} · ${escHtml(option.label)}</th>`)
+    .map(
+      (option, index) =>
+        `<th>${letterOf(index)} · ${escHtml(option.label)}</th>`,
+    )
     .join("");
   const sketchRow = list
     .map(
@@ -811,7 +825,8 @@ function printComparison(options, note) {
   document.body.appendChild(frame);
   const page = frame.contentWindow;
   page.document.open();
-  page.document.write(`<!DOCTYPE html><html><head><title>Alignment comparison</title>
+  page.document
+    .write(`<!DOCTYPE html><html><head><title>Alignment comparison</title>
     <style>
       body{font-family:Segoe UI,sans-serif;margin:24px;color:#0f172a}
       h1{margin:0 0 6px;font-size:22px}
@@ -841,7 +856,7 @@ function printComparison(options, note) {
         <tr><th>Alignment image</th>${sketchRow}</tr>
       </thead>
       <tbody>${body}</tbody>
-    </table>
+      </table>
     ${note ? `<h2>Decision notes</h2><p>${escHtml(note)}</p>` : ""}
     </body></html>`);
   page.document.close();
@@ -1107,15 +1122,15 @@ export default function CostPlan({
   const confirmStatusChange = () => {
     if (!statusDraft) return;
     if (PROOF_STATUSES.has(statusDraft.status) && statusProofs.length === 0) {
-      setStatusProofError("Attach at least one proof document for this status.");
+      setStatusProofError(
+        "Attach at least one proof document for this status.",
+      );
       return;
     }
     onParcelStatus?.(statusDraft.key, statusDraft.status, statusProofs);
     closeStatusProof();
   };
-  const selectedProofs = selected
-    ? parcelProofs?.[selected.key] || []
-    : [];
+  const selectedProofs = selected ? parcelProofs?.[selected.key] || [] : [];
   const alignment =
     options.find((option) => option.id === activeId)?.vertices ||
     vertices ||
@@ -1302,7 +1317,11 @@ export default function CostPlan({
                 </button>
               </div>
               {vertexMode && (
-                <div className="rr-vertex-modes" role="group" aria-label="Vertex edit mode">
+                <div
+                  className="rr-vertex-modes"
+                  role="group"
+                  aria-label="Vertex edit mode"
+                >
                   <button
                     type="button"
                     className={vertexMode === "continue" ? "on" : ""}
@@ -1737,7 +1756,10 @@ export default function CostPlan({
                 disabled={!sourceParcels.length}
                 onClick={exportCurrent}
               >
-                <assetIcons.ExcelLogo className="file-logo" aria-hidden="true" />
+                <assetIcons.ExcelLogo
+                  className="file-logo"
+                  aria-hidden="true"
+                />
                 <span>Excel</span>
               </button>
             </div>
@@ -2889,8 +2911,9 @@ export default function CostPlan({
         parcelLabel={
           statusDraft
             ? parcelCode(
-                sourceParcels.find((parcel) => parcel.key === statusDraft.key) ||
-                  { key: statusDraft.key },
+                sourceParcels.find(
+                  (parcel) => parcel.key === statusDraft.key,
+                ) || { key: statusDraft.key },
               )
             : ""
         }

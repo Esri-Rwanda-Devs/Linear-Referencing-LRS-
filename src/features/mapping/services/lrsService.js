@@ -168,7 +168,7 @@ export async function signOutOfLrs() {
   setLoginRequired(true);
 }
 
-function loadModules(names) {
+export function loadModules(names) {
   return new Promise((resolve, reject) => {
     const run = () => window.require(names, (...mods) => resolve(mods), reject);
     if (window.require) run();
@@ -497,11 +497,11 @@ async function queryPages(layerId, params, pageCap = 8, service = LRS) {
   return features;
 }
 
-async function queryRaw(layerId, params, service = LRS) {
+async function queryRaw(layerId, params, service = LRS, timeoutMs = 20000) {
   const { token } = await signInToLrs();
   const query = new URLSearchParams({ f: "json", token, ...params });
   const response = await fetch(`${devUrl(service)}/${layerId}/query?${query}`, {
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Query failed ${response.status}`);
   const data = await response.json();
@@ -947,6 +947,177 @@ export async function groupOverviewTypes(levelId, areaName) {
   );
 }
 
+/** Field map for overview FeatureLayers: boundary fields + optional type field. */
+export async function loadOverviewFields() {
+  const layers = LRS_LAYER_DEFS.filter(
+    (def) => def.kind === "point" || def.kind === "line",
+  );
+  const entries = await Promise.all(
+    layers.map(async (def) => {
+      try {
+        const meta = await layerMeta(def.id, def.service || LRS);
+        const boundary = {};
+        for (const level of BOUNDARY_LEVELS) {
+          const name = fieldNamed(meta, level.pattern);
+          if (!name) continue;
+          const type =
+            (meta.fields || []).find((field) => field.name === name)?.type || "";
+          boundary[level.id] = { name, type };
+        }
+        const value = valueFieldOf(meta, def);
+        return [
+          def.id,
+          {
+            boundary,
+            value: value ? { name: value.name, type: value.type || "" } : null,
+            route: Boolean(def.route),
+          },
+        ];
+      } catch {
+        return [
+          def.id,
+          { boundary: {}, value: null, route: Boolean(def.route) },
+        ];
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
+/** Build a definitionExpression for overview map filters. */
+export function overviewWhere(spec, boundary, typeNeedle = "") {
+  const parts = [];
+  const levelId = boundary?.id || "";
+  const areaName = boundary?.name || "";
+  if (levelId && areaName) {
+    const field = spec?.boundary?.[levelId];
+    // Layers without a matching admin field still stay visible; the map
+    // applies a spatial filter against the selected boundary polygon.
+    if (field?.name) parts.push(whereEquals(field.name, areaName, field.type));
+  }
+  const needle = String(typeNeedle || "").trim().toLowerCase();
+  if (needle && spec?.value?.name) {
+    const safe = String(spec.value.name).replace(/[^A-Za-z0-9_]/g, "");
+    if (safe) {
+      const text = needle.replace(/'/g, "''");
+      parts.push(`LOWER(${safe}) LIKE '%${text}%'`);
+    }
+  }
+  return { hide: false, where: parts.length ? parts.join(" AND ") : null };
+}
+
+/** Admin FeatureServer layer ids for drawing and spatial filters. */
+export const ADMIN_BOUNDARY_LAYERS = {
+  province: 2,
+  district: 1,
+  sector: 3,
+  cell: 0,
+  village: 4,
+};
+
+const ADMIN_NAME_FIELDS = {
+  province: ["province", "province_name", "province_en"],
+  district: ["district", "district_name"],
+  sector: ["sector", "sector_name"],
+  cell: ["cell", "cell_name"],
+  village: ["village", "village_name"],
+};
+
+async function adminNameField(levelId, layerId) {
+  const meta = await getJson(`${ADMIN}/${layerId}`);
+  const wanted = ADMIN_NAME_FIELDS[levelId] || [];
+  for (const name of wanted) {
+    const hit = (meta.fields || []).find(
+      (field) => field.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (hit) return { name: hit.name, type: hit.type || "" };
+  }
+  const fallback = (meta.fields || []).find((field) =>
+    new RegExp(`^${levelId}(_name)?$`, "i").test(field.name),
+  );
+  return fallback
+    ? { name: fallback.name, type: fallback.type || "" }
+    : null;
+}
+
+/** Geographic extent for the selected admin boundary (WGS84). */
+export async function loadBoundaryExtent(level, areaName) {
+  if (!level?.field || !areaName) return null;
+  const data = await queryBoundary({
+    where: whereEquals(level.field, areaName, level.type),
+    returnExtentOnly: "true",
+    returnGeometry: "false",
+    outSR: "4326",
+  });
+  const extent = data.extent;
+  if (
+    !extent ||
+    ![extent.xmin, extent.ymin, extent.xmax, extent.ymax].every(Number.isFinite)
+  ) {
+    return null;
+  }
+  return {
+    xmin: extent.xmin,
+    ymin: extent.ymin,
+    xmax: extent.xmax,
+    ymax: extent.ymax,
+    spatialReference: extent.spatialReference || { wkid: 4326 },
+  };
+}
+
+/** Polygon geometry for the selected admin boundary (WGS84 rings). */
+export async function loadBoundaryGeometry(level, areaName) {
+  if (!level?.id || !areaName) return null;
+  const layerId = ADMIN_BOUNDARY_LAYERS[level.id];
+  if (layerId == null) {
+    const data = await queryBoundary({
+      where: whereEquals(level.field, areaName, level.type),
+      returnGeometry: "true",
+      outFields: level.field,
+      outSR: "4326",
+      resultRecordCount: "2000",
+    });
+    const rings = (data.features || [])
+      .map((feature) => feature.geometry?.rings)
+      .filter((item) => item?.length);
+    if (!rings.length) return null;
+    return {
+      rings: rings.flat(),
+      spatialReference: { wkid: 4326 },
+      extent: data.features?.[0]?.geometry
+        ? null
+        : await loadBoundaryExtent(level, areaName),
+    };
+  }
+  const field = await adminNameField(level.id, layerId);
+  if (!field) return null;
+  const { token } = await signInToLrs();
+  const query = new URLSearchParams({
+    f: "json",
+    token,
+    where: whereEquals(field.name, areaName, field.type),
+    returnGeometry: "true",
+    outFields: field.name,
+    outSR: "4326",
+    resultRecordCount: "50",
+  });
+  const response = await fetch(
+    `${devUrl(ADMIN)}/${layerId}/query?${query}`,
+    { signal: AbortSignal.timeout(10000) },
+  );
+  if (!response.ok) throw new Error(`Query failed ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || "Query failed");
+  const rings = (data.features || [])
+    .map((feature) => feature.geometry?.rings)
+    .filter((item) => item?.length);
+  if (!rings.length) return null;
+  return {
+    rings: rings.flat(),
+    spatialReference: { wkid: 4326 },
+  };
+}
+
 /** Counts and grouped values for the overview page. One light query per layer. */
 export async function loadOverview() {
   const layers = LRS_LAYER_DEFS.filter(
@@ -979,16 +1150,14 @@ export async function loadOverview() {
           }
         }
         return { ...base, count, groups, splitField, error: "" };
-      } catch (error) {
-        const message = /abort/i.test(error.message || "")
-          ? "Timed out"
-          : error.message || "Could not count this layer.";
+      } catch {
+        // Keep the card visible without error text; Overview shows a loader instead.
         return {
           ...base,
           count: null,
           groups: [],
           splitField: "",
-          error: message,
+          error: "",
         };
       }
     }),

@@ -297,7 +297,6 @@ export default function App() {
   const [printing, setPrinting] = useState(false);
   const segmentStartRef = useRef(null);
   segmentStartRef.current = segmentStart;
-  const [parcelsOn, setParcelsOn] = useState(true);
   const [planDraw, setPlanDraw] = useState(false);
   const [planMeasure, setPlanMeasure] = useState(false);
   const [planEdit, setPlanEdit] = useState(false);
@@ -310,9 +309,77 @@ export default function App() {
   const [contingencyPct, setContingencyPct] = useState(10);
   const [reserveSection, setReserveSection] = useState("budget");
   const [planSnap, setPlanSnap] = useState(false);
-  const [aerialOn, setAerialOn] = useState(true);
-  const [riversOn, setRiversOn] = useState(true);
-  const [buildingsOn, setBuildingsOn] = useState(true);
+  const defaultHiddenLayers = () =>
+    LRS_LAYER_DEFS.filter((layer) => !layer.route && !layer.visible).map(
+      (layer) => layer.id,
+    );
+  const mapTabKey =
+    viewMode === "edit"
+      ? "edit"
+      : viewMode === "cost"
+        ? "cost"
+        : viewMode === "pavement"
+          ? "pavement"
+          : "analyse";
+  const [mapLayersByTab, setMapLayersByTab] = useState(() => {
+    const hidden = defaultHiddenLayers();
+    return {
+      analyse: { hidden: [...hidden], aerial: true },
+      edit: { hidden: [...hidden], aerial: true },
+      cost: {
+        hidden: [...hidden],
+        aerial: true,
+        parcels: true,
+        rivers: true,
+        buildings: true,
+      },
+      pavement: { hidden: [...hidden], aerial: true },
+    };
+  });
+  const tabMap = mapLayersByTab[mapTabKey] || mapLayersByTab.analyse;
+  const hiddenLayerIds = tabMap.hidden || [];
+  const aerialOn = tabMap.aerial !== false;
+  const parcelsOn = tabMap.parcels !== false;
+  const riversOn = tabMap.rivers !== false;
+  const buildingsOn = tabMap.buildings !== false;
+  const patchTabMap = (patch) => {
+    setMapLayersByTab((current) => {
+      const previous = current[mapTabKey] || current.analyse;
+      const nextPatch =
+        typeof patch === "function" ? patch(previous) : patch;
+      return {
+        ...current,
+        [mapTabKey]: { ...previous, ...nextPatch },
+      };
+    });
+  };
+  const setHiddenLayerIds = (updater) => {
+    patchTabMap((previous) => ({
+      hidden:
+        typeof updater === "function" ? updater(previous.hidden || []) : updater,
+    }));
+  };
+  const setParcelsOn = (updater) => {
+    patchTabMap((previous) => ({
+      parcels: typeof updater === "function" ? updater(Boolean(previous.parcels !== false)) : updater,
+    }));
+  };
+  const setRiversOn = (updater) => {
+    patchTabMap((previous) => ({
+      rivers: typeof updater === "function" ? updater(Boolean(previous.rivers !== false)) : updater,
+    }));
+  };
+  const setBuildingsOn = (updater) => {
+    patchTabMap((previous) => ({
+      buildings:
+        typeof updater === "function" ? updater(Boolean(previous.buildings !== false)) : updater,
+    }));
+  };
+  const setAerialOn = (updater) => {
+    patchTabMap((previous) => ({
+      aerial: typeof updater === "function" ? updater(Boolean(previous.aerial !== false)) : updater,
+    }));
+  };
   const [parcelStatus, setParcelStatus] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-status") || "{}");
@@ -359,11 +426,11 @@ export default function App() {
     compensation: compensationPct,
     contingency: contingencyPct,
   };
-  const [hiddenLayerIds, setHiddenLayerIds] = useState(() =>
-    LRS_LAYER_DEFS.filter((layer) => !layer.route && !layer.visible).map(
-      (layer) => layer.id,
-    ),
-  );
+  useEffect(() => {
+    const view = mapApi.current?.view;
+    if (!view?.map) return;
+    view.map.basemap = aerialOn ? "satellite" : "gray-vector";
+  }, [mapTabKey, aerialOn]);
   useEffect(() => {
     try {
       localStorage.setItem("rwanda-lrs-cost-projects", JSON.stringify({

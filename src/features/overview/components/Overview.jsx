@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { assetIcons } from "../../../assets";
-import { VALUE_COLORS } from "../../../config";
+import { LRS_LAYER_DEFS, VALUE_COLORS } from "../../../config";
 import { iconUrl } from "../../mapping/icons";
 import {
   countOverviewArea,
@@ -9,10 +9,26 @@ import {
   loadBoundaryLevels,
   loadOverview,
 } from "../../mapping/services/lrsService";
+import OverviewMap from "./OverviewMap";
 import "./Overview.css";
 
 const numberText = (value) =>
   Number.isFinite(value) ? value.toLocaleString() : "—";
+
+const PLACEHOLDER_ROWS = LRS_LAYER_DEFS.filter(
+  (def) => def.kind === "point" || def.kind === "line",
+).map((def) => ({
+  id: def.id,
+  title: def.title,
+  kind: def.kind,
+  group: def.group,
+  swatch: def.swatch,
+  shape: def.shape,
+  route: Boolean(def.route),
+  count: null,
+  groups: [],
+  error: "",
+}));
 
 const POINT_RANK = [
   "Bridges",
@@ -83,7 +99,7 @@ function niceStep(max) {
   return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power;
 }
 
-function LengthChart({ title, items, loading, caption, mark }) {
+function LengthChart({ title, items, loading, mark }) {
   const measured = items.filter((item) => Number.isFinite(item.km));
   const max = Math.max(0, ...measured.map((item) => item.km));
   const step = niceStep(max || 1);
@@ -100,14 +116,11 @@ function LengthChart({ title, items, loading, caption, mark }) {
         </span>
         <b>{measured.length ? `${kmText(total)} km` : ""}</b>
       </header>
-      {caption && <em>{caption}</em>}
-      {loading && <p className="ov-empty">Measuring…</p>}
-      {!loading && !measured.length && (
-        <p className="ov-empty">
-          {items.length
-            ? "Length is not available for this layer."
-            : "No types match the filters."}
-        </p>
+      {loading && (
+        <div className="ov-chart-loading" role="status">
+          <span className="ov-spinner" aria-hidden="true" />
+          <span>Loading lengths…</span>
+        </div>
       )}
       {!loading && measured.length > 0 && (
         <div className="ov-chart-body">
@@ -142,6 +155,9 @@ function LengthChart({ title, items, loading, caption, mark }) {
           </div>
         </div>
       )}
+      {!loading && !measured.length && (
+        <p className="ov-empty">No length data for this filter yet.</p>
+      )}
     </article>
   );
 }
@@ -156,7 +172,7 @@ function CardMark({ item }) {
   return <i style={{ background: item?.swatch }} />;
 }
 
-function CountCard({ item, count, caption, loading }) {
+function CountCard({ item, count, loading }) {
   return (
     <article className="ov-asset ov-compact">
       <header>
@@ -164,14 +180,12 @@ function CountCard({ item, count, caption, loading }) {
         <span>{item.title}</span>
       </header>
       <strong>{loading ? "…" : numberText(count)}</strong>
-      <em>{caption}</em>
-      {item.error && <p className="ov-empty">{item.error}</p>}
     </article>
   );
 }
 
 export default function Overview({ query = "", onQuery }) {
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState(PLACEHOLDER_ROWS);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState("all");
@@ -183,15 +197,27 @@ export default function Overview({ query = "", onQuery }) {
   const [areaCounts, setAreaCounts] = useState(null);
   const [areaLoading, setAreaLoading] = useState(false);
   const [typeGroups, setTypeGroups] = useState(null);
+  const [muted, setMuted] = useState([]);
 
   useEffect(() => {
     let dead = false;
     loadOverview()
       .then((result) => {
-        if (!dead) setRows(result || []);
+        if (dead) return;
+        const byId = new Map((result || []).map((item) => [item.id, item]));
+        // Keep every layer card visible from the start; fill in live counts.
+        setRows(
+          PLACEHOLDER_ROWS.map((placeholder) => {
+            const live = byId.get(placeholder.id);
+            return live ? { ...placeholder, ...live } : placeholder;
+          }),
+        );
       })
       .catch((reason) => {
-        if (!dead) setError(reason.message || "Could not load the overview.");
+        if (!dead) {
+          setError(reason.message || "Could not load the overview.");
+          setRows(PLACEHOLDER_ROWS);
+        }
       })
       .finally(() => {
         if (!dead) setLoading(false);
@@ -333,6 +359,15 @@ export default function Overview({ query = "", onQuery }) {
   const shownPoints = scope === "line" ? [] : points.filter(matches);
   const shownLines = scope === "point" ? [] : lines.filter(matches);
   const place = active ? selected[active.id] : "";
+  const boundary = active
+    ? {
+        id: active.id,
+        name: selected[active.id],
+        field: active.field,
+        type: active.type,
+        label: active.label,
+      }
+    : null;
 
   const figure = (item) => {
     if (!active) return item.count;
@@ -372,81 +407,64 @@ export default function Overview({ query = "", onQuery }) {
   return (
     <section className="overview">
       <header className="ov-head">
-        <div>
-          <p>Overview</p>
-          <h2>Network statistics</h2>
-        </div>
-        <span>
-          {loading
-            ? "Counting layers…"
-            : error ||
-              boundaryNote ||
-              (areaLoading
-                ? `Counting ${place}…`
-                : "Choose a province to open the next boundary.")}
-        </span>
+       
+       
       </header>
       <div className="ov-toolbar">
-        <div className="ov-filter">
+        <label className="ov-filter ov-scope">
           <span>Show</span>
-          <div>
-            {[
-              ["all", "All"],
-              ["point", "Point assets"],
-              ["line", "Line events"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={scope === id ? "on" : ""}
-                onClick={() => setScope(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+          <select
+            value={scope}
+            aria-label="Show assets"
+            onChange={(event) => setScope(event.target.value)}
+          >
+            <option value="all">All</option>
+            <option value="point">Point assets</option>
+            <option value="line">Line events</option>
+          </select>
+        </label>
         <label className="ov-filter ov-search">
           <span>Search</span>
           <input
             value={query}
-            placeholder="Bridges, cameras, paved, divided…"
+            placeholder="Search…"
             onChange={(event) => onQuery?.(event.target.value)}
           />
         </label>
-        <div className="ov-cascade">
-          {levels.map((level, index) => {
-            const previous = levels[index - 1];
-            const enabled =
-              index === 0 || Boolean(previous && selected[previous.id]);
-            return (
-              <label key={level.id} className={enabled ? "" : "is-off"}>
-                <span>{level.label}</span>
-                <select
-                  value={selected[level.id] || ""}
-                  disabled={!enabled}
-                  onChange={(event) => choose(index, event.target.value)}
-                >
-                  <option value="">
-                    {loadingKey === level.id
-                      ? "Loading…"
-                      : `All ${plural(level.label)}`}
+        {levels.map((level, index) => {
+          const previous = levels[index - 1];
+          const enabled =
+            index === 0 || Boolean(previous && selected[previous.id]);
+          return (
+            <label
+              key={level.id}
+              className={`ov-filter ov-bound${enabled ? "" : " is-off"}`}
+            >
+              <span>{level.label}</span>
+              <select
+                value={selected[level.id] || ""}
+                disabled={!enabled}
+                onChange={(event) => choose(index, event.target.value)}
+              >
+                <option value="">
+                  {loadingKey === level.id
+                    ? "Loading…"
+                    : `All ${plural(level.label)}`}
+                </option>
+                {(choices[level.id] || []).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
-                  {(choices[level.id] || []).map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            );
-          })}
-        </div>
+                ))}
+              </select>
+            </label>
+          );
+        })}
       </div>
       <div className="ov-board">
         {(shownRoads || shownPoints.length > 0) && (
-          <section>
-            <h3>Assets</h3>
+          <section className="ov-points">
+            <h3>Point assets{place ? ` · ${place}` : ""}</h3>
             <div className="ov-small">
               {shownRoads && (
                 <CountCard
@@ -456,14 +474,7 @@ export default function Overview({ query = "", onQuery }) {
                       ? roads.count
                       : figure(roads)
                   }
-                  caption={
-                    figure(roads) == null && active
-                      ? "National route codes"
-                      : place
-                        ? `${place} route codes`
-                        : "TOTAL"
-                  }
-                  loading={areaLoading && Boolean(active)}
+                  loading={loading || (areaLoading && Boolean(active))}
                 />
               )}
               {shownPoints.map((item) => {
@@ -474,57 +485,55 @@ export default function Overview({ query = "", onQuery }) {
                     key={item.id}
                     item={item}
                     count={missing ? item.count : count}
-                    caption={missing ? "No boundary field" : place || "Total"}
-                    loading={areaLoading && Boolean(active)}
+                    loading={loading || (areaLoading && Boolean(active))}
                   />
                 );
               })}
             </div>
           </section>
         )}
-        {/* {shownLines.length > 0 && (
-          <section>
-            <h3>By type</h3>
-            <div className="ov-types">
-              {lineCards.map(({ item, count, missing, groups }) => {
-                return (
-                  <article key={item.id} className="ov-asset">
-                    <header>
-                      <i style={{ background: item.swatch }} />
-                      <span>{item.title}</span>
-                    </header>
-                    <strong>{areaLoading && active ? "…" : numberText(missing ? item.count : count)}</strong>
-                    <em>{missing ? "National types" : (place || "By type")}</em>
-                    {item.error && <p className="ov-empty">{item.error}</p>}
-                    {missing && <p className="ov-empty">This layer has no {active.label.toLowerCase()} field.</p>}
-                    <Bars items={groups} />
-                  </article>
-                );
-              })}
-            </div>
+        <div className="ov-main">
+          <section className="ov-map-section">
+            <h3>Asset map{place ? ` · ${place}` : ""}</h3>
+            <OverviewMap
+              scope={scope}
+              query={query}
+              rows={rows}
+              boundary={boundary}
+              muted={muted}
+              onToggle={(id) =>
+                setMuted((current) =>
+                  current.includes(id)
+                    ? current.filter((item) => item !== id)
+                    : [...current, id],
+                )
+              }
+            />
           </section>
-        )} */}
-        {lineCards.length > 0 && (
-          <section>
+          <section className="ov-lines">
             <h3>Length by type (km){place ? ` · ${place}` : ""}</h3>
             <div className="ov-charts">
-              {lineCards.map(({ item, groups, national }) => (
+              {(lineCards.length
+                ? lineCards
+                : PLACEHOLDER_ROWS.filter(
+                    (item) => item.kind === "line" && !item.route,
+                  ).map((item) => ({
+                    item,
+                    groups: [],
+                    national: false,
+                  }))
+              ).map(({ item, groups }) => (
                 <LengthChart
                   key={item.id}
                   title={item.title}
                   mark={item}
                   items={groups}
                   loading={loading || typesPending}
-                  caption={
-                    national
-                      ? `National · no ${active.label.toLowerCase()} field`
-                      : ""
-                  }
                 />
               ))}
             </div>
           </section>
-        )}
+        </div>
         {!loading &&
           !shownRoads &&
           shownPoints.length === 0 &&
@@ -532,6 +541,19 @@ export default function Overview({ query = "", onQuery }) {
             <p className="ov-empty">Nothing matches that filter.</p>
           )}
       </div>
+      {/* {(loading || areaLoading) && (
+        <div className="ov-loader" role="status" aria-live="polite">
+          <div className="ov-loader-card">
+            <span className="ov-spinner" aria-hidden="true" />
+            <p>{areaLoading ? `Loading ${place || "area"}…` : "Loading overview data…"}</p>
+            <span>
+              {error
+                ? "Some layers are still catching up."
+                : "Cards, map, and graphs stay visible while counts load."}
+            </span>
+          </div>
+        </div>
+      )} */}
     </section>
   );
 }
