@@ -565,13 +565,7 @@ export default function OverviewMap({
   return (
     <article className={`ov-asset ov-map-card${layersOpen ? " layers-open" : ""}`}>
       <div ref={host} className="ov-map" />
-      <div className="ov-map-hud">
-        <strong>Assets on the map</strong>
-        <span>
-          {note ||
-            `${visibleCount} layer${visibleCount === 1 ? "" : "s"} · clustered when zoomed out`}
-        </span>
-      </div>
+     
       <button
         type="button"
         className={`ov-layers-toggle${layersOpen ? " on" : ""}`}

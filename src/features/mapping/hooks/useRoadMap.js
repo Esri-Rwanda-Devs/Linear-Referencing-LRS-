@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
-import { distanceToPathM, insertOnPath, pathLengthM, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
+import { distanceToPathM, insertOnPath, pathLengthM, pointInRing, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents, signInToLrs } from "../services/lrsService";
 import { PMS_COLORS } from "../../pavement/pms";
@@ -1632,6 +1632,17 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (drawGeom?.rings) planLayer.add(new Graphic({ geometry: drawGeom, symbol: planBuildingFill }));
         });
         buildings.sort((a, b) => b.sqm - a.sqm);
+        // Link each footprint to the cadastral parcel that contains its center.
+        buildings.forEach((building) => {
+          if (!building.center) return;
+          const host = parcels.find(
+            (parcel) =>
+              parcel.ring?.length && pointInRing(building.center, parcel.ring),
+          );
+          if (!host) return;
+          building.upi = host.upi || host.parcelNumber || "";
+          building.parcelKey = host.key;
+        });
         const samplePoint = (geometry) => {
           if (!geometry) return null;
           if (geometry.longitude != null && geometry.latitude != null) return [geometry.longitude, geometry.latitude];

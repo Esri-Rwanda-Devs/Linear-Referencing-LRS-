@@ -493,7 +493,21 @@ function Switch({ on, disabled, label, onClick }) {
 function buildingOnParcel(parcel, building) {
   if (!parcel || !building) return false;
   if (parcel.upi && building.upi && parcel.upi === building.upi) return true;
+  if (building.parcelKey && parcel.key === building.parcelKey) return true;
   return Boolean(building.center && pointInRing(building.center, parcel.ring));
+}
+
+function parcelForBuilding(building, parcels) {
+  if (!building || !parcels?.length) return null;
+  if (building.parcelKey) {
+    const byKey = parcels.find((parcel) => parcel.key === building.parcelKey);
+    if (byKey) return byKey;
+  }
+  if (building.upi) {
+    const byUpi = parcels.find((parcel) => parcel.upi === building.upi);
+    if (byUpi) return byUpi;
+  }
+  return parcels.find((parcel) => buildingOnParcel(parcel, building)) || null;
 }
 
 function clipToReach(start, end, center, reach) {
@@ -1660,6 +1674,7 @@ export default function CostPlan({
                   <table className="rr-table">
                     <thead>
                       <tr>
+                        <th>Parcel ID</th>
                         <th>Building</th>
                         <th>Use</th>
                         <th>Footprint (m²)</th>
@@ -1670,32 +1685,48 @@ export default function CostPlan({
                     <tbody>
                       {!ready && (
                         <tr>
-                          <td colSpan={5}>
+                          <td colSpan={6}>
                             {busy
                               ? "Measuring…"
                               : "Draw and finish an alignment to price building footprints."}
                           </td>
                         </tr>
                       )}
-                      {buildingRows.map((building) => (
-                        <tr key={building.key}>
-                          <td>
-                            {building.name || building.use || "Building"}
-                            {building.near ? " · within 2 m" : ""}
-                          </td>
-                          <td>{building.use || "—"}</td>
-                          <td>
-                            {Math.round(
-                              building.footprint || building.sqm,
-                            ).toLocaleString()}
-                          </td>
-                          <td>{Math.round(building.sqm).toLocaleString()}</td>
-                          <td>{formatRwf(building.cost)}</td>
-                        </tr>
-                      ))}
+                      {buildingRows.map((building) => {
+                        const host = parcelForBuilding(building, parcels);
+                        return (
+                          <tr key={building.key}>
+                            <td>
+                              {host ? (
+                                <button
+                                  type="button"
+                                  className="link"
+                                  onClick={() => onShowParcel?.(host)}
+                                >
+                                  {parcelCode(host)}
+                                </button>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td>
+                              {building.name || building.use || "Building"}
+                              {building.near ? " · within 2 m" : ""}
+                            </td>
+                            <td>{building.use || "—"}</td>
+                            <td>
+                              {Math.round(
+                                building.footprint || building.sqm,
+                              ).toLocaleString()}
+                            </td>
+                            <td>{Math.round(building.sqm).toLocaleString()}</td>
+                            <td>{formatRwf(building.cost)}</td>
+                          </tr>
+                        );
+                      })}
                       {ready && buildings.length === 0 && (
                         <tr>
-                          <td colSpan={5}>{buildingGap(report)}</td>
+                          <td colSpan={6}>{buildingGap(report)}</td>
                         </tr>
                       )}
                     </tbody>
@@ -2382,6 +2413,7 @@ export default function CostPlan({
               <table className="rr-table">
                 <thead>
                   <tr>
+                    <th>Parcel ID</th>
                     <th>Structure</th>
                     <th>Use</th>
                     <th>Footprint (m²)</th>
@@ -2390,22 +2422,31 @@ export default function CostPlan({
                   </tr>
                 </thead>
                 <tbody>
-                  {(source?.buildings || []).map((building) => (
-                    <tr key={building.key}>
-                      <td>{building.name || building.use || "Building"}</td>
-                      <td>{building.use || "—"}</td>
-                      <td>
-                        {Math.round(
-                          building.footprint || building.sqm || 0,
-                        ).toLocaleString()}
-                      </td>
-                      <td>{Math.round(building.sqm || 0).toLocaleString()}</td>
-                      <td>{formatRwf(building.cost)}</td>
-                    </tr>
-                  ))}
+                  {(source?.buildings || []).map((building) => {
+                    const host = parcelForBuilding(
+                      building,
+                      sourceParcels || [],
+                    );
+                    return (
+                      <tr key={building.key}>
+                        <td>{host ? parcelCode(host) : "—"}</td>
+                        <td>{building.name || building.use || "Building"}</td>
+                        <td>{building.use || "—"}</td>
+                        <td>
+                          {Math.round(
+                            building.footprint || building.sqm || 0,
+                          ).toLocaleString()}
+                        </td>
+                        <td>
+                          {Math.round(building.sqm || 0).toLocaleString()}
+                        </td>
+                        <td>{formatRwf(building.cost)}</td>
+                      </tr>
+                    );
+                  })}
                   {(source?.buildings || []).length === 0 && (
                     <tr>
-                      <td colSpan={5}>{buildingGap(source)}</td>
+                      <td colSpan={6}>{buildingGap(source)}</td>
                     </tr>
                   )}
                 </tbody>
