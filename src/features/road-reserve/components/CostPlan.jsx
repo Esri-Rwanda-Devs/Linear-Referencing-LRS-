@@ -61,6 +61,13 @@ const millions = (value) =>
 const rwfM = (value) => `RWF ${millions(value)} M`;
 const parcelCode = (parcel) =>
   parcel.upi || parcel.parcelNumber || parcel.key || "Parcel";
+const sameLabel = (left, right) =>
+  String(left || "")
+    .trim()
+    .toLowerCase() ===
+  String(right || "")
+    .trim()
+    .toLowerCase();
 const readProofFile = (file) =>
   new Promise((resolve, reject) => {
     if (!file) {
@@ -510,20 +517,6 @@ function parcelForBuilding(building, parcels) {
   return parcels.find((parcel) => buildingOnParcel(parcel, building)) || null;
 }
 
-function clipToReach(start, end, center, reach) {
-  const steps = 20;
-  const kept = [];
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps;
-    const point = [
-      start[0] + (end[0] - start[0]) * t,
-      start[1] + (end[1] - start[1]) * t,
-    ];
-    if (lineLengthM(point, center) <= reach) kept.push(point);
-  }
-  return kept;
-}
-
 function pointToSegmentM(point, start, end) {
   const dx = end[0] - start[0];
   const dy = end[1] - start[1];
@@ -538,42 +531,135 @@ function pointToSegmentM(point, start, end) {
   return lineLengthM(point, [start[0] + dx * t, start[1] + dy * t]);
 }
 
-function riverThrough(path, guides, reach) {
-  if (!path || path.length < 2 || !guides?.length) return [];
-  const kept = [];
+function limitPoints(path, max = 48) {
+  if (!path || path.length <= max) return path || [];
+  const step = (path.length - 1) / (max - 1);
+  const out = [];
+  for (let index = 0; index < max; index += 1) {
+    out.push(path[Math.round(index * step)]);
+  }
+  return out;
+}
+
+/** Light densify — capped so the register diagram never freezes. */
+function densifyPath(path, stepM = 14, max = 56) {
+  if (!path || path.length < 2) return [];
+  const out = [[path[0][0], path[0][1]]];
   for (let index = 1; index < path.length; index += 1) {
     const start = path[index - 1];
     const end = path[index];
-    if (!guides.some((point) => pointToSegmentM(point, start, end) <= reach))
-      continue;
-    for (let step = 0; step <= 12; step += 1) {
-      const t = step / 12;
-      const point = [
+    const length = lineLengthM(start, end);
+    const steps = Math.max(1, Math.min(8, Math.ceil(length / stepM)));
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      out.push([
         start[0] + (end[0] - start[0]) * t,
         start[1] + (end[1] - start[1]) * t,
-      ];
-      if (!guides.some((guide) => lineLengthM(point, guide) <= reach)) continue;
-      const last = kept[kept.length - 1];
-      if (!last || last[0] !== point[0] || last[1] !== point[1])
-        kept.push(point);
+      ]);
+      if (out.length >= max) return out;
     }
   }
-  return kept;
+  return out;
 }
 
-function clipPath(path, center, reach) {
-  if (!path || path.length < 2 || !center) return [];
-  const kept = [];
-  for (let index = 1; index < path.length; index += 1) {
-    clipToReach(path[index - 1], path[index], center, reach).forEach(
-      (point) => {
-        const last = kept[kept.length - 1];
-        if (!last || last[0] !== point[0] || last[1] !== point[1])
-          kept.push(point);
-      },
-    );
+function chaikinSmooth(path, iterations = 2) {
+  let points = path;
+  for (let pass = 0; pass < iterations; pass += 1) {
+    if (points.length < 3) break;
+    const next = [points[0]];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const a = points[index];
+      const b = points[index + 1];
+      next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+      next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    next.push(points[points.length - 1]);
+    points = next;
   }
-  return kept;
+  return points;
+}
+
+/**
+ * Contiguous stretch of the alignment near the parcel (same order as the map).
+ * Keeps point count low; SVG Beziers handle visual smoothness.
+ */
+function extractCorridorNear(path, center, reachM) {
+  if (!path || path.length < 2 || !center) return [];
+  let best = 0;
+  let bestD = Infinity;
+  path.forEach((point, index) => {
+    const distance = lineLengthM(point, center);
+    if (distance < bestD) {
+      bestD = distance;
+      best = index;
+    }
+  });
+  const reach = Math.max(reachM, 40);
+  let lo = best;
+  let hi = best;
+  while (lo > 0 && lineLengthM(path[lo - 1], center) <= reach) lo -= 1;
+  while (hi < path.length - 1 && lineLengthM(path[hi + 1], center) <= reach)
+    hi += 1;
+  lo = Math.max(0, lo - 2);
+  hi = Math.min(path.length - 1, hi + 2);
+  const slice = path.slice(lo, hi + 1);
+  if (slice.length < 2) return densifyPath(path.slice(0, Math.min(path.length, 24)), 18, 32);
+  return limitPoints(chaikinSmooth(densifyPath(slice, 16, 40), 2), 40);
+}
+
+function nearestGuideM(point, guides) {
+  let best = Infinity;
+  for (let index = 0; index < guides.length; index += 1) {
+    const distance = lineLengthM(point, guides[index]);
+    if (distance < best) best = distance;
+  }
+  return best;
+}
+
+/** Contiguous river stretch near the parcel / local road. */
+function riverThrough(path, guides, reach) {
+  if (!path || path.length < 2 || !guides?.length) return [];
+  const source = limitPoints(path, 80);
+  let best = 0;
+  let bestD = Infinity;
+  source.forEach((point, index) => {
+    const distance = nearestGuideM(point, guides);
+    if (distance < bestD) {
+      bestD = distance;
+      best = index;
+    }
+  });
+  if (bestD > reach * 1.8) return [];
+  let lo = best;
+  let hi = best;
+  while (lo > 0 && nearestGuideM(source[lo - 1], guides) <= reach) lo -= 1;
+  while (hi < source.length - 1 && nearestGuideM(source[hi + 1], guides) <= reach)
+    hi += 1;
+  lo = Math.max(0, lo - 1);
+  hi = Math.min(source.length - 1, hi + 1);
+  return limitPoints(chaikinSmooth(source.slice(lo, hi + 1), 2), 36);
+}
+
+/** Catmull-Rom → cubic Bezier for a smooth SVG stroke. */
+function smoothPathD(screenPts) {
+  if (!screenPts || screenPts.length < 2) return "";
+  const fmt = (value) => value.toFixed(1);
+  if (screenPts.length === 2) {
+    return `M ${fmt(screenPts[0][0])} ${fmt(screenPts[0][1])} L ${fmt(screenPts[1][0])} ${fmt(screenPts[1][1])}`;
+  }
+  let d = `M ${fmt(screenPts[0][0])} ${fmt(screenPts[0][1])}`;
+  for (let index = 0; index < screenPts.length - 1; index += 1) {
+    const p0 = screenPts[Math.max(0, index - 1)];
+    const p1 = screenPts[index];
+    const p2 = screenPts[index + 1];
+    const p3 = screenPts[Math.min(screenPts.length - 1, index + 2)];
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C ${fmt(c1x)} ${fmt(c1y)}, ${fmt(c2x)} ${fmt(c2y)}, ${fmt(p2[0])} ${fmt(p2[1])}`;
+  }
+  return d;
 }
 
 function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
@@ -604,47 +690,60 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
     ),
     40,
   );
-  const focusReach = parcelSpan * 0.55;
-  const localRoad = clipPath(alignment, mid, Math.max(focusReach, 45));
+  const widthM = Number(width) || 20;
+  // Full alignment on every parcel (same continuous route as the map — not a chopped stub).
+  const fullRoad = limitPoints(
+    chaikinSmooth(densifyPath(alignment || [], 16, 72), 2),
+    56,
+  );
   const guides = ring.slice();
-  for (let index = 1; index < localRoad.length; index += 1) {
-    const start = localRoad[index - 1];
-    const end = localRoad[index];
-    for (let step = 0; step <= 8; step += 1) {
-      const t = step / 8;
+  // Sample the stretch of the full route nearest this parcel for river matching.
+  const focusReach = Math.max(parcelSpan * 1.2, 90) + widthM;
+  extractCorridorNear(alignment, mid, focusReach).forEach((point) =>
+    guides.push(point),
+  );
+  for (let index = 1; index < ring.length; index += 1) {
+    const start = ring[index - 1];
+    const end = ring[index];
+    for (let step = 1; step < 4; step += 1) {
+      const t = step / 4;
       guides.push([
         start[0] + (end[0] - start[0]) * t,
         start[1] + (end[1] - start[1]) * t,
       ]);
     }
   }
+  const riverReach = Math.max(focusReach, widthM + 55, 70);
   const localRivers = (rivers || [])
     .map((river) => ({
       ...river,
-      path: riverThrough(river.path, guides, Math.max(focusReach, 40)),
+      path: riverThrough(river.path, guides, riverReach),
     }))
     .filter((river) => river.path.length >= 2);
-  const minX = Math.min(...parcelXs);
-  const maxX = Math.max(...parcelXs);
-  const minY = Math.min(...parcelYs);
-  const maxY = Math.max(...parcelYs);
-  const padX = (maxX - minX || 0.0002) * 0.22;
-  const padY = (maxY - minY || 0.0002) * 0.22;
+  // Zoom to the parcel so it reads large; the full route still draws through the frame.
+  let minX = Math.min(...parcelXs);
+  let maxX = Math.max(...parcelXs);
+  let minY = Math.min(...parcelYs);
+  let maxY = Math.max(...parcelYs);
+  const halfDeg = widthM / 2 / 111320;
+  const padX = Math.max((maxX - minX || 0.0002) * 0.1, halfDeg * 0.9, 0.00005);
+  const padY = Math.max((maxY - minY || 0.0002) * 0.1, halfDeg * 0.9, 0.00005);
   const sx = (value) =>
-    18 + ((value - (minX - padX)) / (maxX - minX + padX * 2 || 1)) * 244;
+    10 + ((value - (minX - padX)) / (maxX - minX + padX * 2 || 1)) * 260;
   const sy = (value) =>
-    208 - ((value - (minY - padY)) / (maxY - minY + padY * 2 || 1)) * 188;
+    210 - ((value - (minY - padY)) / (maxY - minY + padY * 2 || 1)) * 198;
   const chain = (path) =>
     path
       .map((point) => `${sx(point[0]).toFixed(1)},${sy(point[1]).toFixed(1)}`)
       .join(" ");
   const close = (path) =>
     `${chain(path)} ${sx(path[0][0]).toFixed(1)},${sy(path[0][1]).toFixed(1)}`;
-  const metresAcross = lineLengthM([minX, mid[1]], [maxX, mid[1]]) || 1;
-  const band = Math.max(
-    10,
-    Math.min(28, ((Number(width) || 20) * 244) / metresAcross),
-  );
+  const toScreen = (path) =>
+    path.map((point) => [sx(point[0]), sy(point[1])]);
+  const roadD = fullRoad.length > 1 ? smoothPathD(toScreen(fullRoad)) : "";
+  const metresAcross =
+    lineLengthM([minX - padX, mid[1]], [maxX + padX, mid[1]]) || 1;
+  const band = Math.max(3.5, Math.min(10, (widthM * 140) / metresAcross));
   const crossed = parcel.distanceM != null && parcel.distanceM < 0.5;
   const beside = parcel.distanceM != null && parcel.distanceM >= 0.5;
   const recorded = Number(parcel.recordedSize);
@@ -672,10 +771,10 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
         role="img"
         aria-label="Parcel, reserve, river, and buildings"
       >
-        {localRoad.length > 1 && (
-          <polyline
+        {roadD && (
+          <path
             className="reserve"
-            points={chain(localRoad)}
+            d={roadD}
             strokeWidth={band.toFixed(1)}
           />
         )}
@@ -711,16 +810,15 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
             />
           );
         })}
-        {localRoad.length > 1 && (
-          <polyline className="center" points={chain(localRoad)} />
-        )}
+        {roadD && <path className="center" d={roadD} />}
         {localRivers.map((river) => {
           const path = river.path;
+          const riverD = smoothPathD(toScreen(path));
           const labelAt = path[Math.floor(path.length / 2)];
           return (
             <g key={river.key || river.name}>
-              <polyline className="river-halo" points={chain(path)} />
-              <polyline className="river" points={chain(path)} />
+              <path className="river-halo" d={riverD} />
+              <path className="river" d={riverD} />
               {labelAt && (
                 <text
                   className="river-name"
@@ -1003,8 +1101,11 @@ export default function CostPlan({
     </i>
   );
   const [scenarioName, setScenarioName] = useState("");
+  const [scenarioNameError, setScenarioNameError] = useState("");
+  const [renameError, setRenameError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
+  const [projectNameError, setProjectNameError] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [parcelPage, setParcelPage] = useState(0);
   const [buildingPage, setBuildingPage] = useState(0);
@@ -1072,32 +1173,92 @@ export default function CostPlan({
     seenSavePrompt.current = savePrompt;
     if (!ready) return;
     setScenarioName(`Scenario ${letterOf((options || []).length)}`);
+    setScenarioNameError("");
     setSaveOpen(true);
   }, [savePrompt, busy, ready]);
   const full = options.length >= 3;
   const closeProject = () => {
     setProjectOpen(false);
     setProjectDraft("");
+    setProjectNameError("");
   };
   const createProject = () => {
     const name = projectDraft.trim();
     if (!name) return;
+    if ((projects || []).some((project) => sameLabel(project.name, name))) {
+      setProjectNameError("Two projects cannot have the same name.");
+      return;
+    }
     if (projectId) onSelectProject("");
-    onCreateProject(name);
+    const created = onCreateProject(name);
+    if (created === false) {
+      setProjectNameError("Two projects cannot have the same name.");
+      return;
+    }
     closeProject();
   };
   const askToSave = () => {
     setScenarioName(
       (current) => current.trim() || `Scenario ${letterOf(options.length)}`,
     );
+    setScenarioNameError("");
     setSaveOpen(true);
   };
   const finishLine = () => onFinish();
   const confirmSave = () => {
     if (!projectId || full || busy || !ready || report?.error) return;
-    onKeep(scenarioName.trim() || `Scenario ${letterOf(options.length)}`);
+    const label =
+      scenarioName.trim() || `Scenario ${letterOf(options.length)}`;
+    if ((options || []).some((option) => sameLabel(option.label, label))) {
+      setScenarioNameError(
+        "Two scenarios in this project cannot have the same name.",
+      );
+      return;
+    }
+    const kept = onKeep(label);
+    if (kept === false) {
+      setScenarioNameError(
+        "Two scenarios in this project cannot have the same name.",
+      );
+      return;
+    }
     setScenarioName("");
+    setScenarioNameError("");
     setSaveOpen(false);
+  };
+  const commitScenarioRename = (id, nextLabel, input) => {
+    const label = String(nextLabel || "").trim();
+    const current = (options || []).find((option) => option.id === id);
+    if (!current) return;
+    if (!label) {
+      if (input) input.value = current.label || "";
+      setRenameError("Scenario name cannot be empty.");
+      return;
+    }
+    if (
+      (options || []).some(
+        (option) => option.id !== id && sameLabel(option.label, label),
+      )
+    ) {
+      if (input) input.value = current.label || "";
+      setRenameError(
+        "Two scenarios in this project cannot have the same name.",
+      );
+      return;
+    }
+    if (label === current.label) {
+      setRenameError("");
+      return;
+    }
+    const renamed = onRename?.(id, label);
+    if (renamed === false) {
+      if (input) input.value = current.label || "";
+      setRenameError(
+        "Two scenarios in this project cannot have the same name.",
+      );
+      return;
+    }
+    setRenameError("");
   };
   const exportCurrent = () => {
     const item = ready ? report : options[0]?.report;
@@ -1233,7 +1394,10 @@ export default function CostPlan({
               <button
                 type="button"
                 className="rr-btn solid"
-                onClick={() => setProjectOpen(true)}
+                onClick={() => {
+                  setProjectNameError("");
+                  setProjectOpen(true);
+                }}
               >
                 <assetIcons.Plus size={16} />
                 New project
@@ -1601,17 +1765,17 @@ export default function CostPlan({
                     </button>
                   </header>
                   <table className="rr-table">
-                    <thead>
-                      <tr>
+        <thead>
+          <tr>
                         <th>Parcel ID</th>
                         <th>Parcel area (m²)</th>
                         <th>Overlap with reserve</th>
                         <th>Building</th>
                         <th>Acquisition status</th>
                         <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
+          </tr>
+        </thead>
+        <tbody>
                       {!ready && (
                         <tr>
                           <td colSpan={6}>
@@ -1622,7 +1786,7 @@ export default function CostPlan({
                         </tr>
                       )}
                       {parcelRows.map((parcel) => (
-                        <tr key={parcel.key}>
+            <tr key={parcel.key}>
                           <td>
                             <button
                               type="button"
@@ -1653,10 +1817,10 @@ export default function CostPlan({
                               Open
                             </button>
                           </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            </tr>
+          ))}
+        </tbody>
+      </table>
                   <Pager
                     page={parcelAt}
                     pages={parcelPages}
@@ -1672,7 +1836,7 @@ export default function CostPlan({
                     <h3>Affected buildings ({ready ? buildings.length : 0})</h3>
                   </header>
                   <table className="rr-table">
-                    <thead>
+        <thead>
                       <tr>
                         <th>Parcel ID</th>
                         <th>Building</th>
@@ -1681,8 +1845,8 @@ export default function CostPlan({
                         <th>Affected (m²)</th>
                         <th>Price</th>
                       </tr>
-                    </thead>
-                    <tbody>
+        </thead>
+        <tbody>
                       {!ready && (
                         <tr>
                           <td colSpan={6}>
@@ -1695,7 +1859,7 @@ export default function CostPlan({
                       {buildingRows.map((building) => {
                         const host = parcelForBuilding(building, parcels);
                         return (
-                          <tr key={building.key}>
+            <tr key={building.key}>
                             <td>
                               {host ? (
                                 <button
@@ -1713,7 +1877,7 @@ export default function CostPlan({
                               {building.name || building.use || "Building"}
                               {building.near ? " · within 2 m" : ""}
                             </td>
-                            <td>{building.use || "—"}</td>
+              <td>{building.use || "—"}</td>
                             <td>
                               {Math.round(
                                 building.footprint || building.sqm,
@@ -1721,7 +1885,7 @@ export default function CostPlan({
                             </td>
                             <td>{Math.round(building.sqm).toLocaleString()}</td>
                             <td>{formatRwf(building.cost)}</td>
-                          </tr>
+            </tr>
                         );
                       })}
                       {ready && buildings.length === 0 && (
@@ -1729,8 +1893,8 @@ export default function CostPlan({
                           <td colSpan={6}>{buildingGap(report)}</td>
                         </tr>
                       )}
-                    </tbody>
-                  </table>
+        </tbody>
+      </table>
                   <Pager
                     page={buildingAt}
                     pages={buildingPages}
@@ -1850,7 +2014,7 @@ export default function CostPlan({
                   </div>
                 </div>
                 <table className="rr-table">
-                  <thead>
+        <thead>
                     <tr>
                       <th>Parcel ID</th>
                       <th>Owner</th>
@@ -1861,8 +2025,8 @@ export default function CostPlan({
                       <th>Date moved</th>
                       <th>Status</th>
                     </tr>
-                  </thead>
-                  <tbody>
+        </thead>
+        <tbody>
                     {registerSlice.map((parcel) => (
                       <tr
                         key={parcel.key}
@@ -1898,8 +2062,8 @@ export default function CostPlan({
                               : ""}
                           </span>
                         </td>
-                      </tr>
-                    ))}
+            </tr>
+          ))}
                     {registerRows.length === 0 && (
                       <tr>
                         <td colSpan={8}>
@@ -1909,8 +2073,8 @@ export default function CostPlan({
                         </td>
                       </tr>
                     )}
-                  </tbody>
-                </table>
+        </tbody>
+      </table>
                 <div className="rr-register-foot">
                   <span>
                     Showing{" "}
@@ -2273,7 +2437,7 @@ export default function CostPlan({
                         : status === "Paid, not moved"
                           ? "#d97706"
                           : "#94a3b8";
-                  return (
+  return (
                     <span
                       key={parcel.key}
                       style={{ flex: 1, background: color }}
@@ -2427,7 +2591,7 @@ export default function CostPlan({
                       building,
                       sourceParcels || [],
                     );
-                    return (
+  return (
                       <tr key={building.key}>
                         <td>{host ? parcelCode(host) : "—"}</td>
                         <td>{building.name || building.use || "Building"}</td>
@@ -2495,11 +2659,11 @@ export default function CostPlan({
                   ? `${(projects || []).find((project) => project.id === projectId)?.name || "Project"} · ${options.length} of 3 scenarios`
                   : "Compare alignments"}
               </h2>
-            </div>
+        </div>
             <div className="rr-actions">
               <button type="button" onClick={() => onSection("budget")}>
                 Add saved scenario
-              </button>
+          </button>
               <button
                 type="button"
                 disabled={!options.length}
@@ -2531,6 +2695,9 @@ export default function CostPlan({
                 project can hold 3 scenarios.
               </p>
             )}
+            {renameError ? (
+              <p className="rr-card rr-proof-error">{renameError}</p>
+            ) : null}
             <div className="rr-cards">
               {options.map((option, index) => (
                 <article
@@ -2541,10 +2708,22 @@ export default function CostPlan({
                   <header>
                     <input
                       aria-label={`Name for alignment ${letterOf(index)}`}
-                      value={option.label}
-                      onChange={(event) =>
-                        onRename(option.id, event.target.value)
-                      }
+                      defaultValue={option.label}
+                      key={`${option.id}:${option.label}`}
+                      onBlur={(event) => {
+                        event.stopPropagation();
+                        commitScenarioRename(
+                          option.id,
+                          event.target.value,
+                          event.target,
+                        );
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }
+                      }}
                       onClick={(event) => event.stopPropagation()}
                     />
                     {index === 0 && (
@@ -2572,7 +2751,7 @@ export default function CostPlan({
                 </article>
               ))}
             </div>
-            {options.length > 0 && (
+        {options.length > 0 && (
               <div className="rr-card">
                 <h3>Side-by-side comparison</h3>
                 <p className="rr-hint">
@@ -2746,7 +2925,7 @@ export default function CostPlan({
               <section className="rr-card">
                 <h3>Land rates by area</h3>
                 <table className="rr-table rr-mini">
-                  <tbody>
+              <tbody>
                     {[
                       ["urban", "Urban"],
                       ["rural", "Rural"],
@@ -2772,10 +2951,10 @@ export default function CostPlan({
                             }}
                           />
                         </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
               </section>
               <section className="rr-card">
                 <h3>Building rate</h3>
@@ -2863,14 +3042,14 @@ export default function CostPlan({
               </section>
             </div>
           </section>
-        </>
-      )}
+          </>
+        )}
       {busy && (
         <div className="rr-loader" role="status" aria-live="polite">
           <div className="rr-loader-card">
             <span className="rr-spinner" aria-hidden="true" />
             <p>Analyzing the reserve</p>
-          </div>
+              </div>
         </div>
       )}
       {saveOpen && (
@@ -2912,7 +3091,11 @@ export default function CostPlan({
                   value={scenarioName}
                   autoFocus
                   placeholder="Scenario name"
-                  onChange={(event) => setScenarioName(event.target.value)}
+                  aria-invalid={Boolean(scenarioNameError)}
+                  onChange={(event) => {
+                    setScenarioName(event.target.value);
+                    if (scenarioNameError) setScenarioNameError("");
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") confirmSave();
                     if (event.key === "Escape") setSaveOpen(false);
@@ -2920,6 +3103,9 @@ export default function CostPlan({
                 />
               </label>
             )}
+            {scenarioNameError ? (
+              <p className="rr-proof-error">{scenarioNameError}</p>
+            ) : null}
             <div className="rr-actions">
               <button type="button" onClick={() => setSaveOpen(false)}>
                 Not now
@@ -2928,7 +3114,10 @@ export default function CostPlan({
                 <button
                   type="button"
                   className="solid"
-                  onClick={() => setProjectOpen(true)}
+                  onClick={() => {
+                  setProjectNameError("");
+                  setProjectOpen(true);
+                }}
                 >
                   Create project
                 </button>
@@ -2943,7 +3132,7 @@ export default function CostPlan({
                   Save scenario
                 </button>
               )}
-            </div>
+              </div>
           </div>
         </div>
       )}
@@ -2969,7 +3158,11 @@ export default function CostPlan({
         open={projectOpen}
         name={projectDraft}
         note={projectId ? "The project that is open will be closed first." : ""}
-        onName={setProjectDraft}
+        error={projectNameError}
+        onName={(value) => {
+          setProjectDraft(value);
+          if (projectNameError) setProjectNameError("");
+        }}
         onCreate={createProject}
         onClose={closeProject}
       />

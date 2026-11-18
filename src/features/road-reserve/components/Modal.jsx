@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-function Modal({ open, name, onName, onCreate, onClose, note = "" }) {
+function Modal({ open, name, onName, onCreate, onClose, note = "", error = "" }) {
   const [present, setPresent] = useState(open);
   const [visible, setVisible] = useState(false);
   const [zone, setZone] = useState("urban");
@@ -36,6 +36,7 @@ function Modal({ open, name, onName, onCreate, onClose, note = "" }) {
             placeholder="Project name"
             value={name}
             autoFocus
+            aria-invalid={Boolean(error)}
             onChange={(event) => onName(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && name.trim()) onCreate();
@@ -43,6 +44,7 @@ function Modal({ open, name, onName, onCreate, onClose, note = "" }) {
             }}
           />
         </label>
+        {error ? <p className="rr-proof-error">{error}</p> : null}
         <label className="rr-label">
           Project Zone
           <select

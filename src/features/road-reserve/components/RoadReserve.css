@@ -258,16 +258,61 @@
 .rr-pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--color-text-muted); }
 .rr-pager button { border: 1px solid var(--color-control-border); border-radius: 8px; padding: 4px 10px; background: var(--color-input-bg); color: var(--color-text-strong); cursor: pointer; }
 .rr-pager button:disabled { opacity: 0.45; cursor: default; }
-.rr-scene { width: 100%; height: min(42vh, 360px); min-height: 260px; display: block; background: var(--color-surface-muted); border-radius: 8px; color: var(--color-text-strong); }
-.rr-scene polygon { fill: #fb923c; fill-opacity: 0.45; stroke: #c2410c; stroke-width: 1.5; }
-.rr-scene polygon.parcel.focus { fill: #f59e0b; fill-opacity: 0.62; stroke: #facc15; stroke-width: 3; }
-.rr-scene polygon.building, .rr-scene rect.building { fill: #991b1b; stroke: #fff; stroke-width: 1.5; }
-.rr-scene polyline { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
-.rr-scene polyline.reserve { stroke: #fdba74; stroke-opacity: 0.55; }
-.rr-scene polyline.river { stroke: #38bdf8; stroke-width: 4; }
-.rr-scene polyline.river-halo { stroke: #fff; stroke-width: 7; }
-.rr-scene text.river-name { fill: #7dd3fc; font-size: 11px; font-weight: 700; }
-.rr-scene polyline.center { stroke: currentColor; stroke-width: 2; stroke-dasharray: 7 5; }
+.rr-scene {
+  width: 100%;
+  height: min(42vh, 360px);
+  min-height: 260px;
+  display: block;
+  background: var(--color-surface-muted);
+  border-radius: 8px;
+  color: var(--color-text-strong);
+  overflow: hidden;
+}
+.rr-scene polygon {
+  fill: #fb923c;
+  fill-opacity: 0.22;
+  stroke: #c2410c;
+  stroke-width: 0.8;
+  stroke-opacity: 0.55;
+}
+.rr-scene polygon.parcel.focus {
+  fill: #f59e0b;
+  fill-opacity: 0.28;
+  stroke: #facc15;
+  stroke-width: 1.1;
+  stroke-opacity: 0.7;
+}
+.rr-scene polygon.building,
+.rr-scene rect.building {
+  fill: #991b1b;
+  fill-opacity: 0.45;
+  stroke: #fff;
+  stroke-width: 0.7;
+  stroke-opacity: 0.75;
+}
+.rr-scene polyline,
+.rr-scene path.reserve,
+.rr-scene path.center,
+.rr-scene path.river,
+.rr-scene path.river-halo {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.rr-scene path.reserve {
+  stroke: #fdba74;
+  stroke-opacity: 0.32;
+}
+.rr-scene path.river { stroke: #38bdf8; stroke-width: 2.2; stroke-opacity: 0.75; }
+.rr-scene path.river-halo { stroke: #fff; stroke-width: 4; stroke-opacity: 0.35; }
+.rr-scene text.river-name { fill: #7dd3fc; font-size: 11px; font-weight: 700; opacity: 0.85; }
+.rr-scene path.center {
+  stroke: currentColor;
+  stroke-width: 1.15;
+  stroke-opacity: 0.7;
+  stroke-dasharray: 5 4;
+}
 .rr-pass { margin: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rr-pass figcaption { margin-top: 8px; font-size: 13px; color: var(--color-text); }
 .rr-parcels { position: relative; display: flex; flex-direction: column; min-height: 140px; }

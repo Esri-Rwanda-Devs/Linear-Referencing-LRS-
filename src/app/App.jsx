@@ -1609,13 +1609,30 @@ export default function App() {
               projects={reserveProjects}
               projectId={reserveProjectId}
               onCreateProject={(name) => {
+                const trimmed = String(name || "").trim();
+                const taken = reserveProjects.some(
+                  (project) =>
+                    String(project.name || "")
+                      .trim()
+                      .toLowerCase() === trimmed.toLowerCase(),
+                );
+                if (taken) {
+                  setStatus("Two projects cannot have the same name.");
+                  return false;
+                }
                 const id = `project-${Date.now()}`;
                 setReserveProjects((current) => [
                   ...current,
-                  { id, name: name.trim() || `Project ${current.length + 1}`, note: "", scenarios: [] },
+                  {
+                    id,
+                    name: trimmed || `Project ${current.length + 1}`,
+                    note: "",
+                    scenarios: [],
+                  },
                 ]);
                 setReserveProjectId(id);
                 setPlanActive(null);
+                return true;
               }}
               onSelectProject={(id) => {
                 setReserveProjectId(id);
@@ -1842,14 +1859,29 @@ export default function App() {
                 measurePlan(planVerticesRef.current, planWidthRef.current);
               }}
               onKeep={(label) => {
-                if (!planReport || planReport.error) return;
+                if (!planReport || planReport.error) return false;
                 if (!reserveProject) {
                   setStatus("Create a project before saving a scenario.");
-                  return;
+                  return false;
                 }
                 if (reserveProject.scenarios.length >= 3) {
                   setStatus("This project already has 3 scenarios. Remove one, or create another project.");
-                  return;
+                  return false;
+                }
+                const nextLabel =
+                  String(label || "").trim() ||
+                  `Scenario ${reserveProject.scenarios.length + 1}`;
+                const taken = reserveProject.scenarios.some(
+                  (scenario) =>
+                    String(scenario.label || "")
+                      .trim()
+                      .toLowerCase() === nextLabel.toLowerCase(),
+                );
+                if (taken) {
+                  setStatus(
+                    "Two scenarios in this project cannot have the same name.",
+                  );
+                  return false;
                 }
                 const id = `opt-${Date.now()}`;
                 setReserveProjects((current) => current.map((project) => {
@@ -1860,7 +1892,7 @@ export default function App() {
                       ...project.scenarios,
                       {
                         id,
-                        label: label || `Scenario ${project.scenarios.length + 1}`,
+                        label: nextLabel,
                         preferred: false,
                         legal: "Proposed",
                         vertices: planVertices.map((point) => [...point]),
@@ -1871,13 +1903,33 @@ export default function App() {
                   };
                 }));
                 setPlanActive(id);
+                return true;
               }}
               onRename={(id, label) => {
+                const nextLabel = String(label || "").trim();
+                if (!nextLabel) {
+                  setStatus("Scenario name cannot be empty.");
+                  return false;
+                }
+                const taken = (reserveProject?.scenarios || []).some(
+                  (scenario) =>
+                    scenario.id !== id &&
+                    String(scenario.label || "")
+                      .trim()
+                      .toLowerCase() === nextLabel.toLowerCase(),
+                );
+                if (taken) {
+                  setStatus(
+                    "Two scenarios in this project cannot have the same name.",
+                  );
+                  return false;
+                }
                 setReserveProjects((current) => current.map((project) => (
                   project.id === reserveProjectId
-                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, label } : item)) }
+                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, label: nextLabel } : item)) }
                     : project
                 )));
+                return true;
               }}
               onPrefer={(id) => {
                 setReserveProjects((current) => current.map((project) => (

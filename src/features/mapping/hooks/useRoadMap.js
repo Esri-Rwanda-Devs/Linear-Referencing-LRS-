@@ -1222,10 +1222,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         areaRiverTicket += 1;
         areaRiverLayer.removeAll();
       };
-      const loadAreaRivers = async (groups) => {
-        const envelopes = (groups || []).map((points) => {
-          const usable = (points || []).filter((point) => point?.length === 2);
-          if (usable.length < 2) return null;
+      const loadAreaRivers = async (groups, widthM = 40) => {
+        const usableGroups = (groups || [])
+          .map((points) => (points || []).filter((point) => point?.length === 2))
+          .filter((points) => points.length >= 2);
+        const envelopes = usableGroups.map((usable) => {
           const pad = 0.005;
           return {
             xmin: Math.min(...usable.map((point) => point[0])) - pad,
@@ -1233,11 +1234,13 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             xmax: Math.max(...usable.map((point) => point[0])) + pad,
             ymax: Math.max(...usable.map((point) => point[1])) + pad,
           };
-        }).filter(Boolean);
+        });
         if (!envelopes.length) {
           clearAreaRivers();
           return;
         }
+        // Cheap distance check — avoid geodesicBuffer while interacting.
+        const nearM = Math.max(Number(widthM) || 40, 20) / 2 + 12;
         const ticket = areaRiverTicket + 1;
         areaRiverTicket = ticket;
         try {
@@ -1267,6 +1270,13 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             const paths = feature.geometry?.paths;
             const id = feature.attributes?.objectid || feature.attributes?.OBJECTID;
             if (!paths?.length || (id && seen.has(id))) return;
+            const riverPath = simplifyRing(paths[0], 48);
+            if (riverPath.length < 2) return;
+            const nearRoad = usableGroups.some((road) => {
+              const distance = distanceToPathM(road, riverPath);
+              return distance != null && distance <= nearM;
+            });
+            if (!nearRoad) return;
             if (id) seen.add(id);
             graphics.push(new Graphic({
               geometry: new Polyline({ paths, spatialReference: { wkid: 4326 } }),
@@ -1539,7 +1549,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }
           if (!sqm || sqm < 0.05) return;
           const attr = feature.attributes || {};
-          const ring = simplifyRing(rings[0]);
+          const ring = simplifyRing(rings[0], 120);
           const distanceM = distanceToPathM(path, ring);
           parcels.push({
             key: `${attr.district || "parcel"}-${attr.OBJECTID || attr.upi || parcels.length}`,
@@ -1607,7 +1617,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             return;
           }
           if (!(sqm > 0.05)) return;
-          const ring = simplifyRing(rings[0]);
+          const ring = simplifyRing(rings[0], 100);
           const center = ring?.length
             ? [ring.reduce((sum, point) => sum + point[0], 0) / ring.length, ring.reduce((sum, point) => sum + point[1], 0) / ring.length]
             : null;
@@ -1720,7 +1730,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
                 const river = {
                   key: `river-${attr.objectid || attr.OBJECTID || rivers.length}`,
                   name: attr.name || "River",
-                  path: simplifyRing(paths[0], 80),
+                  path: simplifyRing(paths[0], 160),
                 };
                 rivers.push(river);
                 planLayer.add(new Graphic({ geometry: line, symbol: riverLine, attributes: { river: river.key } }));
@@ -2279,19 +2289,28 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       bag.showRivers?.(false);
       return undefined;
     }
+    // Do not reload rivers on every sketch click — keeps drawing smooth.
+    if (planDraw) return undefined;
     const groups = [route?.vertices, planVertices].filter((path) => (path || []).filter((point) => point?.length === 2).length >= 2);
     if (!groups.length) {
       bag.clearAreaRivers?.();
       return undefined;
     }
-    const timer = window.setTimeout(() => bag.loadAreaRivers(groups), 300);
+    const corridorWidth = planVertices?.length >= 2 ? planWidth : 40;
+    const timer = window.setTimeout(
+      () => bag.loadAreaRivers(groups, corridorWidth),
+      700,
+    );
     return () => window.clearTimeout(timer);
-  }, [rivers, route, planVertices, ready]);
+  }, [rivers, route, planVertices, planWidth, planDraw, ready]);
   useEffect(() => {
     let stop = false;
     const bag = api.current;
     if (!bag?.showBuildings) return undefined;
-    if (!buildings) {
+    // With a drawn plan, only corridor footprints from estimatePlan/planLayer
+    // should appear — not the full city footprint layer.
+    const planActive = (planVertices || []).filter((point) => point?.length === 2).length >= 2;
+    if (!buildings || planActive) {
       bag.showBuildings(false);
       return undefined;
     }
@@ -2301,7 +2320,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       if (!stop) bag.showBuildings(false);
     });
     return () => { stop = true; };
-  }, [buildings, ready]);
+  }, [buildings, planVertices, ready]);
 
   useEffect(() => {
     const bag = api.current;
