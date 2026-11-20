@@ -50,7 +50,7 @@ export const EVENT_LAYERS = [
     title: "Bridges",
     kind: "point",
     shape: "x",
-    color: "#facc15",
+    color: "#ff2d6a",
     labelFields: ["name", "ref"],
   },
   {
@@ -233,8 +233,8 @@ export const LRS_LAYER_DEFS = [
     group: "POI",
     kind: "point",
     shape: "bridge",
-    color: [250, 204, 21, 0.95],
-    swatch: "#facc15",
+    color: [255, 45, 106, 0.95],
+    swatch: "#ff2d6a",
   },
   // {
   //   id: 0,

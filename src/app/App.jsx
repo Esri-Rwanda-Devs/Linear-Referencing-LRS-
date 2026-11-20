@@ -54,7 +54,13 @@ import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
 import Overview from "../features/overview/components/Overview";
-import { alignOverRoad, appendVertex, applyRates, attachEndOnRoad, lineLengthM } from "../features/cost/utils/corridor";
+import {
+  alignOverRoad,
+  appendVertex,
+  applyRates,
+  attachEndOnRoad,
+  lineLengthM,
+} from "../features/cost/utils/corridor";
 import { assetIcons } from "../assets";
 
 const STORE = "rwanda-lrs-projects";
@@ -102,20 +108,26 @@ function readProjects() {
 
 function readReserveProjects() {
   try {
-    const saved = JSON.parse(localStorage.getItem("rwanda-lrs-cost-projects") || "null");
+    const saved = JSON.parse(
+      localStorage.getItem("rwanda-lrs-cost-projects") || "null",
+    );
     if (Array.isArray(saved?.projects)) return saved.projects;
   } catch {
     /* Fall through to the older scenario list. */
   }
   try {
-    const options = JSON.parse(localStorage.getItem("rwanda-lrs-cost-options") || "[]");
+    const options = JSON.parse(
+      localStorage.getItem("rwanda-lrs-cost-options") || "[]",
+    );
     if (!Array.isArray(options) || !options.length) return [];
-    return [{
-      id: "project-saved",
-      name: "Saved alignments",
-      note: localStorage.getItem("rwanda-lrs-cost-note") || "",
-      scenarios: options.slice(0, 3),
-    }];
+    return [
+      {
+        id: "project-saved",
+        name: "Saved alignments",
+        note: localStorage.getItem("rwanda-lrs-cost-note") || "",
+        scenarios: options.slice(0, 3),
+      },
+    ];
   } catch {
     return [];
   }
@@ -167,7 +179,15 @@ function PaneControls({ enlarged, onToggle }) {
 
 export default function App() {
   const [catalog, setCatalog] = useState([]);
-  const [routeId, setRouteId] = useState("");
+  const [routeIdByTab, setRouteIdByTab] = useState({
+    analyse: "",
+    edit: "",
+    cost: "",
+    pavement: "",
+    overview: "",
+    traffic: "",
+    unsealed: "",
+  });
   const [routeTicket, setRouteTicket] = useState(0);
   const [routeLoading, setRouteLoading] = useState(false);
   const routeLoadingRef = useRef(false);
@@ -197,7 +217,7 @@ export default function App() {
   const [panelHost] = useState(() => document.createElement("div"));
   const [panelTab, setPanelTab] = useState("nearest");
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [viewMode, setViewMode] = useState("analyse");
+  const [viewMode, setViewMode] = useState("overview");
   const [overviewQuery, setOverviewQuery] = useState("");
   const [theme, setTheme] = useState(() =>
     document.documentElement.dataset.theme === "light" ? "light" : "dark",
@@ -289,7 +309,6 @@ export default function App() {
   const [compareWindow, setCompareWindow] = useState([0, WINDOW_KM]);
   const [compareCursor, setCompareCursor] = useState(null);
   const [compareEvent, setCompareEvent] = useState(null);
-  const compareShown = compare && compare.route.id !== routeId ? compare : null;
   const [linkCompare, setLinkCompare] = useState(true);
   const [segment, setSegment] = useState(null);
   const [selectingSegment, setSelectingSegment] = useState(false);
@@ -320,12 +339,33 @@ export default function App() {
         ? "cost"
         : viewMode === "pavement"
           ? "pavement"
-          : "analyse";
+          : viewMode === "overview"
+            ? "overview"
+            : viewMode === "traffic"
+              ? "traffic"
+              : viewMode === "unsealed"
+                ? "unsealed"
+                : "analyse";
+  const routeId = routeIdByTab[mapTabKey] || "";
+  const setRouteId = useCallback(
+    (next) => {
+      setRouteIdByTab((current) => {
+        const previous = current[mapTabKey] || "";
+        const value = typeof next === "function" ? next(previous) : next;
+        const id = value == null ? "" : String(value);
+        if (id === previous) return current;
+        return { ...current, [mapTabKey]: id };
+      });
+    },
+    [mapTabKey],
+  );
+  const compareShown = compare && compare.route.id !== routeId ? compare : null;
   const [mapLayersByTab, setMapLayersByTab] = useState(() => {
     const hidden = defaultHiddenLayers();
+    const base = { hidden: [...hidden], aerial: true };
     return {
-      analyse: { hidden: [...hidden], aerial: true },
-      edit: { hidden: [...hidden], aerial: true },
+      analyse: { ...base, hidden: [...hidden] },
+      edit: { ...base, hidden: [...hidden] },
       cost: {
         hidden: [...hidden],
         aerial: true,
@@ -333,7 +373,10 @@ export default function App() {
         rivers: true,
         buildings: true,
       },
-      pavement: { hidden: [...hidden], aerial: true },
+      pavement: { ...base, hidden: [...hidden] },
+      overview: { ...base, hidden: [...hidden] },
+      traffic: { ...base, hidden: [...hidden] },
+      unsealed: { ...base, hidden: [...hidden] },
     };
   });
   const tabMap = mapLayersByTab[mapTabKey] || mapLayersByTab.analyse;
@@ -345,8 +388,7 @@ export default function App() {
   const patchTabMap = (patch) => {
     setMapLayersByTab((current) => {
       const previous = current[mapTabKey] || current.analyse;
-      const nextPatch =
-        typeof patch === "function" ? patch(previous) : patch;
+      const nextPatch = typeof patch === "function" ? patch(previous) : patch;
       return {
         ...current,
         [mapTabKey]: { ...previous, ...nextPatch },
@@ -356,33 +398,48 @@ export default function App() {
   const setHiddenLayerIds = (updater) => {
     patchTabMap((previous) => ({
       hidden:
-        typeof updater === "function" ? updater(previous.hidden || []) : updater,
+        typeof updater === "function"
+          ? updater(previous.hidden || [])
+          : updater,
     }));
   };
   const setParcelsOn = (updater) => {
     patchTabMap((previous) => ({
-      parcels: typeof updater === "function" ? updater(Boolean(previous.parcels !== false)) : updater,
+      parcels:
+        typeof updater === "function"
+          ? updater(Boolean(previous.parcels !== false))
+          : updater,
     }));
   };
   const setRiversOn = (updater) => {
     patchTabMap((previous) => ({
-      rivers: typeof updater === "function" ? updater(Boolean(previous.rivers !== false)) : updater,
+      rivers:
+        typeof updater === "function"
+          ? updater(Boolean(previous.rivers !== false))
+          : updater,
     }));
   };
   const setBuildingsOn = (updater) => {
     patchTabMap((previous) => ({
       buildings:
-        typeof updater === "function" ? updater(Boolean(previous.buildings !== false)) : updater,
+        typeof updater === "function"
+          ? updater(Boolean(previous.buildings !== false))
+          : updater,
     }));
   };
   const setAerialOn = (updater) => {
     patchTabMap((previous) => ({
-      aerial: typeof updater === "function" ? updater(Boolean(previous.aerial !== false)) : updater,
+      aerial:
+        typeof updater === "function"
+          ? updater(Boolean(previous.aerial !== false))
+          : updater,
     }));
   };
   const [parcelStatus, setParcelStatus] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-status") || "{}");
+      const saved = JSON.parse(
+        localStorage.getItem("rwanda-lrs-parcel-status") || "{}",
+      );
       return saved && typeof saved === "object" ? saved : {};
     } catch {
       return {};
@@ -390,15 +447,20 @@ export default function App() {
   });
   const [parcelProofs, setParcelProofs] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("rwanda-lrs-parcel-proofs") || "{}");
+      const saved = JSON.parse(
+        localStorage.getItem("rwanda-lrs-parcel-proofs") || "{}",
+      );
       return saved && typeof saved === "object" ? saved : {};
     } catch {
       return {};
     }
   });
   const [reserveProjects, setReserveProjects] = useState(readReserveProjects);
-  const [reserveProjectId, setReserveProjectId] = useState(() => readReserveProjects()[0]?.id || "");
-  const reserveProject = reserveProjects.find((project) => project.id === reserveProjectId) || null;
+  const [reserveProjectId, setReserveProjectId] = useState(
+    () => readReserveProjects()[0]?.id || "",
+  );
+  const reserveProject =
+    reserveProjects.find((project) => project.id === reserveProjectId) || null;
   const planOptions = reserveProject?.scenarios || [];
   const planNote = reserveProject?.note || "";
   const [planBusy, setPlanBusy] = useState(false);
@@ -433,24 +495,33 @@ export default function App() {
   }, [mapTabKey, aerialOn]);
   useEffect(() => {
     try {
-      localStorage.setItem("rwanda-lrs-cost-projects", JSON.stringify({
-        projects: reserveProjects,
-        activeId: reserveProjectId,
-      }));
+      localStorage.setItem(
+        "rwanda-lrs-cost-projects",
+        JSON.stringify({
+          projects: reserveProjects,
+          activeId: reserveProjectId,
+        }),
+      );
     } catch {
       /* A large parcel list can exceed the browser store. The comparison still works this session. */
     }
   }, [reserveProjects, reserveProjectId]);
   useEffect(() => {
     try {
-      localStorage.setItem("rwanda-lrs-parcel-status", JSON.stringify(parcelStatus));
+      localStorage.setItem(
+        "rwanda-lrs-parcel-status",
+        JSON.stringify(parcelStatus),
+      );
     } catch {
       /* Status stays in memory for this session. */
     }
   }, [parcelStatus]);
   useEffect(() => {
     try {
-      localStorage.setItem("rwanda-lrs-parcel-proofs", JSON.stringify(parcelProofs));
+      localStorage.setItem(
+        "rwanda-lrs-parcel-proofs",
+        JSON.stringify(parcelProofs),
+      );
     } catch {
       /* Proof files can exceed the browser store; they stay in memory this session. */
     }
@@ -477,13 +548,21 @@ export default function App() {
       setEvents([]);
       setCursor(null);
       setActiveEvent(null);
+      setActiveId(null);
+      setSegment(null);
+      setSegmentStart(null);
+      setSelectingSegment(false);
+      setCompare(null);
+      setCompareCursor(null);
+      setCompareEvent(null);
+      setMapLayers([]);
       return undefined;
     }
     let cancel = false;
     routeLoadingRef.current = true;
     setRouteLoading(true);
     setStatus(`Loading route ${routeId} …`);
-    setRoute(null);
+    // Keep previous highlight until the new route arrives; clear events only.
     setEvents([]);
     setMapLayers([]);
     setSegment(null);
@@ -491,10 +570,15 @@ export default function App() {
     setSegmentStart(null);
     setCursor(null);
     setActiveEvent(null);
+    // Instant road-network highlight while geometry loads.
+    mapApi.current?.applyRouteEffect?.({ id: routeId }, null);
     loadRoute(routeId)
       .then(async (next) => {
         if (cancel) return;
+        // Highlight + zoom as soon as geometry is ready (don't wait for events).
         setRoute(next);
+        routeLoadingRef.current = false;
+        setRouteLoading(false);
         const span = Math.min(WINDOW_KM, next.lengthKm || WINDOW_KM);
         const hit =
           pendingPoint.current &&
@@ -523,12 +607,12 @@ export default function App() {
         );
       })
       .catch((error) => {
-        if (!cancel) setStatus(error.message);
-      })
-      .finally(() => {
-        if (cancel) return;
-        routeLoadingRef.current = false;
-        setRouteLoading(false);
+        if (!cancel) {
+          setRoute(null);
+          setStatus(error.message);
+          routeLoadingRef.current = false;
+          setRouteLoading(false);
+        }
       });
     return () => {
       cancel = true;
@@ -1024,6 +1108,8 @@ export default function App() {
         if (String(routeId) === String(id))
           setRouteTicket((ticket) => ticket + 1);
       }
+      // Flash the road casing immediately (full cyan overlay follows loadRoute).
+      mapApi.current?.applyRouteEffect?.({ id }, null);
       setRouteId(id);
       setActiveId(null);
       setActiveEvent(null);
@@ -1050,8 +1136,12 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [viewMode, focusPane, chartH, reserveSection]);
   useEffect(() => {
-    if (!costPage || planDraw || planVerticesRef.current.length < 2) return undefined;
-    const timer = window.setTimeout(() => measurePlan(planVerticesRef.current, planWidthRef.current), 500);
+    if (!costPage || planDraw || planVerticesRef.current.length < 2)
+      return undefined;
+    const timer = window.setTimeout(
+      () => measurePlan(planVerticesRef.current, planWidthRef.current),
+      500,
+    );
     return () => window.clearTimeout(timer);
   }, [planWidth]);
   useEffect(() => {
@@ -1125,6 +1215,9 @@ export default function App() {
     setPlanOpen(true);
     mapApi.current?.drawReserve?.(vertices, option.width);
     mapApi.current?.paintRivers?.(option.report?.rivers);
+    if (vertices.length >= 2) {
+      mapApi.current?.focusPlanPath?.(vertices, option.width);
+    }
     return vertices.length >= 2;
   };
   const measurePlan = (vertices, width) => {
@@ -1154,7 +1247,8 @@ export default function App() {
   };
   const snappedPlanPoint = (longitude, latitude, finish = false) => {
     const point = [longitude, latitude];
-    if (!planSnapRef.current || !route?.vertices?.length || !finish) return point;
+    if (!planSnapRef.current || !route?.vertices?.length || !finish)
+      return point;
     const current = planVerticesRef.current;
     if (!current.length) return point;
     const tied = attachEndOnRoad([...current, point], route.vertices);
@@ -1199,12 +1293,18 @@ export default function App() {
     planWidth,
     planSnapPoint: snappedPlanPoint,
     onPlanClick: (longitude, latitude) => {
-      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude));
+      const next = appendVertex(
+        planVerticesRef.current,
+        snappedPlanPoint(longitude, latitude),
+      );
       planVerticesRef.current = next;
       setPlanVertices(next);
     },
     onPlanFinish: (longitude, latitude) => {
-      const next = appendVertex(planVerticesRef.current, snappedPlanPoint(longitude, latitude, true));
+      const next = appendVertex(
+        planVerticesRef.current,
+        snappedPlanPoint(longitude, latitude, true),
+      );
       if (next.length < 2) return;
       planVerticesRef.current = next;
       setPlanVertices(next);
@@ -1216,15 +1316,20 @@ export default function App() {
       if (!editingScenario) setPlanSaveTick((tick) => tick + 1);
     },
     onPlanCommit: (vertices) => {
-      const next = planSnapRef.current && route?.vertices?.length
-        ? attachEndOnRoad(vertices, route.vertices)
-        : vertices;
+      const next =
+        planSnapRef.current && route?.vertices?.length
+          ? attachEndOnRoad(vertices, route.vertices)
+          : vertices;
       planVerticesRef.current = next;
       setPlanVertices(next);
       setPlanDraw(false);
       setPlanEdit(true);
       setPlanVertexMode((mode) =>
-        mode === "shift" ? "shift" : mode === "continue" ? "move" : mode || "move",
+        mode === "shift"
+          ? "shift"
+          : mode === "continue"
+            ? "move"
+            : mode || "move",
       );
       measurePlan(next, planWidthRef.current);
     },
@@ -1448,25 +1553,9 @@ export default function App() {
         <header className="topbar">
           <div>
             {/* <p className="eyebrow">Rwanda Space Agency · Linear referencing</p> */}
-            <h3>Road Location Reference Application</h3>
+            <h3>Road Location Reference System</h3>
           </div>
-          <div className="top-search">
-            {overviewPage ? (
-              <input
-                className="overview-search"
-                value={overviewQuery}
-                placeholder="Filter overview (bridges, paved, divided…)"
-                onChange={(event) => setOverviewQuery(event.target.value)}
-              />
-            ) : (
-              <RoutePicker
-                catalog={catalog}
-                value={routeId}
-                placeholder="Search road (e.g. RN1)"
-                onChange={selectRoute}
-              />
-            )}
-          </div>
+
           <div className="top-actions">
             <button
               type="button"
@@ -1557,29 +1646,6 @@ export default function App() {
           </div>
         </header>
         <div className="workspace">
-          {/* <Planner
-          route={route}
-          windowKm={windowKm}
-          projects={routeProjects}
-          events={events}
-          activeId={activeId}
-          onSelect={(project) => {
-            setActiveId(project.id);
-            const pad = Math.max(0.2, (project.endKm - project.startKm) * 0.1);
-            setWindowKm([Math.max(0, project.startKm - pad), project.endKm + pad]);
-            setFollow(false);
-          }}
-          onUpdate={(next) => setProjects((prev) => prev.map((project) => (project.id === next.id ? next : project)))}
-          onDelete={(target) => {
-            setProjects((prev) => prev.filter((project) => project.id !== target.id));
-            setActiveId(null);
-          }}
-          onCreate={(draft) => {
-            const project = { ...draft, id: `p-${Date.now()}` };
-            setProjects((prev) => [project, ...prev]);
-            setActiveId(project.id);
-          }}
-        /> */}
           {costPage && (
             <CostPlan
               section={reserveSection}
@@ -1648,9 +1714,12 @@ export default function App() {
                   mapApi.current?.clearPlan?.();
                   return;
                 }
-                const next = reserveProjects.find((project) => project.id === id);
+                const next = reserveProjects.find(
+                  (project) => project.id === id,
+                );
                 const scenarios = next?.scenarios || [];
-                if (scenarios.length) mapApi.current?.showPlanOptions?.(scenarios, null);
+                if (scenarios.length)
+                  mapApi.current?.showPlanOptions?.(scenarios, null);
                 else mapApi.current?.clearPlan?.();
               }}
               parcelsOn={parcelsOn}
@@ -1674,13 +1743,19 @@ export default function App() {
               onRemoveParcelProof={(key, proofId) => {
                 setParcelProofs((current) => ({
                   ...current,
-                  [key]: (current[key] || []).filter((proof) => proof.id !== proofId),
+                  [key]: (current[key] || []).filter(
+                    (proof) => proof.id !== proofId,
+                  ),
                 }));
               }}
               onNote={(note) => {
-                setReserveProjects((current) => current.map((project) => (
-                  project.id === reserveProjectId ? { ...project, note } : project
-                )));
+                setReserveProjects((current) =>
+                  current.map((project) =>
+                    project.id === reserveProjectId
+                      ? { ...project, note }
+                      : project,
+                  ),
+                );
               }}
               onWidth={(value) => {
                 const next = Number(value);
@@ -1697,11 +1772,13 @@ export default function App() {
               }}
               onDisturbance={(value) => {
                 const next = Number(value);
-                if (Number.isFinite(next)) setCompensationPct(Math.max(0, Math.min(100, next)));
+                if (Number.isFinite(next))
+                  setCompensationPct(Math.max(0, Math.min(100, next)));
               }}
               onContingency={(value) => {
                 const next = Number(value);
-                if (Number.isFinite(next)) setContingencyPct(Math.max(0, Math.min(100, next)));
+                if (Number.isFinite(next))
+                  setContingencyPct(Math.max(0, Math.min(100, next)));
               }}
               onMeasure={() => {
                 setPlanMeasure((value) => {
@@ -1718,29 +1795,45 @@ export default function App() {
                 setPlanSnap(next);
                 if (!next) return;
                 if (!route?.vertices?.length) {
-                  setStatus("Select a base road. Snap joins the end of the new reserve to it.");
+                  setStatus(
+                    "Select a base road. Snap joins the end of the new reserve to it.",
+                  );
                   return;
                 }
                 if (planVerticesRef.current.length >= 2) {
                   const current = planVerticesRef.current;
                   const tied = attachEndOnRoad(current, route.vertices);
-                  const moved = lineLengthM(current[current.length - 1], tied[tied.length - 1]) > 0.5;
+                  const moved =
+                    lineLengthM(
+                      current[current.length - 1],
+                      tied[tied.length - 1],
+                    ) > 0.5;
                   planVerticesRef.current = tied;
                   setPlanVertices(tied);
-                  if (!moved) setStatus("Aim the last part of the reserve at the road. Snap keeps that direction and joins the end.");
+                  if (!moved)
+                    setStatus(
+                      "Aim the last part of the reserve at the road. Snap keeps that direction and joins the end.",
+                    );
                   else measurePlan(tied, planWidthRef.current);
                 }
               }}
               onAlign={() => {
                 if (!route?.vertices?.length) {
-                  setStatus("Select a base road. Align draws the new reserve on top of it.");
+                  setStatus(
+                    "Select a base road. Align draws the new reserve on top of it.",
+                  );
                   return;
                 }
                 if (planVerticesRef.current.length < 2) {
-                  setStatus("Draw the new reserve first, then align it with the road.");
+                  setStatus(
+                    "Draw the new reserve first, then align it with the road.",
+                  );
                   return;
                 }
-                const wrapped = alignOverRoad(planVerticesRef.current, route.vertices);
+                const wrapped = alignOverRoad(
+                  planVerticesRef.current,
+                  route.vertices,
+                );
                 if (!wrapped) {
                   setStatus("The new reserve does not span the selected road.");
                   return;
@@ -1767,7 +1860,8 @@ export default function App() {
                 setAerialOn((value) => {
                   const next = !value;
                   const view = mapApi.current?.view;
-                  if (view?.map) view.map.basemap = next ? "satellite" : "gray-vector";
+                  if (view?.map)
+                    view.map.basemap = next ? "satellite" : "gray-vector";
                   return next;
                 });
               }}
@@ -1778,11 +1872,18 @@ export default function App() {
                 setPlanVertexMode(null);
               }}
               onLegal={(id, legal) => {
-                setReserveProjects((current) => current.map((project) => (
-                  project.id === reserveProjectId
-                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, legal } : item)) }
-                    : project
-                )));
+                setReserveProjects((current) =>
+                  current.map((project) =>
+                    project.id === reserveProjectId
+                      ? {
+                          ...project,
+                          scenarios: project.scenarios.map((item) =>
+                            item.id === id ? { ...item, legal } : item,
+                          ),
+                        }
+                      : project,
+                  ),
+                );
               }}
               onDraw={() => {
                 setPlanMeasure(false);
@@ -1798,9 +1899,10 @@ export default function App() {
               }}
               onFinish={() => {
                 if (planVerticesRef.current.length < 2) return;
-                const vertices = planSnap && route?.vertices?.length
-                  ? attachEndOnRoad(planVerticesRef.current, route.vertices)
-                  : planVerticesRef.current;
+                const vertices =
+                  planSnap && route?.vertices?.length
+                    ? attachEndOnRoad(planVerticesRef.current, route.vertices)
+                    : planVerticesRef.current;
                 planVerticesRef.current = vertices;
                 setPlanVertices(vertices);
                 setPlanDraw(false);
@@ -1813,12 +1915,17 @@ export default function App() {
               onReshape={() => {
                 if (!planVertexMode) {
                   if (planActive) loadScenarioForEdit(planActive);
-                  else if (planVerticesRef.current.length < 2 && planOptions[0]) {
+                  else if (
+                    planVerticesRef.current.length < 2 &&
+                    planOptions[0]
+                  ) {
                     loadScenarioForEdit(planOptions[0].id);
                   }
                 }
                 if (planVerticesRef.current.length < 2) {
-                  setStatus("Select a saved scenario or draw an alignment first, then edit vertices.");
+                  setStatus(
+                    "Select a saved scenario or draw an alignment first, then edit vertices.",
+                  );
                   return;
                 }
                 setPlanMeasure(false);
@@ -1831,13 +1938,18 @@ export default function App() {
                 );
               }}
               onVertexMode={(mode) => {
-                if (!planVertexMode && planActive) loadScenarioForEdit(planActive);
+                if (!planVertexMode && planActive)
+                  loadScenarioForEdit(planActive);
                 if (planVerticesRef.current.length < 1) {
-                  setStatus("Select a saved scenario or draw an alignment first.");
+                  setStatus(
+                    "Select a saved scenario or draw an alignment first.",
+                  );
                   return;
                 }
                 if (mode !== "continue" && planVerticesRef.current.length < 2) {
-                  setStatus("Add at least two points before moving or shifting.");
+                  setStatus(
+                    "Add at least two points before moving or shifting.",
+                  );
                   return;
                 }
                 setPlanMeasure(false);
@@ -1865,7 +1977,9 @@ export default function App() {
                   return false;
                 }
                 if (reserveProject.scenarios.length >= 3) {
-                  setStatus("This project already has 3 scenarios. Remove one, or create another project.");
+                  setStatus(
+                    "This project already has 3 scenarios. Remove one, or create another project.",
+                  );
                   return false;
                 }
                 const nextLabel =
@@ -1884,24 +1998,30 @@ export default function App() {
                   return false;
                 }
                 const id = `opt-${Date.now()}`;
-                setReserveProjects((current) => current.map((project) => {
-                  if (project.id !== reserveProjectId || project.scenarios.length >= 3) return project;
-                  return {
-                    ...project,
-                    scenarios: [
-                      ...project.scenarios,
-                      {
-                        id,
-                        label: nextLabel,
-                        preferred: false,
-                        legal: "Proposed",
-                        vertices: planVertices.map((point) => [...point]),
-                        width: planWidth,
-                        report: planReport,
-                      },
-                    ],
-                  };
-                }));
+                setReserveProjects((current) =>
+                  current.map((project) => {
+                    if (
+                      project.id !== reserveProjectId ||
+                      project.scenarios.length >= 3
+                    )
+                      return project;
+                    return {
+                      ...project,
+                      scenarios: [
+                        ...project.scenarios,
+                        {
+                          id,
+                          label: nextLabel,
+                          preferred: false,
+                          legal: "Proposed",
+                          vertices: planVertices.map((point) => [...point]),
+                          width: planWidth,
+                          report: planReport,
+                        },
+                      ],
+                    };
+                  }),
+                );
                 setPlanActive(id);
                 return true;
               }}
@@ -1924,19 +2044,36 @@ export default function App() {
                   );
                   return false;
                 }
-                setReserveProjects((current) => current.map((project) => (
-                  project.id === reserveProjectId
-                    ? { ...project, scenarios: project.scenarios.map((item) => (item.id === id ? { ...item, label: nextLabel } : item)) }
-                    : project
-                )));
+                setReserveProjects((current) =>
+                  current.map((project) =>
+                    project.id === reserveProjectId
+                      ? {
+                          ...project,
+                          scenarios: project.scenarios.map((item) =>
+                            item.id === id
+                              ? { ...item, label: nextLabel }
+                              : item,
+                          ),
+                        }
+                      : project,
+                  ),
+                );
                 return true;
               }}
               onPrefer={(id) => {
-                setReserveProjects((current) => current.map((project) => (
-                  project.id === reserveProjectId
-                    ? { ...project, scenarios: project.scenarios.map((item) => ({ ...item, preferred: item.id === id })) }
-                    : project
-                )));
+                setReserveProjects((current) =>
+                  current.map((project) =>
+                    project.id === reserveProjectId
+                      ? {
+                          ...project,
+                          scenarios: project.scenarios.map((item) => ({
+                            ...item,
+                            preferred: item.id === id,
+                          })),
+                        }
+                      : project,
+                  ),
+                );
               }}
               onShowAll={() => {
                 setPlanActive(null);
@@ -1952,12 +2089,21 @@ export default function App() {
                 setPlanVertexMode(null);
               }}
               onRemoveOption={(id) => {
-                const remaining = (reserveProject?.scenarios || []).filter((item) => item.id !== id);
-                setReserveProjects((current) => current.map((project) => (
-                  project.id === reserveProjectId
-                    ? { ...project, scenarios: project.scenarios.filter((item) => item.id !== id) }
-                    : project
-                )));
+                const remaining = (reserveProject?.scenarios || []).filter(
+                  (item) => item.id !== id,
+                );
+                setReserveProjects((current) =>
+                  current.map((project) =>
+                    project.id === reserveProjectId
+                      ? {
+                          ...project,
+                          scenarios: project.scenarios.filter(
+                            (item) => item.id !== id,
+                          ),
+                        }
+                      : project,
+                  ),
+                );
                 const wasShowing = planActive === id;
                 setPlanActive((current) => (current === id ? null : current));
                 if (!remaining.length || wasShowing) {
@@ -1965,7 +2111,11 @@ export default function App() {
                   setPlanVertices([]);
                   setPlanReport(null);
                 }
-                if (remaining.length) mapApi.current?.showPlanOptions?.(remaining, wasShowing ? null : planActive);
+                if (remaining.length)
+                  mapApi.current?.showPlanOptions?.(
+                    remaining,
+                    wasShowing ? null : planActive,
+                  );
                 else mapApi.current?.clearPlan?.();
               }}
               onOpen={() => setPlanOpen(true)}

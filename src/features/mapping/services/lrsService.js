@@ -614,7 +614,7 @@ function typeClause(field, key) {
 const GEOGRAPHIC_WKIDS = new Set([4326, 4269, 4283, 4258]);
 
 function attributeOf(attributes, name) {
-  if (!attributes) return undefined;
+  if (!attributes || !name) return undefined;
   if (name in attributes) return attributes[name];
   const key = Object.keys(attributes).find(
     (item) => item.toLowerCase() === name.toLowerCase(),
@@ -947,6 +947,19 @@ export async function groupOverviewTypes(levelId, areaName) {
   );
 }
 
+const ROAD_FIELD_CANDIDATES = [
+  "road_code",
+  "roadcode",
+  "route_code",
+  "routecode",
+  "routeid",
+  "route_id",
+  "routename",
+  "route_name",
+  "link_name",
+  "road_name",
+];
+
 /** Field map for overview FeatureLayers: boundary fields + optional type field. */
 export async function loadOverviewFields() {
   const layers = LRS_LAYER_DEFS.filter(
@@ -965,18 +978,32 @@ export async function loadOverviewFields() {
           boundary[level.id] = { name, type };
         }
         const value = valueFieldOf(meta, def);
+        const fieldNames = (meta.fields || []).map((field) => field.name);
+        const roadFields = ROAD_FIELD_CANDIDATES.filter((name) =>
+          fieldNames.some((item) => item.toLowerCase() === name.toLowerCase()),
+        ).map(
+          (name) =>
+            fieldNames.find((item) => item.toLowerCase() === name.toLowerCase()) ||
+            name,
+        );
         return [
           def.id,
           {
             boundary,
             value: value ? { name: value.name, type: value.type || "" } : null,
+            roadFields,
             route: Boolean(def.route),
           },
         ];
       } catch {
         return [
           def.id,
-          { boundary: {}, value: null, route: Boolean(def.route) },
+          {
+            boundary: {},
+            value: null,
+            roadFields: [],
+            route: Boolean(def.route),
+          },
         ];
       }
     }),
@@ -984,8 +1011,23 @@ export async function loadOverviewFields() {
   return Object.fromEntries(entries);
 }
 
+function typeEqualsClause(fieldName, fieldType, rawValue) {
+  const safe = String(fieldName || "").replace(/[^A-Za-z0-9_]/g, "");
+  if (!safe) return "";
+  const value = String(rawValue ?? "").trim();
+  if (!value) return "";
+  const numeric =
+    /Integer|SmallInteger|Double|Single|OID|Long/i.test(String(fieldType || "")) ||
+    /^-?\d+(\.\d+)?$/.test(value);
+  if (numeric && Number.isFinite(Number(value))) {
+    return `${safe} = ${Number(value)}`;
+  }
+  const text = value.replace(/'/g, "''").toUpperCase();
+  return `UPPER(${safe}) = '${text}'`;
+}
+
 /** Build a definitionExpression for overview map filters. */
-export function overviewWhere(spec, boundary, typeNeedle = "") {
+export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
   const parts = [];
   const levelId = boundary?.id || "";
   const areaName = boundary?.name || "";
@@ -999,8 +1041,78 @@ export function overviewWhere(spec, boundary, typeNeedle = "") {
   if (needle && spec?.value?.name) {
     const safe = String(spec.value.name).replace(/[^A-Za-z0-9_]/g, "");
     if (safe) {
-      const text = needle.replace(/'/g, "''");
-      parts.push(`LOWER(${safe}) LIKE '%${text}%'`);
+      // Exact paved/unpaved (avoid LIKE matching "unpaved" when searching "paved").
+      if (needle === "paved" || needle === "unpaved") {
+        parts.push(`UPPER(${safe}) = '${needle.toUpperCase()}'`);
+      } else {
+        const text = needle.replace(/'/g, "''");
+        parts.push(`LOWER(${safe}) LIKE '%${text}%'`);
+      }
+    }
+  }
+  const typeValue = String(extras.typeValue || extras.surface || "")
+    .trim()
+    .toLowerCase();
+  if (typeValue) {
+    const fieldName =
+      spec?.value?.name ||
+      (extras.layerId != null
+        ? VALUE_FIELD_ALIASES[extras.layerId]?.[0]
+        : null) ||
+      (typeValue === "paved" || typeValue === "unpaved"
+        ? VALUE_FIELD_ALIASES[PAVEMENT_LAYER_ID]?.[0]
+        : null);
+    const clause = typeEqualsClause(
+      fieldName,
+      spec?.value?.type,
+      typeValue,
+    );
+    if (clause) parts.push(clause);
+  }
+  const roadFields = (spec?.roadFields || []).length
+    ? spec.roadFields
+    : ROAD_FIELD_CANDIDATES;
+  const safeRoadFields = roadFields
+    .map((name) => String(name || "").replace(/[^A-Za-z0-9_]/g, ""))
+    .filter(Boolean);
+  const roadKey = String(extras.roadKey || "")
+    .trim()
+    .replace(/'/g, "''");
+  if (roadKey && safeRoadFields.length) {
+    // Route-id columns also match the road's route ids (code → ids from the network).
+    const ids = (extras.roadIds || [])
+      .map((item) => String(item || "").trim().replace(/'/g, "''"))
+      .filter(Boolean)
+      .slice(0, 200);
+    const clauses = safeRoadFields.map((name) =>
+      ids.length && /^(routeid|route_id|roadid|road_id)$/i.test(name)
+        ? `${name} IN (${[roadKey, ...ids].map((item) => `'${item}'`).join(",")})`
+        : `${name} = '${roadKey}'`,
+    );
+    parts.push(`(${clauses.join(" OR ")})`);
+  } else if (!roadKey && Array.isArray(extras.roadKeys) && extras.roadKeys.length) {
+    const keys = [
+      ...new Set(
+        extras.roadKeys
+          .map((item) => String(item || "").trim().replace(/'/g, "''"))
+          .filter(Boolean),
+      ),
+    ].slice(0, 200);
+    if (keys.length && safeRoadFields.length) {
+      const codeField =
+        safeRoadFields.find((name) => /road_code/i.test(name)) ||
+        safeRoadFields[0];
+      if (keys.length === 1) {
+        parts.push(
+          `(${safeRoadFields
+            .map((name) => `${name} = '${keys[0]}'`)
+            .join(" OR ")})`,
+        );
+      } else {
+        parts.push(
+          `${codeField} IN (${keys.map((item) => `'${item}'`).join(",")})`,
+        );
+      }
     }
   }
   return { hide: false, where: parts.length ? parts.join(" AND ") : null };
@@ -1344,6 +1456,331 @@ export async function loadPavementRoad(key) {
     8,
     LRS,
   );
+}
+
+let routeCodesPromise = null;
+/** Route id → road code (NR1, …) from the road network, loaded once. */
+function routeCodeMap() {
+  routeCodesPromise ||= loadRouteCatalog()
+    .then((routes) => {
+      const map = new Map();
+      routes.forEach((route) => {
+        if (route.code) map.set(routeKey(route.id), route.code);
+      });
+      return map;
+    })
+    .catch(() => {
+      routeCodesPromise = null;
+      return new Map();
+    });
+  return routeCodesPromise;
+}
+
+const ROAD_NAME_FIELDS = ["routename", "route_name", "link_name", "road_name", "roadname"];
+const ROAD_CODE_FIELDS = ["road_code", "roadcode", "routecode", "route_code"];
+const ROUTE_ID_FIELDS = ROUTE_FIELDS.filter((name) => !/name/.test(name));
+
+/**
+ * Per-road length and type breakdown for a line-event layer (no geometry).
+ * Used by Overview analysis: paved % (or other type %) per road + segment counts.
+ */
+export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "") {
+  const def = LRS_LAYER_DEFS.find((item) => item.id === Number(layerId));
+  if (!def || def.kind !== "line") return [];
+  // Limit to one boundary when the layer carries that admin field.
+  const area = levelId && areaName ? await assetField(def, levelId) : null;
+  const where = area ? whereEquals(area.name, areaName, area.type) : "1=1";
+  const meta = await layerMeta(def.id, def.service || LRS);
+  const fields = meta.fields || [];
+  const value = valueFieldOf(meta, def);
+  // Event layers name their road columns differently; detect each one.
+  const codeField = namedField(fields, ROAD_CODE_FIELDS);
+  const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
+  const nameField = namedField(fields, ROAD_NAME_FIELDS);
+  if (!codeField && !routeField && !nameField) {
+    throw new Error(`${def.title} has no road code, route id, or road name column.`);
+  }
+  // Without a code column, translate route ids to codes through the road network.
+  const codes = !codeField && routeField ? await routeCodeMap() : null;
+  const plan = lengthPlan(meta);
+  const perUnit = await measureDivisor(def, plan);
+  const lengthField = fields.find((field) =>
+    /^(lenght_km|length_km|lengthkm)$/i.test(field.name),
+  )?.name;
+  const outFields = [
+    ...new Set(
+      [
+        codeField,
+        routeField,
+        nameField,
+        value?.name,
+        lengthField,
+        plan.kind === "measure" ? plan.from : null,
+        plan.kind === "measure" ? plan.to : null,
+      ].filter(Boolean),
+    ),
+  ].join(",");
+  const features = await queryPages(
+    def.id,
+    {
+      where,
+      returnGeometry: "false",
+      outFields,
+      resultRecordCount: "500",
+    },
+    20,
+    def.service || LRS,
+  );
+  const roads = new Map();
+  (features || []).forEach((feature) => {
+    const attrs = feature.attributes || {};
+    const routeId = routeField ? String(attrs[routeField] ?? "").trim() : "";
+    const code = (
+      (codeField ? String(attrs[codeField] ?? "").trim() : "") ||
+      (codes && routeId ? codes.get(routeKey(routeId)) || "" : "")
+    ).trim();
+    const name = nameField ? String(attrs[nameField] ?? "").trim() : "";
+    // Prefer route code (NR1, NR19, …) as the stable road id and label.
+    const key = code || routeId || name;
+    if (!key) return;
+    let km = Number(attributeOf(attrs, lengthField));
+    if (!(Number.isFinite(km) && km > 0) && plan.kind === "measure") {
+      const from = Number(attributeOf(attrs, plan.from));
+      const to = Number(attributeOf(attrs, plan.to));
+      if (Number.isFinite(from) && Number.isFinite(to)) {
+        km = Math.abs(to - from) / perUnit;
+      }
+    }
+    if (!Number.isFinite(km) || km < 0) km = 0;
+    const rawType = value?.name ? attributeOf(attrs, value.name) : "";
+    const type = typeName(def.id, rawType);
+    const id = key.toLowerCase();
+    const entry = roads.get(id) || {
+      key,
+      code: code || key,
+      name,
+      label: code || name || routeId || key,
+      segments: 0,
+      totalKm: 0,
+      byType: {},
+    };
+    if (name && !entry.name) entry.name = name;
+    entry.segments += 1;
+    entry.totalKm += km;
+    const bucket = entry.byType[type] || { name: type, km: 0, count: 0 };
+    bucket.km += km;
+    bucket.count += 1;
+    entry.byType[type] = bucket;
+    roads.set(id, entry);
+  });
+  return [...roads.values()].sort((a, b) => b.totalKm - a.totalKm);
+}
+
+/** Road code and its route ids for a picked road (code, route id, or name). */
+export async function resolveRoad(key) {
+  const text = String(key || "").trim();
+  const routes = await loadRouteCatalog().catch(() => []);
+  const needle = routeKey(text);
+  const hits = routes.filter(
+    (route) => routeKey(route.code) === needle || routeKey(route.id) === needle,
+  );
+  return {
+    key: text,
+    code: hits.find((route) => route.code)?.code || text,
+    ids: hits.map((route) => route.id),
+  };
+}
+
+const sqlText = (value) => `'${String(value ?? "").replace(/'/g, "''")}'`;
+
+/** WHERE clause that picks one road on a layer, or null when it has no road column. */
+function roadWhere(fields, road) {
+  const typeOf = (name) => fields.find((field) => field.name === name)?.type || "";
+  const numeric = (name) => /Integer|Double|Single|Small|OID/i.test(typeOf(name));
+  const codeField = namedField(fields, ROAD_CODE_FIELDS);
+  const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
+  const nameField = namedField(fields, ROAD_NAME_FIELDS);
+  const parts = [];
+  if (codeField && !numeric(codeField)) {
+    parts.push(`UPPER(${codeField}) = ${sqlText(road.code.toUpperCase())}`);
+  }
+  if (routeField) {
+    const ids = road.ids.length ? road.ids : [road.key];
+    const usable = numeric(routeField)
+      ? ids.filter((id) => /^-?\d+(\.\d+)?$/.test(id))
+      : ids;
+    if (usable.length) {
+      const list = usable
+        .slice(0, 200)
+        .map((id) => (numeric(routeField) ? id : sqlText(id)))
+        .join(",");
+      parts.push(`${routeField} IN (${list})`);
+    }
+  }
+  if (!parts.length && nameField) {
+    parts.push(`UPPER(${nameField}) = ${sqlText(road.key.toUpperCase())}`);
+  }
+  return parts.length ? `(${parts.join(" OR ")})` : null;
+}
+
+/** Road centreline as one simplified polyline (web mercator), for spatial counts. */
+async function roadLine(road) {
+  const meta = await layerMeta(ROAD_ID);
+  const where = roadWhere(meta.fields || [], road);
+  if (!where) return null;
+  const data = await queryRaw(ROAD_ID, {
+    where,
+    returnGeometry: "true",
+    outFields: "",
+    outSR: "102100",
+    maxAllowableOffset: "25",
+    geometryPrecision: "0",
+    resultRecordCount: "200",
+  });
+  const paths = (data.features || []).flatMap(
+    (feature) => feature.geometry?.paths || [],
+  );
+  return paths.length ? { paths, spatialReference: { wkid: 102100 } } : null;
+}
+
+async function countNearLine(def, line, extraWhere) {
+  const { token } = await signInToLrs();
+  const body = new URLSearchParams({
+    f: "json",
+    token,
+    where: extraWhere || "1=1",
+    geometry: JSON.stringify(line),
+    geometryType: "esriGeometryPolyline",
+    inSR: "102100",
+    spatialRel: "esriSpatialRelIntersects",
+    distance: String(SNAP_METERS),
+    units: "esriSRUnit_Meter",
+    returnCountOnly: "true",
+  });
+  const response = await fetch(`${devUrl(def.service || LRS)}/${def.id}/query`, {
+    method: "POST",
+    body,
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error(`Query failed ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || "Query failed");
+  return Number(data.count) || 0;
+}
+
+/**
+ * Everything on one road: point asset counts and each line event's segments
+ * (from/to km and category), optionally inside one boundary.
+ */
+export async function loadRoadProfile(key, levelId = "", areaName = "") {
+  const road = await resolveRoad(key);
+  let linePromise = null;
+  const centreline = () => (linePromise ||= roadLine(road).catch(() => null));
+  const layers = LRS_LAYER_DEFS.filter(
+    (def) => (def.kind === "point" || def.kind === "line") && !def.route,
+  );
+  const results = await Promise.all(
+    layers.map(async (def) => {
+      try {
+        const meta = await layerMeta(def.id, def.service || LRS);
+        const fields = meta.fields || [];
+        const area = levelId && areaName ? await assetField(def, levelId) : null;
+        const areaWhere = area ? whereEquals(area.name, areaName, area.type) : "";
+        const clause = roadWhere(fields, road);
+        if (def.kind === "point") {
+          if (clause) {
+            const where = areaWhere ? `${clause} AND ${areaWhere}` : clause;
+            const data = await queryRaw(
+              def.id,
+              { where, returnCountOnly: "true" },
+              def.service || LRS,
+            );
+            return { id: def.id, count: Number(data.count) || 0, by: "road" };
+          }
+          // No road column: count what sits within snapping distance of the road.
+          const line = await centreline();
+          if (!line) return { id: def.id, count: null };
+          return {
+            id: def.id,
+            count: await countNearLine(def, line, areaWhere),
+            by: "near",
+          };
+        }
+        if (!clause) return { id: def.id, count: null, segments: [] };
+        const where = areaWhere ? `${clause} AND ${areaWhere}` : clause;
+        const value = valueFieldOf(meta, def);
+        const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
+        const plan = lengthPlan(meta);
+        const perUnit = await measureDivisor(def, plan);
+        const lengthField = fields.find((field) =>
+          /^(lenght_km|length_km|lengthkm)$/i.test(field.name),
+        )?.name;
+        const measured = plan.kind === "measure";
+        const outFields = [
+          ...new Set(
+            [
+              routeField,
+              value?.name,
+              lengthField,
+              measured ? plan.from : null,
+              measured ? plan.to : null,
+            ].filter(Boolean),
+          ),
+        ].join(",");
+        const features = await queryPages(
+          def.id,
+          {
+            where,
+            returnGeometry: "false",
+            outFields,
+            resultRecordCount: "500",
+            ...(measured ? { orderByFields: plan.from } : {}),
+          },
+          10,
+          def.service || LRS,
+        );
+        const segments = (features || []).map((feature) => {
+          const attrs = feature.attributes || {};
+          const from = measured ? Number(attributeOf(attrs, plan.from)) / perUnit : NaN;
+          const to = measured ? Number(attributeOf(attrs, plan.to)) / perUnit : NaN;
+          let km = Number(attributeOf(attrs, lengthField));
+          if (!(Number.isFinite(km) && km > 0) && Number.isFinite(from) && Number.isFinite(to)) {
+            km = Math.abs(to - from);
+          }
+          return {
+            route: routeField ? String(attrs[routeField] ?? "").trim() : "",
+            from: Number.isFinite(from) ? Math.min(from, to) : null,
+            to: Number.isFinite(to) ? Math.max(from, to) : null,
+            km: Number.isFinite(km) && km > 0 ? km : 0,
+            type: typeName(def.id, value?.name ? attributeOf(attrs, value.name) : ""),
+          };
+        });
+        const groups = new Map();
+        segments.forEach((segment) => {
+          const entry = groups.get(segment.type) || {
+            name: segment.type,
+            count: 0,
+            km: 0,
+          };
+          entry.count += 1;
+          entry.km += segment.km;
+          groups.set(segment.type, entry);
+        });
+        return {
+          id: def.id,
+          count: segments.length,
+          segments,
+          groups: [...groups.values()].sort((a, b) => b.km - a.km),
+        };
+      } catch (reason) {
+        return { id: def.id, count: null, error: reason?.message || "" };
+      }
+    }),
+  );
+  return {
+    ...road,
+    layers: Object.fromEntries(results.map((item) => [item.id, item])),
+  };
 }
 
 const EDIT_SKIP =

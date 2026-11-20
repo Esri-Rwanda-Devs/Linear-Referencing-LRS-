@@ -60,6 +60,7 @@
   color: var(--color-text-muted);
 }
 .ov-scope { width: 118px; }
+.ov-line { width: 150px; }
 .ov-search { width: 140px; }
 .ov-bound { width: 118px; }
 .ov-bound.is-off span { opacity: 0.55; }
@@ -118,6 +119,395 @@
   overflow: hidden;
   padding-bottom: 10px;
 }
+.ov-analysis {
+  flex: none;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.ov-analysis > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ov-analysis > header strong {
+  font-size: 12px;
+  color: var(--color-text-strong);
+}
+.ov-analysis > header span {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-analysis-tabs,
+.ov-analysis-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.ov-analysis-tabs button,
+.ov-analysis-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.ov-analysis-tabs button:hover,
+.ov-analysis-chips button:hover {
+  color: var(--color-text-strong);
+}
+.ov-analysis-tabs button.on {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-text-strong);
+  font-weight: 600;
+}
+.ov-analysis-chips button {
+  font-size: 10px;
+  padding: 3px 8px;
+}
+.ov-analysis-chips button.on {
+  border-color: var(--color-text-strong);
+  color: var(--color-text-strong);
+  font-weight: 600;
+}
+.ov-analysis-tabs i,
+.ov-analysis-chips i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-muted) 45%, transparent);
+}
+.ov-analysis-chips b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.ov-strips {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.ov-strips h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.ov-strip {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+.ov-strip > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-strong);
+}
+.ov-strip > header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.ov-strip > header i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+}
+.ov-strip > header b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.ov-strip-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.ov-strip-row {
+  display: grid;
+  gap: 2px;
+}
+.ov-strip-row em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.ov-strip-track {
+  position: relative;
+  height: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
+}
+.ov-strip-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-surface) 70%, transparent);
+}
+.ov-strip-track i.dim {
+  opacity: 0.18;
+}
+.ov-strip-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.ov-strip-list summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.ov-strip-list table {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ov-strip-list th,
+.ov-strip-list td {
+  padding: 3px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+.ov-strip-list th {
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.ov-strip-list td i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 99px;
+}
+.ov-strip-list tbody {
+  display: block;
+  max-height: 180px;
+  overflow: auto;
+}
+.ov-strip-list thead,
+.ov-strip-list tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+.ov-analysis-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ov-analysis-kpis div {
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--color-surface-muted);
+}
+.ov-analysis-kpis span {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.ov-analysis-kpis b {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--color-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-analysis-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+.ov-analysis-list li {
+  min-width: 0;
+}
+.ov-analysis-sharebar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  margin: 0 0 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
+}
+.ov-analysis-sharebar i {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+.ov-analysis-focus {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-muted);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ov-analysis-focus:hover {
+  border-color: var(--color-accent);
+}
+.ov-analysis-focus > header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.ov-analysis-focus > header strong {
+  font-size: 14px;
+  color: var(--color-text-strong);
+  letter-spacing: 0.02em;
+}
+.ov-analysis-focus > header span {
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.ov-road-bar {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0;
+}
+.ov-road-bar-track {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
+}
+.ov-road-bar-track i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+.ov-road-bar-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+.ov-road-bar-legend li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.ov-road-bar-legend li.on span,
+.ov-road-bar-legend li.on b {
+  color: var(--color-text-strong);
+  font-weight: 700;
+}
+.ov-road-bar-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+}
+.ov-road-bar-legend span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-road-bar-legend b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.ov-analysis-road {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--color-surface-muted);
+  color: inherit;
+  cursor: pointer;
+}
+.ov-analysis-road:hover {
+  border-color: var(--color-border);
+}
+.ov-analysis-road.on {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+.ov-analysis-road-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ov-analysis-road-head strong {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-strong);
+}
+.ov-analysis-road-head b {
+  font-size: 11px;
+  color: var(--color-text-strong);
+}
+.ov-analysis-road span {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.ov-analysis-road .ov-road-bar-legend {
+  display: none;
+}
+.ov-analysis-road.on .ov-road-bar-legend,
+.ov-analysis-focus .ov-road-bar-legend {
+  display: grid;
+}
+.ov-analysis-empty {
+  display: block !important;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 4px 2px;
+}
 .ov-map-card {
   position: relative;
   flex: 1;
@@ -149,8 +539,87 @@
   box-shadow: var(--shadow-sm);
   pointer-events: none;
 }
-.ov-map-hud strong { font-size: 11px; color: var(--color-text-strong); }
+.ov-map-hud strong { font-size: 12px; color: var(--color-text-strong); }
 .ov-map-hud span { font-size: 10px; color: var(--color-text-muted); }
+.ov-filter.ov-road {
+  position: relative;
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+.ov-combo {
+  position: relative;
+}
+.ov-combo input {
+  width: 100%;
+  padding-right: 48px;
+}
+.ov-combo-clear,
+.ov-combo-caret {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.ov-combo-caret {
+  right: 8px;
+  font-size: 12px;
+}
+.ov-combo-clear {
+  right: 26px;
+  font-size: 15px;
+}
+.ov-combo-clear:hover,
+.ov-combo-caret:hover {
+  color: var(--color-text-strong);
+}
+.ov-combo-list {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.35));
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.ov-combo-list::-webkit-scrollbar {
+  width: 8px;
+}
+.ov-combo-list::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: var(--color-border);
+}
+.ov-combo-list li {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.ov-combo-list li.is-active {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-text-strong);
+}
+.ov-combo-list li.is-picked {
+  font-weight: 700;
+  color: var(--color-text-strong);
+}
+.ov-combo-list li.ov-combo-empty {
+  cursor: default;
+  color: var(--color-text-muted);
+}
 .ov-layers-toggle {
   position: absolute;
   top: 60px;

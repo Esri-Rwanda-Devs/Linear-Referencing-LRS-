@@ -967,6 +967,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const id = String(hit?.graphic?.attributes?.rid ?? "").trim();
           if (!id) return;
           console.info(`[LRS] Picked route ${id} from the map.`);
+          // Instant network highlight before async route geometry loads.
+          applyRouteEffect({ id }, null);
           pickRef.current?.(id);
         }).catch(() => {});
       });
@@ -1404,8 +1406,21 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }));
         });
       };
+      const focusPlanPath = (vertices, widthM) => {
+        const path = (vertices || []).filter((point) => point?.length === 2);
+        if (path.length < 2) return;
+        const line = new Polyline({
+          paths: [path],
+          spatialReference: { wkid: 4326 },
+        });
+        const polygon = reservePolygon(path, widthM);
+        view
+          .goTo({ target: polygon || line, padding: 64 }, { duration: 650 })
+          .catch(() => {});
+      };
       const showPlanOptions = (options, activeId) => {
         planLayer.removeAll();
+        const drawn = [];
         (options || []).forEach((option, index) => {
           const path = (option.vertices || []).filter((point) => point?.length === 2);
           if (path.length < 2) return;
@@ -1420,13 +1435,21 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
                 outline: { color: [...ink, active ? 1 : 0.7], width: active ? 2.4 : 1.2 },
               }),
             }));
+            drawn.push(polygon);
           }
           planLayer.add(new Graphic({
             geometry: new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }),
             symbol: new SimpleLineSymbol({ color: [...ink, 1], width: active ? 3 : 1.6, style: active ? "solid" : "short-dash" }),
           }));
+          drawn.push(new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }));
           paintRivers(option.report?.rivers);
         });
+        if (activeId) {
+          const active = (options || []).find((option) => option.id === activeId);
+          if (active) focusPlanPath(active.vertices, active.width);
+        } else if (drawn.length) {
+          view.goTo({ target: drawn, padding: 72 }, { duration: 650 }).catch(() => {});
+        }
       };
       let planSettled = false;
       paintPlanPreview = (longitude, latitude) => {
@@ -1855,7 +1878,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         const line = new Polyline({ paths: usable, spatialReference: { wkid: 4326 } });
         view.goTo(line, { duration: 650 }).catch(() => {});
       };
-      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, paintRivers, focusPlanParcel, showRivers, showBuildings, loadAreaRivers, clearAreaRivers, clearPlan, clearMeasure, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
+      api.current = { view, map, overlay, projectLayer, analysisLayer, segmentLayer, compareLayer, accidentLayer, compareCursorLayer, cursorLayer, hereLayer, placeLayer, lrsLayers, layerViews, applyRouteEffect, refreshExtent, reloadLayer, paintHotspots, ensureAccidents, hotspotLayer, alignLines, raiseEditLayers, drawFeatures, showRouteLayer, setParcels, drawReserve, showPlanOptions, focusPlanPath, paintRivers, focusPlanParcel, showRivers, showBuildings, loadAreaRivers, clearAreaRivers, clearPlan, clearMeasure, estimatePlan, mapExtent: geographicExtent, setPavementMode, showPavement, focusPavement, FeatureLayer, Graphic, Polyline, Point, geometryEngine, SimpleLineSymbol, SimpleMarkerSymbol, SimpleFillSymbol, TextSymbol, route: null };
       if (mapApi) mapApi.current = api.current;
       setReady(true);
     });
@@ -1875,7 +1898,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       return;
     }
     bag.overlay.visible = true;
-    if (!route) return;
+    if (!route) {
+      bag.route = null;
+      bag.overlay.removeAll();
+      return;
+    }
     bag.route = route;
     const { view, overlay, Graphic, Polyline, Point, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = bag;
     overlay.removeAll();
@@ -1924,6 +1951,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     };
     markTerminus(0, [22, 163, 74, 0.98], "Start");
     markTerminus(route.lengthKm || 0, [220, 38, 38, 0.98], "End");
+    // Keep network highlight in sync with the cyan overlay.
+    bag.applyRouteEffect?.(route, bag.compareRoute || null);
     const target = curved.length ? curved : line;
     const zoomKey = `${route.id}:${editing ? "edit" : "chart"}`;
     if (zoomedRoute.current === zoomKey) return;
@@ -1932,7 +1961,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
     const started = performance.now();
     console.info(`[LRS] Zooming to route ${label}…`);
     focusRef.current?.(`Zooming to ${label}…`);
-    view.goTo({ target, padding: 48 }, { duration: 700, easing: "ease-in-out" })
+    view.goTo({ target, padding: 48 }, { duration: 380, easing: "ease-out" })
       .then(() => {
         console.info(`[LRS] Route ${label} highlighted and in view (${Math.round(performance.now() - started)} ms, ${route.lengthKm.toFixed(2)} km).`);
       })
