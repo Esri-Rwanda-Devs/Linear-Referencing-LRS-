@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ADMIN, BUILDING_AFFECT_METERS, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
+import { ADMIN, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
 import { distanceToPathM, insertOnPath, pathLengthM, pointInRing, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents, signInToLrs } from "../services/lrsService";
@@ -1442,6 +1442,34 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           .goTo({ target: polygon || line, padding: 64 }, { duration: 650 })
           .catch(() => {});
       };
+      const ringPolygon = (ring) => {
+        if (!ring?.length) return null;
+        const closed =
+          ring[0][0] === ring[ring.length - 1][0] &&
+          ring[0][1] === ring[ring.length - 1][1]
+            ? ring
+            : [...ring, ring[0]];
+        return new Polygon({
+          rings: [closed],
+          spatialReference: { wkid: 4326 },
+        });
+      };
+      /** Redraw parcel/building hits saved on a scenario report. */
+      const paintPlanReport = (report) => {
+        (report?.parcels || []).forEach((parcel) => {
+          const geom = ringPolygon(parcel.ring);
+          if (geom)
+            planLayer.add(new Graphic({ geometry: geom, symbol: planHit }));
+        });
+        (report?.buildings || []).forEach((building) => {
+          const geom = ringPolygon(building.hitRing || building.ring);
+          if (geom)
+            planLayer.add(
+              new Graphic({ geometry: geom, symbol: planBuildingFill }),
+            );
+        });
+        paintRivers(report?.rivers);
+      };
       const showPlanOptions = (options, activeId) => {
         planLayer.removeAll();
         const drawn = [];
@@ -1466,11 +1494,14 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             symbol: new SimpleLineSymbol({ color: [...ink, 1], width: active ? 3 : 1.6, style: active ? "solid" : "short-dash" }),
           }));
           drawn.push(new Polyline({ paths: [path], spatialReference: { wkid: 4326 } }));
-          paintRivers(option.report?.rivers);
+          if (!activeId) paintRivers(option.report?.rivers);
         });
         if (activeId) {
           const active = (options || []).find((option) => option.id === activeId);
-          if (active) focusPlanPath(active.vertices, active.width);
+          if (active) {
+            paintPlanReport(active.report);
+            focusPlanPath(active.vertices, active.width);
+          }
         } else if (drawn.length) {
           view.goTo({ target: drawn, padding: 72 }, { duration: 650 }).catch(() => {});
         }
@@ -1537,7 +1568,19 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           return [lon, lat];
         });
       });
-      const recordedFootprint = (attr) => [attr.Shape__Area, attr.shape__area, attr.area_new, attr.area, attr.size].map(Number).find((value) => value > 1 && value < 2000000) || 0;
+      const recordedFootprint = (attr) =>
+        [attr.Shape__Area, attr.shape__area, attr.SHAPE__Area, attr.area_new, attr.area, attr.size]
+          .map(Number)
+          .find((value) => value > 1 && value < 2000000) || 0;
+      /** Official full building area from SHAPE__Area (m²). */
+      const shapeAreaOf = (attr) => {
+        if (!attr) return 0;
+        const key = Object.keys(attr).find(
+          (name) => name.toLowerCase() === "shape__area",
+        );
+        const value = Number(key ? attr[key] : attr.Shape__Area);
+        return value > 1 && value < 2000000 ? value : 0;
+      };
       const estimatePlan = async (vertices, widthM) => {
         planSettled = true;
         const path = (vertices || []).filter((point) => point?.length === 2);
@@ -1624,14 +1667,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         } catch (error) {
           console.warn("[LRS] Building footprints failed", error);
         }
-        let affectZone = polygon;
-        try {
-          const expanded = geometryEngine.geodesicBuffer(polygon, BUILDING_AFFECT_METERS, "meters");
-          const zone = Array.isArray(expanded) ? expanded[0] : expanded;
-          if (zone?.rings?.length) affectZone = zone;
-        } catch {
-          /* buildings are tested against the reserve itself */
-        }
+        // Affected % = (intersect / SHAPE__Area) × 100. Keep any real overlap.
         const buildings = [];
         if (footprintCount > 0) loadedFootprints.forEach((feature) => {
           const attr = feature.attributes || {};
@@ -1639,31 +1675,55 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!rings.length) return;
           let sqm = 0;
           let footprint = 0;
-          let near = false;
+          let affectedPct = null;
           let drawGeom = null;
+          let hitRing = null;
           try {
             const geom = new Polygon({ rings, spatialReference: { wkid: 4326 } });
+            const shapeArea = shapeAreaOf(attr);
+            let geodesicFull = 0;
             try {
-              footprint = Math.abs(geometryEngine.geodesicArea(geom, "square-meters")) || 0;
+              geodesicFull =
+                Math.abs(geometryEngine.geodesicArea(geom, "square-meters")) ||
+                0;
             } catch {
-              footprint = 0;
+              geodesicFull = 0;
             }
-            if (!(footprint > 0.05)) footprint = recordedFootprint(attr);
-            const overlaps = geometryEngine.intersects(geom, polygon);
-            const close = overlaps || geometryEngine.intersects(geom, affectZone);
-            if (!close || !(footprint > 0.05)) return;
-            near = !overlaps;
-            sqm = footprint;
-            drawGeom = geom;
-            if (overlaps) {
-              const hit = geometryEngine.intersect(geom, polygon);
-              const taken = hit?.rings ? Math.abs(geometryEngine.geodesicArea(hit, "square-meters")) : 0;
-              if (taken >= 0.05) sqm = taken;
+            // Full building area: SHAPE__Area first.
+            footprint =
+              shapeArea > 1
+                ? shapeArea
+                : recordedFootprint(attr) || geodesicFull;
+            if (!(footprint > 0.05)) return;
+            if (!geometryEngine.intersects(geom, polygon)) return;
+            const hit = geometryEngine.intersect(geom, polygon);
+            if (!hit?.rings?.length) return;
+            let takenGeodesic = 0;
+            try {
+              takenGeodesic = Math.abs(
+                geometryEngine.geodesicArea(hit, "square-meters"),
+              );
+            } catch {
+              takenGeodesic = 0;
             }
+            // Keep the building if the clip has any real area.
+            if (!(takenGeodesic >= 0.05) && !(geodesicFull >= 0.05)) return;
+            if (!(takenGeodesic >= 0.05)) return;
+            // Map clip into SHAPE__Area units when both areas are known.
+            if (shapeArea > 1 && geodesicFull > 0.05) {
+              const ratio = Math.min(1, takenGeodesic / geodesicFull);
+              sqm = shapeArea * ratio;
+              affectedPct = ratio * 100;
+            } else {
+              sqm = Math.min(takenGeodesic, footprint);
+              affectedPct = Math.min(100, (sqm / footprint) * 100);
+            }
+            drawGeom = hit;
+            hitRing = simplifyRing(hit.rings[0], 80);
           } catch {
             return;
           }
-          if (!(sqm > 0.05)) return;
+          if (!(sqm > 0) || !Number.isFinite(affectedPct)) return;
           const ring = simplifyRing(rings[0], 100);
           const center = ring?.length
             ? [ring.reduce((sum, point) => sum + point[0], 0) / ring.length, ring.reduce((sum, point) => sum + point[1], 0) / ring.length]
@@ -1679,8 +1739,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
             kind: "footprint",
             height: Number(attr.buildingheight || attr.BuildingHeight) || null,
             footprint,
-            near,
+            shapeArea: footprint,
+            affectedPct,
+            near: false,
             ring,
+            hitRing,
             center,
             distanceM,
             sqm,

@@ -276,6 +276,28 @@ export function rectangleRing(start, end, widthM) {
   return [left, leftEnd, rightEnd, rightStart, left];
 }
 
+/** Continuous reserve band along a polyline (full width in metres). */
+export function corridorRing(path, widthM) {
+  const points = (path || []).filter((point) => point?.length >= 2);
+  if (points.length < 2) return [];
+  if (points.length === 2) return rectangleRing(points[0], points[1], widthM);
+  const half = Math.max(Number(widthM) || 0, 0.1) / 2;
+  const left = [];
+  const right = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const prev = points[Math.max(0, index - 1)];
+    const next = points[Math.min(points.length - 1, index + 1)];
+    const heading = bearing(
+      index === 0 ? points[0] : prev,
+      index === points.length - 1 ? points[points.length - 1] : next,
+    );
+    const at = points[index];
+    left.push(destination(at[0], at[1], heading - 90, half));
+    right.push(destination(at[0], at[1], heading + 90, half));
+  }
+  return [...left, ...right.reverse(), left[0]];
+}
+
 export function formatSqm(value) {
   return `${new Intl.NumberFormat("en-RW", { maximumFractionDigits: 1 }).format(value || 0)} m²`;
 }

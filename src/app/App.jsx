@@ -1207,14 +1207,17 @@ export default function App() {
     planVerticesRef.current = vertices;
     setPlanVertices(vertices);
     setPlanWidth(option.width);
-    setPlanReport(applyRates(option.report, planRatesRef.current));
+    const applied = applyRates(option.report, planRatesRef.current);
+    setPlanReport(applied);
     setPlanActive(id);
     setPlanOpen(true);
-    mapApi.current?.drawReserve?.(vertices, option.width);
-    mapApi.current?.paintRivers?.(option.report?.rivers);
-    if (vertices.length >= 2) {
-      mapApi.current?.focusPlanPath?.(vertices, option.width);
-    }
+    // Redraw corridor + saved parcel/building hits for this scenario.
+    mapApi.current?.showPlanOptions?.(
+      planOptions.map((item) =>
+        item.id === id ? { ...item, report: applied || item.report } : item,
+      ),
+      id,
+    );
     return vertices.length >= 2;
   };
   const measurePlan = (vertices, width) => {

@@ -3,6 +3,7 @@ import RoutePicker from "../../analysis/components/RoutePicker";
 import { URBAN_PARCEL_RATE_RWF } from "../../../config";
 import { exportBudgetReport } from "../../../utils/excel";
 import {
+  corridorRing,
   formatMetre,
   formatRwf,
   formatSqm,
@@ -193,6 +194,24 @@ const overlapOf = (parcel) => {
   if (!(recorded > 1)) return "—";
   return `${Math.min(999, Math.round((parcel.sqm / recorded) * 100))}%`;
 };
+/** Affected % = affected m² / SHAPE__Area (full building). */
+const buildingAffectedPct = (building) => {
+  const stored = Number(building?.affectedPct);
+  if (Number.isFinite(stored) && stored >= 0) {
+    const rounded =
+      stored < 10 ? Math.round(stored * 10) / 10 : Math.round(stored);
+    return `${rounded}%`;
+  }
+  const footprint = Number(
+    building?.shapeArea || building?.footprint || 0,
+  );
+  const affected = Number(building?.sqm);
+  if (!(footprint > 0) || !Number.isFinite(affected) || affected < 0)
+    return "—";
+  const pct = Math.min(100, (affected / footprint) * 100);
+  const rounded = pct < 10 ? Math.round(pct * 10) / 10 : Math.round(pct);
+  return `${rounded}%`;
+};
 const letterOf = (index) => String.fromCharCode(65 + (index % 26));
 const projectLabel = (project) =>
   project?.id
@@ -314,7 +333,7 @@ const buildingGap = (item) => {
     return "Building footprints could not be loaded, so buildings were not analysed.";
   if (item?.footprintCount === 0)
     return "No footprints in this area, so buildings were not analysed.";
-  return "No building footprint within 2 m of this reserve.";
+  return "No building footprint intersects this reserve.";
 };
 
 function metric(option, key) {
@@ -691,17 +710,25 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
     40,
   );
   const widthM = Number(width) || 20;
-  // Full alignment on every parcel (same continuous route as the map — not a chopped stub).
+  // Continuous local stretch — one band, not per-segment boxes.
+  const focusReach = Math.max(parcelSpan * 1.2, 90) + widthM;
+  const localRoad = extractCorridorNear(alignment, mid, focusReach);
   const fullRoad = limitPoints(
     chaikinSmooth(densifyPath(alignment || [], 16, 72), 2),
     56,
   );
-  const guides = ring.slice();
-  // Sample the stretch of the full route nearest this parcel for river matching.
-  const focusReach = Math.max(parcelSpan * 1.2, 90) + widthM;
-  extractCorridorNear(alignment, mid, focusReach).forEach((point) =>
-    guides.push(point),
+  const roadForBand =
+    localRoad.length >= 2
+      ? localRoad
+      : fullRoad.length >= 2
+        ? fullRoad
+        : alignment || [];
+  const reservePoly = corridorRing(
+    limitPoints(chaikinSmooth(densifyPath(roadForBand, 14, 48), 2), 48),
+    widthM,
   );
+  const guides = ring.slice();
+  roadForBand.forEach((point) => guides.push(point));
   for (let index = 1; index < ring.length; index += 1) {
     const start = ring[index - 1];
     const end = ring[index];
@@ -720,11 +747,11 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
       path: riverThrough(river.path, guides, riverReach),
     }))
     .filter((river) => river.path.length >= 2);
-  // Zoom to the parcel so it reads large; the full route still draws through the frame.
-  let minX = Math.min(...parcelXs);
-  let maxX = Math.max(...parcelXs);
-  let minY = Math.min(...parcelYs);
-  let maxY = Math.max(...parcelYs);
+  // Zoom on the parcel/buildings (as before); reserve still draws true width.
+  const minX = Math.min(...parcelXs);
+  const maxX = Math.max(...parcelXs);
+  const minY = Math.min(...parcelYs);
+  const maxY = Math.max(...parcelYs);
   const halfDeg = widthM / 2 / 111320;
   const padX = Math.max((maxX - minX || 0.0002) * 0.1, halfDeg * 0.9, 0.00005);
   const padY = Math.max((maxY - minY || 0.0002) * 0.1, halfDeg * 0.9, 0.00005);
@@ -740,29 +767,33 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
     `${chain(path)} ${sx(path[0][0]).toFixed(1)},${sy(path[0][1]).toFixed(1)}`;
   const toScreen = (path) =>
     path.map((point) => [sx(point[0]), sy(point[1])]);
-  const roadD = fullRoad.length > 1 ? smoothPathD(toScreen(fullRoad)) : "";
-  const metresAcross =
-    lineLengthM([minX - padX, mid[1]], [maxX + padX, mid[1]]) || 1;
-  const band = Math.max(3.5, Math.min(10, (widthM * 140) / metresAcross));
-  const crossed = parcel.distanceM != null && parcel.distanceM < 0.5;
-  const beside = parcel.distanceM != null && parcel.distanceM >= 0.5;
-  const recorded = Number(parcel.recordedSize);
+  const roadD =
+    roadForBand.length > 1 ? smoothPathD(toScreen(roadForBand)) : "";
+  const recorded = Number(String(parcel.recordedSize ?? "").replace(/,/g, ""));
   const overlap =
-    recorded > parcel.sqm ? Math.round((parcel.sqm / recorded) * 100) : null;
+    recorded > 1 && Number(parcel.sqm) > 0
+      ? Math.min(100, Math.round((parcel.sqm / recorded) * 100))
+      : Number(parcel.sqm) > 0
+        ? null
+        : 0;
+  const inReserve =
+    parcel.distanceM != null && parcel.distanceM <= widthM / 2 + 0.5;
+  const touches = inReserve || (overlap != null && overlap > 0);
   const riverName =
     (parcel.rivers && parcel.rivers[0]) || localRivers[0]?.name || "";
   const caption = [
-    overlap != null ? `Reserve overlap ${overlap}%` : "",
+    overlap != null && overlap > 0 ? `Reserve overlap ${overlap}%` : "",
     riverName
       ? `The reserve crosses ${riverName}`
-      : crossed
-        ? "The new road crosses this parcel"
-        : beside
-          ? "The new road passes beside this parcel"
-          : "The dashed line is the new road",
+      : touches
+        ? "The road reserve overlaps this parcel"
+        : "The new road passes beside this parcel",
   ]
     .filter(Boolean)
     .join(". ");
+  const clipId = `rr-parcel-clip-${String(parcel.key || "p")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 40)}`;
   return (
     <figure className="rr-pass">
       <svg
@@ -771,14 +802,40 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
         role="img"
         aria-label="Parcel, reserve, river, and buildings"
       >
-        {roadD && (
-          <path
-            className="reserve"
-            d={roadD}
-            strokeWidth={band.toFixed(1)}
-          />
-        )}
+        <defs>
+          <clipPath id={clipId}>
+            <polygon points={close(ring)} />
+          </clipPath>
+          <pattern
+            id="rr-overlap-hatch"
+            width="6"
+            height="6"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(35)"
+          >
+            <line
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="6"
+              stroke="#9f1239"
+              strokeWidth="2"
+              strokeOpacity="0.9"
+            />
+          </pattern>
+        </defs>
         <polygon className="parcel focus" points={close(ring)} />
+        {reservePoly.length >= 4 ? (
+          <polygon className="reserve-fill" points={close(reservePoly)} />
+        ) : null}
+        {reservePoly.length >= 4 ? (
+          <polygon
+            className="overlap-mark"
+            points={close(reservePoly)}
+            clipPath={`url(#${clipId})`}
+            style={{ fill: "url(#rr-overlap-hatch)" }}
+          />
+        ) : null}
         {mine.map((building) => {
           const footprint = building.ring?.length > 2 ? building.ring : null;
           if (footprint) {
@@ -1051,9 +1108,6 @@ export default function CostPlan({
   buildingsOn,
   onShowParcel,
 }) {
-  const ready = Boolean(report && !report.error);
-  const parcels = report?.parcels || [];
-  const buildings = report?.buildings || [];
   const points = vertices?.length || 0;
   const [filter, setFilter] = useState("All");
   const [registerQuery, setRegisterQuery] = useState("");
@@ -1071,7 +1125,10 @@ export default function CostPlan({
   });
   const source =
     options.find((option) => option.id === activeId)?.report || report;
-  const sourceParcels = source?.parcels || parcels;
+  const ready = Boolean(source && !source.error);
+  const parcels = source?.parcels || [];
+  const buildings = source?.buildings || [];
+  const sourceParcels = parcels;
   const selected =
     sourceParcels.find((parcel) => parcel.key === selectedKey) ||
     sourceParcels[0];
@@ -1639,15 +1696,17 @@ export default function CostPlan({
                 </div>
                 <div>
                   <span>River crossings</span>
-                  <b>{ready && report.rivers ? report.rivers.length : "—"}</b>
+                  <b>
+                    {ready && source.rivers ? source.rivers.length : "—"}
+                  </b>
                 </div>
                 <div>
                   <span>Reserve area</span>
-                  <b>{ready ? formatSqm(report.corridorSqm) : "—"}</b>
+                  <b>{ready ? formatSqm(source.corridorSqm) : "—"}</b>
                 </div>
                 <div>
                   <span>Alignment length</span>
-                  <b>{ready ? formatMetre(report.lengthM) : "—"}</b>
+                  <b>{ready ? formatMetre(source.lengthM) : "—"}</b>
                 </div>
               </div>
             </section>
@@ -1841,7 +1900,7 @@ export default function CostPlan({
                         <th>Parcel ID</th>
                         <th>Building</th>
                         <th>Use</th>
-                        <th>Footprint (m²)</th>
+                        <th>Affected %</th>
                         <th>Affected (m²)</th>
                         <th>Land Price</th>
                       </tr>
@@ -1875,14 +1934,9 @@ export default function CostPlan({
                             </td>
                             <td>
                               {building.name || building.use || "Building"}
-                              {building.near ? " · within 2 m" : ""}
                             </td>
               <td>{building.use || "—"}</td>
-                            <td>
-                              {Math.round(
-                                building.footprint || building.sqm,
-                              ).toLocaleString()}
-                            </td>
+                            <td>{buildingAffectedPct(building)}</td>
                             <td>{Math.round(building.sqm).toLocaleString()}</td>
                             <td>{formatRwf(building.cost)}</td>
             </tr>
@@ -1890,7 +1944,7 @@ export default function CostPlan({
                       })}
                       {ready && buildings.length === 0 && (
                         <tr>
-                          <td colSpan={6}>{buildingGap(report)}</td>
+                          <td colSpan={6}>{buildingGap(source)}</td>
                         </tr>
                       )}
         </tbody>
@@ -2580,7 +2634,7 @@ export default function CostPlan({
                     <th>Parcel ID</th>
                     <th>Structure</th>
                     <th>Use</th>
-                    <th>Footprint (m²)</th>
+                    <th>Affected %</th>
                     <th>Affected (m²)</th>
                     <th>Land Price</th>
                   </tr>
@@ -2596,11 +2650,7 @@ export default function CostPlan({
                         <td>{host ? parcelCode(host) : "—"}</td>
                         <td>{building.name || building.use || "Building"}</td>
                         <td>{building.use || "—"}</td>
-                        <td>
-                          {Math.round(
-                            building.footprint || building.sqm || 0,
-                          ).toLocaleString()}
-                        </td>
+                        <td>{buildingAffectedPct(building)}</td>
                         <td>
                           {Math.round(building.sqm || 0).toLocaleString()}
                         </td>
