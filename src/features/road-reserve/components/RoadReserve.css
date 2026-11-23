@@ -224,6 +224,21 @@
 .rr-stats div { background: var(--color-surface-muted); border-radius: 8px; padding: 8px; }
 .rr-stats span { display: block; font-size: 11px; color: var(--color-text-muted); }
 .rr-stats b { font-size: 22px; color: var(--color-text-strong); }
+.rr-summary-all { display: grid; gap: 10px; }
+.rr-summary-block {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface-muted) 55%, transparent);
+}
+.rr-summary-block > header {
+  margin: 0 0 8px;
+}
+.rr-summary-block > header b {
+  font-size: 12px;
+  color: var(--color-text-strong);
+}
+.rr-summary-block .rr-stats b { font-size: 18px; }
 .rr-cost { display: grid; gap: 6px; margin: 0; }
 .rr-cost div { display: grid; grid-template-columns: 1fr 72px auto; gap: 6px; align-items: center; font-size: 12px; color: var(--color-text); }
 .rr-cost i { display: block; height: 8px; border-radius: 99px; background: var(--color-surface-muted); overflow: hidden; }

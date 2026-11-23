@@ -1064,6 +1064,7 @@ export default function CostPlan({
   report,
   options,
   activeId,
+  showAllScenarios = false,
   note,
   parcelsOn,
   aerialOn,
@@ -1685,30 +1686,78 @@ export default function CostPlan({
           <aside className="rr-right">
             <section className="rr-card">
               <h3>Reserve summary</h3>
-              <div className="rr-stats">
-                <div>
-                  <span>Parcels affected</span>
-                  <b>{ready ? parcels.length : "—"}</b>
+              {showAllScenarios && options.length > 0 ? (
+                <div className="rr-summary-all">
+                  {options.map((option, index) => {
+                    const item = option.report;
+                    const ok = Boolean(item && !item.error);
+                    return (
+                      <div key={option.id} className="rr-summary-block">
+                        <header>
+                          <b>
+                            {letterOf(index)} · {option.label}
+                          </b>
+                        </header>
+                        <div className="rr-stats">
+                          <div>
+                            <span>Parcels affected</span>
+                            <b>{ok ? item.parcels?.length || 0 : "—"}</b>
+                          </div>
+                          <div>
+                            <span>Buildings affected</span>
+                            <b>{ok ? item.buildings?.length || 0 : "—"}</b>
+                          </div>
+                          <div>
+                            <span>River crossings</span>
+                            <b>{ok ? item.rivers?.length || 0 : "—"}</b>
+                          </div>
+                          <div>
+                            <span>Reserve area</span>
+                            <b>{ok ? formatSqm(item.corridorSqm) : "—"}</b>
+                          </div>
+                          <div>
+                            <span>Alignment length</span>
+                            <b>{ok ? formatMetre(item.lengthM) : "—"}</b>
+                          </div>
+                          <div>
+                            <span>Cost</span>
+                            <b>{ok ? rwfM(item.totalCost) : "—"}</b>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div>
-                  <span>Buildings affected</span>
-                  <b>{ready ? buildings.length : "—"}</b>
+              ) : (
+                <div className="rr-stats">
+                  <div>
+                    <span>Parcels affected</span>
+                    <b>{ready ? parcels.length : "—"}</b>
+                  </div>
+                  <div>
+                    <span>Buildings affected</span>
+                    <b>{ready ? buildings.length : "—"}</b>
+                  </div>
+                  <div>
+                    <span>River crossings</span>
+                    <b>
+                      {ready && source.rivers ? source.rivers.length : "—"}
+                    </b>
+                  </div>
+                  <div>
+                    <span>Reserve area</span>
+                    <b>{ready ? formatSqm(source.corridorSqm) : "—"}</b>
+                  </div>
+                  <div>
+                    <span>Alignment length</span>
+                    <b>{ready ? formatMetre(source.lengthM) : "—"}</b>
+                  </div>
+                  <div>
+                    <span>Cost</span>
+                    <b>{ready ? rwfM(source.totalCost) : "—"}</b>
+                  </div>
                 </div>
-                <div>
-                  <span>River crossings</span>
-                  <b>
-                    {ready && source.rivers ? source.rivers.length : "—"}
-                  </b>
-                </div>
-                <div>
-                  <span>Reserve area</span>
-                  <b>{ready ? formatSqm(source.corridorSqm) : "—"}</b>
-                </div>
-                <div>
-                  <span>Alignment length</span>
-                  <b>{ready ? formatMetre(source.lengthM) : "—"}</b>
-                </div>
-              </div>
+              )}
             </section>
             <section className="rr-card">
               <p className="rr-step">4. Layers</p>
@@ -1898,7 +1947,7 @@ export default function CostPlan({
         <thead>
                       <tr>
                         <th>Parcel ID</th>
-                        <th>Building</th>
+                        {/* <th>Building</th> */}
                         <th>Use</th>
                         <th>Affected %</th>
                         <th>Affected (m²)</th>

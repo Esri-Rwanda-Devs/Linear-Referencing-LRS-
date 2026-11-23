@@ -467,6 +467,7 @@ export default function App() {
   const [planReport, setPlanReport] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planActive, setPlanActive] = useState(null);
+  const [planShowAll, setPlanShowAll] = useState(false);
   const [planSaveTick, setPlanSaveTick] = useState(0);
   const planVerticesRef = useRef([]);
   const planWidthRef = useRef(20);
@@ -1671,6 +1672,7 @@ export default function App() {
               savePrompt={planSaveTick}
               options={planOptions}
               activeId={planActive}
+              showAllScenarios={planShowAll}
               note={planNote}
               projects={reserveProjects}
               projectId={reserveProjectId}
@@ -1698,11 +1700,13 @@ export default function App() {
                 ]);
                 setReserveProjectId(id);
                 setPlanActive(null);
+                setPlanShowAll(false);
                 return true;
               }}
               onSelectProject={(id) => {
                 setReserveProjectId(id);
                 setPlanActive(null);
+                setPlanShowAll(false);
                 setPlanDraw(false);
                 setPlanEdit(false);
                 setPlanMeasure(false);
@@ -1866,6 +1870,7 @@ export default function App() {
                 });
               }}
               onSelect={(id) => {
+                setPlanShowAll(false);
                 if (!loadScenarioForEdit(id)) setPlanActive(id);
                 setPlanDraw(false);
                 setPlanEdit(false);
@@ -1891,6 +1896,7 @@ export default function App() {
                 setPlanEdit(false);
                 setPlanVertexMode(null);
                 setPlanActive(null);
+                setPlanShowAll(false);
                 planVerticesRef.current = [];
                 setPlanVertices([]);
                 setPlanReport(null);
@@ -2076,6 +2082,7 @@ export default function App() {
                 );
               }}
               onShowAll={() => {
+                setPlanShowAll(true);
                 setPlanActive(null);
                 setPlanDraw(false);
                 setPlanEdit(false);
@@ -2083,6 +2090,7 @@ export default function App() {
                 mapApi.current?.showPlanOptions?.(planOptions, null);
               }}
               onShowOption={(id) => {
+                setPlanShowAll(false);
                 loadScenarioForEdit(id);
                 setPlanDraw(false);
                 setPlanEdit(false);
@@ -2124,6 +2132,7 @@ export default function App() {
                 setPlanEdit(false);
                 setPlanVertexMode(null);
                 setPlanActive(null);
+                setPlanShowAll(false);
                 planVerticesRef.current = [];
                 setPlanVertices([]);
                 setPlanReport(null);
