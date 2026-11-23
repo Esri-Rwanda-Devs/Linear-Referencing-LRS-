@@ -1843,7 +1843,7 @@ export default function CostPlan({
                         <th>Use</th>
                         <th>Footprint (m²)</th>
                         <th>Affected (m²)</th>
-                        <th>Price</th>
+                        <th>Land Price</th>
                       </tr>
         </thead>
         <tbody>
@@ -2582,7 +2582,7 @@ export default function CostPlan({
                     <th>Use</th>
                     <th>Footprint (m²)</th>
                     <th>Affected (m²)</th>
-                    <th>Price</th>
+                    <th>Land Price</th>
                   </tr>
                 </thead>
                 <tbody>

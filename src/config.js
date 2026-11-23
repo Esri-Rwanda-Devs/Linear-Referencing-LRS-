@@ -143,14 +143,16 @@ export const GROUPS = [
   {
     id: "ATT",
     label: "Line Events",
-    hint: "Pavement, drain, speed, carriageway",
+    hint: "Pavement, carriageway, speed, drainage",
     color: "#7c3aed",
   },
-  // { id: "PLN", label: "PLN", hint: "Maintenance plans", color: "#be185d" },
 ];
 
 export const groupLabel = (id) =>
   GROUPS.find((group) => group.id === id)?.label || id;
+
+/** Default-on overview points: KM stones, Bridge, Culvert, Camera, Accidents. */
+export const OVERVIEW_DEFAULT_POINTS = [7, 2, 5, 20, 19];
 
 export const LRS_LAYER_DEFS = [
   {
@@ -166,24 +168,23 @@ export const LRS_LAYER_DEFS = [
   },
   {
     id: 10,
-    title: "Pavement Type",
+    title: "Pavement",
     group: "ATT",
     kind: "line",
     shape: "bar",
     color: [251, 146, 60, 0.9],
     width: 4,
     swatch: "#fb923c",
-
   },
   {
-    id: 6,
-    title: "Drain Type",
+    id: 3,
+    title: "Carriageway",
     group: "ATT",
     kind: "line",
     shape: "bar",
-    color: [34, 211, 238, 0.9],
+    color: [196, 181, 253, 0.95],
     width: 2,
-    swatch: "#22d3ee",
+    swatch: "#c4b5fd",
   },
   {
     id: 14,
@@ -196,14 +197,41 @@ export const LRS_LAYER_DEFS = [
     swatch: "#4ade80",
   },
   {
-    id: 3,
-    title: "Carriageway Type",
+    id: 6,
+    title: "Drainage",
     group: "ATT",
     kind: "line",
     shape: "bar",
-    color: [196, 181, 253, 0.95],
+    color: [34, 211, 238, 0.9],
     width: 2,
-    swatch: "#c4b5fd",
+    swatch: "#22d3ee",
+  },
+  {
+    id: 7,
+    title: "KM Stones",
+    group: "POI",
+    kind: "point",
+    shape: "milestone",
+    color: [219, 39, 119, 0.95],
+    swatch: "#db2777",
+  },
+  {
+    id: 2,
+    title: "Bridges",
+    group: "POI",
+    kind: "point",
+    shape: "bridge",
+    color: [255, 45, 106, 0.95],
+    swatch: "#ff2d6a",
+  },
+  {
+    id: 5,
+    title: "Culverts",
+    group: "POI",
+    kind: "point",
+    shape: "culvert",
+    color: [234, 88, 12, 0.95],
+    swatch: "#ea580c",
   },
   {
     id: 20,
@@ -217,6 +245,28 @@ export const LRS_LAYER_DEFS = [
     snap: true,
   },
   {
+    id: 19,
+    service: ACCIDENTS,
+    title: "Accidents",
+    group: "POI",
+    kind: "point",
+    shape: "accident",
+    color: [220, 38, 38, 0.95],
+    swatch: "#dc2626",
+    showAll: true,
+    snap: true,
+    readOnly: true,
+  },
+  {
+    id: 11,
+    title: "Point Assets",
+    group: "POI",
+    kind: "point",
+    shape: "circle",
+    color: [37, 99, 235, 0.95],
+    swatch: "#2563eb",
+  },
+  {
     id: 15,
     title: "Traffic Station",
     group: "POI",
@@ -226,43 +276,6 @@ export const LRS_LAYER_DEFS = [
     swatch: "#b45309",
     snap: true,
     readOnly: true,
-  },
-  {
-    id: 2,
-    title: "Bridges",
-    group: "POI",
-    kind: "point",
-    shape: "bridge",
-    color: [255, 45, 106, 0.95],
-    swatch: "#ff2d6a",
-  },
-  // {
-  //   id: 0,
-  //   title: "Calibration Points",
-  //   group: "POI",
-  //   kind: "point",
-  //   chart: false,
-  //   shape: "diamond",
-  //   color: [13, 148, 136, 0.95],
-  //   swatch: "#0d9488",
-  // },
-  {
-    id: 17,
-    title: "Transformers",
-    group: "POI",
-    kind: "point",
-    shape: "transformer",
-    color: [192, 38, 211, 0.95],
-    swatch: "#c026d3",
-  },
-  {
-    id: 5,
-    title: "Culverts",
-    group: "POI",
-    kind: "point",
-    shape: "culvert",
-    color: [234, 88, 12, 0.95],
-    swatch: "#ea580c",
   },
   {
     id: 8,
@@ -283,35 +296,13 @@ export const LRS_LAYER_DEFS = [
     swatch: "#0e7490",
   },
   {
-    id: 11,
-    title: "Point Assets",
+    id: 17,
+    title: "Transformers",
     group: "POI",
     kind: "point",
-    shape: "circle",
-    color: [37, 99, 235, 0.95],
-    swatch: "#2563eb",
-  },
-  {
-    id: 7,
-    title: "KM Stones",
-    group: "POI",
-    kind: "point",
-    shape: "milestone",
-    color: [219, 39, 119, 0.95],
-    swatch: "#db2777",
-  },
-  {
-    id: 19,
-    service: ACCIDENTS,
-    title: "Accidents",
-    group: "POI",
-    kind: "point",
-    shape: "accident",
-    color: [220, 38, 38, 0.95],
-    swatch: "#dc2626",
-    showAll: true,
-    snap: true,
-    readOnly: true,
+    shape: "transformer",
+    color: [192, 38, 211, 0.95],
+    swatch: "#c026d3",
   },
 ];
 
@@ -349,7 +340,7 @@ export const PARCEL_SERVICES = [
   "Rwamagana_Parcels",
 ];
 
-/** Chart colours per attribute value, keyed by LRS layer id. Values match case-insensitively. */
+/** Chart / map colours per attribute value (case-insensitive keys). */
 export const VALUE_COLORS = {
   19: {
     field: "severity",
@@ -360,8 +351,13 @@ export const VALUE_COLORS = {
     colors: { 0: "#E2E8F010", 40: "#B3E0C8", 60: "#E7E774", 80: "#A5A7F2" },
   },
   3: {
-    field: "cwaytype",
-    colors: { divided: "#4C1D95", undivided: "#C4B5FD" },
+    field: "lane_type",
+    colors: {
+      "four lane divided": "#4C1D95",
+      "four lane divided carriageway": "#4C1D95",
+      "two lane": "#C4B5FD",
+      "intermediate lane": "#A78BFA",
+    },
   },
   10: {
     field: "pavement_category",
@@ -374,6 +370,94 @@ export const VALUE_COLORS = {
       unlined: "#D7C29E",
       "surface lined": "#9FEB1C",
       "fully lined": "#002673",
+    },
+  },
+};
+
+/** Drainage analysis: type (LHS+RHS) or condition (LHS+RHS). */
+export const DRAINAGE_FIELDS = {
+  type: {
+    label: "Type",
+    lhs: ["drainage_type_lhs", "drain_type_lhs"],
+    rhs: ["drainage_type_rhs", "drain_type_rhs"],
+    colors: {
+      "no drain": "#F7634F",
+      unlined: "#D7C29E",
+      "surface lined": "#9FEB1C",
+      "fully lined": "#002673",
+    },
+  },
+  condition: {
+    label: "Condition",
+    lhs: [
+      "drainage_condition_lhs",
+      "drain_condition_lhs",
+      "condition_lhs",
+      "drainage_cond_lhs",
+    ],
+    rhs: [
+      "drainage_condition_rhs",
+      "drain_condition_rhs",
+      "condition_rhs",
+      "drainage_cond_rhs",
+    ],
+    colors: {
+      "very poor": "#7f1d1d",
+      poor: "#ea580c",
+      fair: "#eab308",
+      good: "#16a34a",
+      excellent: "#22c55e",
+      blocked: "#7f1d1d",
+      damaged: "#ea580c",
+      "needs cleaning": "#f59e0b",
+      clean: "#22c55e",
+    },
+  },
+};
+
+/** Overview pavement analysis dimensions. */
+export const PAVEMENT_FIELDS = {
+  category: {
+    field: "pavement_category",
+    label: "Category",
+    colors: { paved: "#000000", unpaved: "#F0BEA5" },
+  },
+  pavement_type: {
+    field: "pavement_type",
+    label: "Type",
+    colors: {
+      "asphalt mix on asphalt base": "#1e293b",
+      earth: "#a16207",
+      "jointed reinforced concrete pavement": "#64748b",
+    },
+  },
+  surface_type: {
+    field: "surface_type",
+    label: "Surface",
+    colors: {
+      unseal: "#d6d3d1",
+      "cement concrete": "#94a3b8",
+      bituminous: "#0f172a",
+    },
+  },
+  pci: {
+    field: "pci_range",
+    label: "PCI",
+    colors: {
+      "very poor": "#7f1d1d",
+      poor: "#ea580c",
+      fair: "#eab308",
+      good: "#a3e635",
+      excellent: "#16a34a",
+    },
+  },
+  paved_band: {
+    field: "pavement_category",
+    label: "Paved band",
+    colors: {
+      unpaved: "#F0BEA5",
+      "partially paved": "#fb923c",
+      "fully paved": "#000000",
     },
   },
 };

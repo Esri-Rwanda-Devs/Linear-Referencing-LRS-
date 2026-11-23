@@ -1098,17 +1098,21 @@ export default function App() {
   const onLeave = useCallback(() => {}, []);
   const selectRoute = useCallback(
     (id) => {
-      if (!id || routeLoadingRef.current || placingId != null) return;
-      const loaded = Boolean(
+      if (!id || placingId != null) return;
+      const sameLoaded = Boolean(
         route?.vertices?.length && routeKey(route.id) === routeKey(id),
       );
-      if (!loaded) {
-        routeLoadingRef.current = true;
-        setRouteLoading(true);
-        if (String(routeId) === String(id))
-          setRouteTicket((ticket) => ticket + 1);
+      if (sameLoaded) {
+        mapApi.current?.applyRouteEffect?.({ id }, null);
+        setFollow(true);
+        setStatus(`Route ${id} is already loaded.`);
+        return;
       }
-      // Flash the road casing immediately (full cyan overlay follows loadRoute).
+      // New pick always wins, even if another route is still loading.
+      routeLoadingRef.current = true;
+      setRouteLoading(true);
+      if (String(routeId) === String(id))
+        setRouteTicket((ticket) => ticket + 1);
       mapApi.current?.applyRouteEffect?.({ id }, null);
       setRouteId(id);
       setActiveId(null);
@@ -1117,14 +1121,7 @@ export default function App() {
       setLineAnchor(null);
       setPlaceMarks(null);
       setEditNotice("");
-      if (placingId != null) {
-        const layer = LRS_LAYER_DEFS.find((item) => item.id === placingId);
-        setStatus(
-          layer?.kind === "point"
-            ? `${id} is active. Click that road to place the point.`
-            : `${id} is active. Click the start yourself, then click the end.`,
-        );
-      }
+      setStatus(`Loading route ${id}…`);
     },
     [placingId, route, routeId],
   );
@@ -3078,33 +3075,48 @@ export default function App() {
                 <dl>
                   <div>
                     <dt>Route ID</dt>
-                    <dd>{routeSummary.id || "—"}</dd>
+                    <dd>{routeSummary.id || routeId || "—"}</dd>
                   </div>
                   <div>
                     <dt>Road name</dt>
-                    <dd>{routeSummary.name || "—"}</dd>
+                    <dd>
+                      {routeLoading
+                        ? "Loading…"
+                        : routeSummary.name || "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt>Classification</dt>
-                    <dd>{routeSummary.classification || "—"}</dd>
+                    <dd>
+                      {routeLoading
+                        ? "…"
+                        : routeSummary.classification || "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt>Length</dt>
                     <dd>
-                      {Number.isFinite(routeSummary.length)
-                        ? `${routeSummary.length.toFixed(2)} km`
-                        : "—"}
+                      {routeLoading
+                        ? "…"
+                        : Number.isFinite(routeSummary.length)
+                          ? `${routeSummary.length.toFixed(2)} km`
+                          : "—"}
                     </dd>
                   </div>
                   <div>
                     <dt>Surface</dt>
-                    <dd>{routeSummary.surface || "—"}</dd>
+                    <dd>
+                      {routeLoading ? "…" : routeSummary.surface || "—"}
+                    </dd>
                   </div>
                 </dl>
                 <div className="route-assets">
                   <b>Assets on route</b>
-                  {!route && <p>Select a route to see its assets.</p>}
-                  {route && routeAssets.length === 0 && (
+                  {routeLoading && <p>Loading assets…</p>}
+                  {!routeLoading && !route && (
+                    <p>Click a road on the map to load it.</p>
+                  )}
+                  {!routeLoading && route && routeAssets.length === 0 && (
                     <p>No assets on this route.</p>
                   )}
                   {routeAssets.length > 0 && (

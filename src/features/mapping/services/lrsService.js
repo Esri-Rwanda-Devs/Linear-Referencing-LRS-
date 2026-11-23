@@ -1,5 +1,6 @@
 import {
   ADMIN,
+  DRAINAGE_FIELDS,
   LRS,
   LRS_LAYER_DEFS,
   PAVEMENT_LAYER_ID,
@@ -290,15 +291,31 @@ function usableLabel(value) {
 
 function carriagewayType(attributes) {
   const keys = Object.keys(attributes || {});
-  const key = ["cway", "cwaytype", "carriageway_type", "carriagewaytype"]
+  const key = [
+    "lane_type",
+    "lanetype",
+    "cway",
+    "cwaytype",
+    "carriageway_type",
+    "carriagewaytype",
+  ]
     .map((wanted) => keys.find((name) => name.toLowerCase() === wanted))
     .find(Boolean);
   const text = key ? usableLabel(attributes[key]) : "";
   if (!text) return "";
-  const compact = text.toLowerCase().replace(/[^a-z]/g, "");
-  if (compact.includes("undivided")) return "Undivided";
-  if (compact.includes("divided") || compact === "dual") return "Divided";
-  return text;
+  const widthKey = keys.find((name) => /^width(_m|m)?$/i.test(name));
+  const widthRaw = widthKey != null ? attributes[widthKey] : null;
+  const width =
+    widthRaw != null && String(widthRaw).trim() !== ""
+      ? Number(String(widthRaw).match(/-?\d+(?:\.\d+)?/)?.[0])
+      : NaN;
+  const widthNote = Number.isFinite(width) ? ` (${width} m)` : "";
+  const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/four|4\s*lane/.test(compact))
+    return `Four Lane divided carriageway${widthNote}`;
+  if (/two|2\s*lane/.test(compact)) return `Two lane${widthNote}`;
+  if (/intermediate/.test(compact)) return `Intermediate Lane${widthNote}`;
+  return `${text}${widthNote}`;
 }
 
 function maxSpeedValue(attributes) {
@@ -565,8 +582,21 @@ async function countDistinctCodes(def, where = "1=1") {
 }
 
 const VALUE_FIELD_ALIASES = {
-  3: ["cway", "cwaytype", "carriageway_type", "carriagewaytype"],
-  6: ["drainage_type_lhs", "drainage_type", "draintype", "drain_type"],
+  3: [
+    "lane_type",
+    "lanetype",
+    "cway",
+    "cwaytype",
+    "carriageway_type",
+    "carriagewaytype",
+  ],
+  6: [
+    "drainage_type_lhs",
+    "drainage_type_rhs",
+    "drainage_type",
+    "draintype",
+    "drain_type",
+  ],
   10: ["pavement_category", "pavement_type", "pavementcategory"],
   14: ["maxspeed", "speed_limit", "speedlimit", "speed"],
   19: ["severity"],
@@ -586,11 +616,30 @@ function valueFieldOf(meta, def) {
   return null;
 }
 
-function typeName(layerId, raw) {
+function pciStatus(raw) {
   const text = String(raw ?? "").trim();
   if (!text) return "No data";
+  const before = text.split("(")[0].trim();
+  const compact = before.toLowerCase().replace(/[^a-z\s]/g, " ").trim();
+  if (/very\s*poor/.test(compact)) return "Very Poor";
+  if (/\bpoor\b/.test(compact)) return "Poor";
+  if (/\bfair\b/.test(compact)) return "Fair";
+  if (/\bgood\b/.test(compact)) return "Good";
+  if (/\bexcellent\b/.test(compact)) return "Excellent";
+  return before || text;
+}
+
+function typeName(layerId, raw, fieldName = "") {
+  const text = String(raw ?? "").trim();
+  if (!text) return "No data";
+  if (/pci_range|pci_status|pci$|condition/i.test(fieldName)) {
+    return pciStatus(text);
+  }
   if (layerId === 3) {
-    const compact = text.toLowerCase().replace(/[^a-z]/g, "");
+    const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (/four|4\s*lane/.test(compact)) return "Four Lane divided";
+    if (/two|2\s*lane/.test(compact)) return "Two lane";
+    if (/intermediate/.test(compact)) return "Intermediate Lane";
     if (compact.includes("undivided")) return "Undivided";
     if (compact.includes("divided") || compact === "dual") return "Divided";
   }
@@ -1480,27 +1529,72 @@ const ROAD_NAME_FIELDS = ["routename", "route_name", "link_name", "road_name", "
 const ROAD_CODE_FIELDS = ["road_code", "roadcode", "routecode", "route_code"];
 const ROUTE_ID_FIELDS = ROUTE_FIELDS.filter((name) => !/name/.test(name));
 
+function findNamedField(fields, aliases = []) {
+  for (const alias of aliases) {
+    const hit = (fields || []).find(
+      (field) => field.name.toLowerCase() === String(alias).toLowerCase(),
+    );
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function drainagePair(fields, mode = "type") {
+  const spec = DRAINAGE_FIELDS[mode] || DRAINAGE_FIELDS.type;
+  const lhs = findNamedField(fields, spec.lhs);
+  const rhs = findNamedField(fields, spec.rhs);
+  if (lhs && rhs) return { lhs, rhs, mode: mode || "type" };
+  // Fall back to type columns when condition fields are missing.
+  if (mode !== "type") {
+    const typeSpec = DRAINAGE_FIELDS.type;
+    const typeLhs = findNamedField(fields, typeSpec.lhs);
+    const typeRhs = findNamedField(fields, typeSpec.rhs);
+    if (typeLhs && typeRhs) return { lhs: typeLhs, rhs: typeRhs, mode: "type" };
+  }
+  return null;
+}
+
 /**
  * Per-road length and type breakdown for a line-event layer (no geometry).
- * Used by Overview analysis: paved % (or other type %) per road + segment counts.
+ * options.valueField — override category column (pavement_type, pci_range, …)
+ * options.drainageMode — "type" | "condition" (LHS + RHS)
+ * Drainage always reads both LHS and RHS with the same type colours.
  */
-export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "") {
+export async function loadLineEventRoadStats(
+  layerId,
+  levelId = "",
+  areaName = "",
+  options = {},
+) {
   const def = LRS_LAYER_DEFS.find((item) => item.id === Number(layerId));
   if (!def || def.kind !== "line") return [];
-  // Limit to one boundary when the layer carries that admin field.
   const area = levelId && areaName ? await assetField(def, levelId) : null;
   const where = area ? whereEquals(area.name, areaName, area.type) : "1=1";
   const meta = await layerMeta(def.id, def.service || LRS);
   const fields = meta.fields || [];
-  const value = valueFieldOf(meta, def);
-  // Event layers name their road columns differently; detect each one.
+  const override = String(options.valueField || "").trim();
+  const value = override
+    ? fields.find((field) => field.name.toLowerCase() === override.toLowerCase()) ||
+      { name: override, type: "" }
+    : valueFieldOf(meta, def);
+  const drain = def.id === 6
+    ? drainagePair(fields, options.drainageMode || "type")
+    : null;
+  const dualDrain = Boolean(drain?.lhs && drain?.rhs);
+  const widthField = fields.find((field) => /^width(_m|m)?$/i.test(field.name));
+  const speedField =
+    def.id === 14
+      ? value ||
+        fields.find((field) => /maxspeed|speed_limit|speedlimit/i.test(field.name))
+      : null;
   const codeField = namedField(fields, ROAD_CODE_FIELDS);
   const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
   const nameField = namedField(fields, ROAD_NAME_FIELDS);
   if (!codeField && !routeField && !nameField) {
-    throw new Error(`${def.title} has no road code, route id, or road name column.`);
+    throw new Error(
+      `${def.title} has no road code, route id, or road name column.`,
+    );
   }
-  // Without a code column, translate route ids to codes through the road network.
   const codes = !codeField && routeField ? await routeCodeMap() : null;
   const plan = lengthPlan(meta);
   const perUnit = await measureDivisor(def, plan);
@@ -1514,6 +1608,10 @@ export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "
         routeField,
         nameField,
         value?.name,
+        dualDrain ? drain.lhs.name : null,
+        dualDrain ? drain.rhs.name : null,
+        widthField?.name,
+        speedField?.name,
         lengthField,
         plan.kind === "measure" ? plan.from : null,
         plan.kind === "measure" ? plan.to : null,
@@ -1531,6 +1629,16 @@ export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "
     20,
     def.service || LRS,
   );
+
+  const addBucket = (entry, type, km, side = "") => {
+    const label = side ? `${side} · ${type}` : type;
+    const key = label.toLowerCase();
+    const bucket = entry.byType[key] || { name: label, km: 0, count: 0, side };
+    bucket.km += km;
+    bucket.count += 1;
+    entry.byType[key] = bucket;
+  };
+
   const roads = new Map();
   (features || []).forEach((feature) => {
     const attrs = feature.attributes || {};
@@ -1540,7 +1648,6 @@ export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "
       (codes && routeId ? codes.get(routeKey(routeId)) || "" : "")
     ).trim();
     const name = nameField ? String(attrs[nameField] ?? "").trim() : "";
-    // Prefer route code (NR1, NR19, …) as the stable road id and label.
     const key = code || routeId || name;
     if (!key) return;
     let km = Number(attributeOf(attrs, lengthField));
@@ -1552,8 +1659,6 @@ export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "
       }
     }
     if (!Number.isFinite(km) || km < 0) km = 0;
-    const rawType = value?.name ? attributeOf(attrs, value.name) : "";
-    const type = typeName(def.id, rawType);
     const id = key.toLowerCase();
     const entry = roads.get(id) || {
       key,
@@ -1563,17 +1668,61 @@ export async function loadLineEventRoadStats(layerId, levelId = "", areaName = "
       segments: 0,
       totalKm: 0,
       byType: {},
+      speedKmSum: 0,
+      speedLen: 0,
+      avgSpeed: null,
     };
     if (name && !entry.name) entry.name = name;
     entry.segments += 1;
     entry.totalKm += km;
-    const bucket = entry.byType[type] || { name: type, km: 0, count: 0 };
-    bucket.km += km;
-    bucket.count += 1;
-    entry.byType[type] = bucket;
+
+    if (dualDrain) {
+      const lhs = typeName(
+        def.id,
+        attributeOf(attrs, drain.lhs.name),
+        drain.lhs.name,
+      );
+      const rhs = typeName(
+        def.id,
+        attributeOf(attrs, drain.rhs.name),
+        drain.rhs.name,
+      );
+      addBucket(entry, lhs, km, "LHS");
+      addBucket(entry, rhs, km, "RHS");
+    } else if (def.id === 3) {
+      const type =
+        carriagewayType(attrs) ||
+        typeName(def.id, attributeOf(attrs, value?.name), value?.name);
+      addBucket(entry, type, km);
+    } else {
+      const rawType = value?.name ? attributeOf(attrs, value.name) : "";
+      const type = typeName(def.id, rawType, value?.name || "");
+      addBucket(entry, type, km);
+    }
+
+    if (speedField?.name) {
+      const speed = Number(
+        String(attributeOf(attrs, speedField.name) ?? "").match(
+          /-?\d+(?:\.\d+)?/,
+        )?.[0],
+      );
+      if (Number.isFinite(speed) && km > 0) {
+        entry.speedKmSum += speed * km;
+        entry.speedLen += km;
+      }
+    }
     roads.set(id, entry);
   });
-  return [...roads.values()].sort((a, b) => b.totalKm - a.totalKm);
+
+  return [...roads.values()]
+    .map((road) => ({
+      ...road,
+      avgSpeed:
+        road.speedLen > 0
+          ? Math.round(road.speedKmSum / road.speedLen)
+          : null,
+    }))
+    .sort((a, b) => b.totalKm - a.totalKm);
 }
 
 /** Road code and its route ids for a picked road (code, route id, or name). */
@@ -1709,7 +1858,11 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
         if (!clause) return { id: def.id, count: null, segments: [] };
         const where = areaWhere ? `${clause} AND ${areaWhere}` : clause;
         const value = valueFieldOf(meta, def);
+        const drain = def.id === 6 ? drainagePair(fields, "type") : null;
         const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
+        const widthField = fields.find((field) =>
+          /^width(_m|m)?$/i.test(field.name),
+        );
         const plan = lengthPlan(meta);
         const perUnit = await measureDivisor(def, plan);
         const lengthField = fields.find((field) =>
@@ -1721,6 +1874,9 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
             [
               routeField,
               value?.name,
+              drain?.lhs?.name,
+              drain?.rhs?.name,
+              widthField?.name,
               lengthField,
               measured ? plan.from : null,
               measured ? plan.to : null,
@@ -1739,21 +1895,61 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
           10,
           def.service || LRS,
         );
-        const segments = (features || []).map((feature) => {
+        const segments = [];
+        (features || []).forEach((feature) => {
           const attrs = feature.attributes || {};
-          const from = measured ? Number(attributeOf(attrs, plan.from)) / perUnit : NaN;
-          const to = measured ? Number(attributeOf(attrs, plan.to)) / perUnit : NaN;
+          const from = measured
+            ? Number(attributeOf(attrs, plan.from)) / perUnit
+            : NaN;
+          const to = measured
+            ? Number(attributeOf(attrs, plan.to)) / perUnit
+            : NaN;
           let km = Number(attributeOf(attrs, lengthField));
-          if (!(Number.isFinite(km) && km > 0) && Number.isFinite(from) && Number.isFinite(to)) {
+          if (
+            !(Number.isFinite(km) && km > 0) &&
+            Number.isFinite(from) &&
+            Number.isFinite(to)
+          ) {
             km = Math.abs(to - from);
           }
-          return {
+          const base = {
             route: routeField ? String(attrs[routeField] ?? "").trim() : "",
             from: Number.isFinite(from) ? Math.min(from, to) : null,
             to: Number.isFinite(to) ? Math.max(from, to) : null,
             km: Number.isFinite(km) && km > 0 ? km : 0,
-            type: typeName(def.id, value?.name ? attributeOf(attrs, value.name) : ""),
           };
+          if (drain?.lhs && drain?.rhs) {
+            const lhs = typeName(
+              def.id,
+              attributeOf(attrs, drain.lhs.name),
+              drain.lhs.name,
+            );
+            const rhs = typeName(
+              def.id,
+              attributeOf(attrs, drain.rhs.name),
+              drain.rhs.name,
+            );
+            segments.push({ ...base, type: `LHS · ${lhs}`, side: "LHS" });
+            segments.push({ ...base, type: `RHS · ${rhs}`, side: "RHS" });
+            return;
+          }
+          let type = "No data";
+          if (def.id === 3) {
+            type =
+              carriagewayType(attrs) ||
+              typeName(
+                def.id,
+                value?.name ? attributeOf(attrs, value.name) : "",
+                value?.name || "",
+              );
+          } else {
+            type = typeName(
+              def.id,
+              value?.name ? attributeOf(attrs, value.name) : "",
+              value?.name || "",
+            );
+          }
+          segments.push({ ...base, type });
         });
         const groups = new Map();
         segments.forEach((segment) => {

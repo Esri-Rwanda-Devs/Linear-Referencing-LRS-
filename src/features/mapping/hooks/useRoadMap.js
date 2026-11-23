@@ -904,7 +904,9 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }
           return;
         }
-        if (busyRef.current?.current) return;
+        // Allow a new map pick to replace a route that is still loading.
+        if (busyRef.current?.current && (placingRef.current || editingRef.current))
+          return;
         if (placingRef.current || editingRef.current) {
           const longitude = event.mapPoint.longitude;
           const latitude = event.mapPoint.latitude;
@@ -962,15 +964,37 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         }
         const roadLayer = lrsLayers[roadIndex];
         if (!roadLayer || roadLayer === "pending" || !roadLayer.visible) return;
-        view.hitTest(event, { include: [roadLayer] }).then((response) => {
-          const hit = response.results.find((result) => result.graphic?.layer === roadLayer);
-          const id = String(hit?.graphic?.attributes?.rid ?? "").trim();
-          if (!id) return;
-          console.info(`[LRS] Picked route ${id} from the map.`);
+        const longitude = event.mapPoint?.longitude;
+        const latitude = event.mapPoint?.latitude;
+        const pick = (id) => {
+          const routeId = String(id || "").trim();
+          if (!routeId) return;
+          console.info(`[LRS] Picked route ${routeId} from the map.`);
           // Instant network highlight before async route geometry loads.
-          applyRouteEffect({ id }, null);
-          pickRef.current?.(id);
-        }).catch(() => {});
+          applyRouteEffect({ id: routeId }, null);
+          pickRef.current?.(routeId);
+        };
+        view
+          .hitTest(event, { include: [roadLayer] })
+          .then((response) => {
+            const hit = response.results.find(
+              (result) => result.graphic?.layer === roadLayer,
+            );
+            const id = String(hit?.graphic?.attributes?.rid ?? "").trim();
+            if (id) {
+              pick(id);
+              return;
+            }
+            // Thin centreline is easy to miss — snap to nearest painted road.
+            if (Number.isFinite(longitude) && Number.isFinite(latitude)) {
+              pick(nearestRoadId(longitude, latitude));
+            }
+          })
+          .catch(() => {
+            if (Number.isFinite(longitude) && Number.isFinite(latitude)) {
+              pick(nearestRoadId(longitude, latitude));
+            }
+          });
       });
       const layerViews = new window.Map();
       const applyRouteEffect = (activeRoute, otherRoute) => {

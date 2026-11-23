@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ADMIN,
+  DRAINAGE_FIELDS,
   LRS,
   LRS_LAYER_DEFS,
+  OVERVIEW_DEFAULT_POINTS,
+  PAVEMENT_FIELDS,
   PAVEMENT_LAYER_ID,
   SNAP_METERS,
   VALUE_COLORS,
@@ -20,41 +23,6 @@ import {
 
 const RWANDA = { center: [29.87, -1.94], scale: 3700000 };
 const FIT_PADDING = { top: 40, right: 40, bottom: 40, left: 40 };
-
-function pointCluster(def) {
-  const color = def.color || def.swatch || "#38bdf8";
-  return {
-    type: "cluster",
-    // Wider radius = fewer overlapping bubbles when zoomed out.
-    clusterRadius: "72px",
-    clusterMinSize: "22px",
-    clusterMaxSize: "44px",
-    // Past this scale (zoomed in), draw real assets instead of clusters.
-    clusterMaxScale: 18000,
-    symbol: {
-      type: "simple-marker",
-      style: "circle",
-      color,
-      outline: { color: [255, 255, 255, 0.92], width: 1.25 },
-    },
-    labelingInfo: [
-      {
-        deconflictionStrategy: "static",
-        labelExpressionInfo: {
-          expression: "Text($feature.cluster_count, '#,###')",
-        },
-        symbol: {
-          type: "text",
-          color: "#ffffff",
-          haloColor: [15, 23, 42, 0.85],
-          haloSize: 1,
-          font: { size: 10, weight: "bold", family: "sans-serif" },
-        },
-        labelPlacement: "center-center",
-      },
-    ],
-  };
-}
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -83,7 +51,7 @@ function popupFor(def) {
   };
 }
 
-function lineRenderer(def, valueField) {
+function lineRenderer(def, valueField, colorMap = null) {
   // Thin enough that satellite / streets basemap stays visible under events.
   const width = def.route
     ? 1.8
@@ -96,14 +64,24 @@ function lineRenderer(def, valueField) {
     join: "round",
   };
   const rule = VALUE_COLORS[def.id];
-  if (!rule || !valueField?.name || def.kind !== "line" || def.route)
+  const colors = colorMap || rule?.colors;
+  if (!colors || !valueField?.name || def.kind !== "line" || def.route)
     return { type: "simple", symbol: simple };
   const safe = String(valueField.name).replace(/"/g, "");
+  // PCI / condition labels often look like "Fair(25-50)" — strip the range.
+  const needsStatus =
+    /pci|condition/i.test(valueField.name) ||
+    Object.keys(colors).some((key) =>
+      /poor|fair|good|excellent/i.test(key),
+    );
+  const valueExpression = needsStatus
+    ? `var t = Lower(Text($feature["${safe}"])); var p = Find('(', t); return p > 0 ? Trim(Left(t, p)) : t;`
+    : `Lower(Text($feature["${safe}"]))`;
   return {
     type: "unique-value",
-    valueExpression: `Lower(Text($feature["${safe}"]))`,
+    valueExpression,
     defaultSymbol: simple,
-    uniqueValueInfos: Object.entries(rule.colors).map(([value, color]) => ({
+    uniqueValueInfos: Object.entries(colors).map(([value, color]) => ({
       value: String(value).toLowerCase(),
       symbol: {
         type: "simple-line",
@@ -117,8 +95,7 @@ function lineRenderer(def, valueField) {
 }
 
 function pointRenderer(def) {
-  // Slightly smaller markers so unclustered points stay readable without stacking.
-  const icon = markerSymbol(def, 14);
+  const icon = markerSymbol(def, 12);
   if (icon) return { type: "simple", symbol: icon };
   return {
     type: "simple",
@@ -126,8 +103,8 @@ function pointRenderer(def) {
       type: "simple-marker",
       style: "circle",
       color: def.color,
-      size: 7,
-      outline: { color: [255, 255, 255, 0.9], width: 0.7 },
+      size: 6,
+      outline: { color: [255, 255, 255, 0.95], width: 0.8 },
     },
   };
 }
@@ -179,23 +156,8 @@ function layerChoice(
       locked: true,
     };
 
-  // Analysis mode: show the focused line event; road-only keeps all line events for that route.
-  if (
-    analysisActive &&
-    isLineish &&
-    !isFocusLayer &&
-    !isRoute &&
-    !(roadOn && !focusOn && !typeOn)
-  ) {
-    return {
-      on: false,
-      where: null,
-      reason: "Hidden by the line-event filter",
-      locked: true,
-    };
-  }
+  // Keep all line events visible; only hide the road network unless scoped.
   if (analysisActive && isRoute && !roadOn && !typeRoadsOn) {
-    // Hide full network unless a road / type-road filter scopes it.
     return {
       on: false,
       where: null,
@@ -264,8 +226,10 @@ function layerChoice(
     needle && !titleHit ? needle : "",
     extras,
   );
+  // Points follow Layers/muted; line events stay on unless muted.
+  const on = forceOn || !muted.includes(def.id);
   return {
-    on: forceOn || (!analysisActive && !muted.includes(def.id)),
+    on,
     where: filter.where,
     reason: "",
     locked: forceOn,
@@ -298,6 +262,8 @@ export default function OverviewMap({
   roadZoomNonce = 0,
   typeRoadKeys = [],
   roadIds = [],
+  pavementField = "category",
+  drainageMode = "type",
   analysisLabel = "",
   pavedPct = null,
   headline = "",
@@ -379,12 +345,13 @@ export default function OverviewMap({
               title: def.title,
               customParameters: token ? { token } : undefined,
               opacity: def.kind === "line" ? 0.88 : 0.95,
+              visible:
+                def.kind !== "point" ||
+                OVERVIEW_DEFAULT_POINTS.includes(def.id),
               renderer:
                 def.kind === "point"
                   ? pointRenderer(def)
                   : lineRenderer(def, spec?.value),
-              featureReduction:
-                def.kind === "point" ? pointCluster(def) : undefined,
               popupTemplate: popupFor(def),
               outFields: ["*"],
               listMode: "hide",
@@ -726,6 +693,32 @@ export default function OverviewMap({
         layer.definitionExpression = next;
     });
   }, [ready, filterKey]);
+
+  // Retheme pavement / drainage lines when analysis dimension changes.
+  useEffect(() => {
+    if (!ready) return;
+    const pavement = layersRef.current.get(PAVEMENT_LAYER_ID);
+    if (pavement && pavementField !== "paved_band") {
+      const spec = PAVEMENT_FIELDS[pavementField];
+      if (spec?.field) {
+        pavement.renderer = lineRenderer(
+          LRS_LAYER_DEFS.find((item) => item.id === PAVEMENT_LAYER_ID),
+          { name: spec.field },
+          spec.colors,
+        );
+      }
+    }
+    const drainage = layersRef.current.get(6);
+    if (drainage) {
+      const spec = DRAINAGE_FIELDS[drainageMode] || DRAINAGE_FIELDS.type;
+      const fieldName = spec.lhs?.[0] || "drainage_type_lhs";
+      drainage.renderer = lineRenderer(
+        LRS_LAYER_DEFS.find((item) => item.id === 6),
+        { name: fieldName },
+        spec.colors,
+      );
+    }
+  }, [ready, pavementField, drainageMode]);
 
   // Point layers without a road column: show only those within snapping distance of the road.
   const nearKey = choices
