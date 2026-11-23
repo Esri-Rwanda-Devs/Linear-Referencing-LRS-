@@ -54,6 +54,7 @@ import LoginGate from "../components/layout/LoginGate";
 import CostPlan from "../features/road-reserve/components/CostPlan";
 import PavementPanel from "../features/pavement/components/PavementPanel";
 import Overview from "../features/overview/components/Overview";
+import TrafficApp from "../features/traffic/TrafficApp";
 import {
   alignOverRoad,
   appendVertex,
@@ -232,6 +233,7 @@ export default function App() {
   const costPage = viewMode === "cost";
   const pavementPage = viewMode === "pavement";
   const overviewPage = viewMode === "overview";
+  const trafficPage = viewMode === "traffic";
   const [legendOpen, setLegendOpen] = useState(true);
   const mainRef = useRef(null);
   const [chartH, setChartH] = useState(
@@ -1549,7 +1551,7 @@ export default function App() {
       <LoginGate />
       <Sidebar viewMode={viewMode} onChange={setViewMode} />
       <div
-        className={`app${editingPage ? " page-edit" : ""}${overviewPage ? " page-overview" : ""}${costPage ? " page-reserve" : ""}${costPage && reserveSection !== "budget" ? " page-reserve-board" : ""}`}
+        className={`app${editingPage ? " page-edit" : ""}${overviewPage ? " page-overview" : ""}${trafficPage ? " page-traffic" : ""}${costPage ? " page-reserve" : ""}${costPage && reserveSection !== "budget" ? " page-reserve-board" : ""}`}
       >
         <header className="topbar">
           <div>
@@ -2149,6 +2151,7 @@ export default function App() {
           {overviewPage && (
             <Overview query={overviewQuery} onQuery={setOverviewQuery} />
           )}
+          {trafficPage && <TrafficApp />}
           {editingPage && (
             <EditorSidebar
               hiddenLayerIds={hiddenLayerIds}
@@ -2196,7 +2199,7 @@ export default function App() {
           )}
           <main
             ref={mainRef}
-            className={`${overviewPage ? "is-hidden" : ""}${focusPane === "map" ? " focus-map" : ""}${focusPane === "chart" ? " focus-chart" : ""}`}
+            className={`${overviewPage || trafficPage ? "is-hidden" : ""}${focusPane === "map" ? " focus-map" : ""}${focusPane === "chart" ? " focus-chart" : ""}`}
             style={{ gridTemplateRows: chartPage ? rowsFor(chartH) : "1fr" }}
           >
             <section className={`map-pane${legendOpen ? " legend-open" : ""}`}>

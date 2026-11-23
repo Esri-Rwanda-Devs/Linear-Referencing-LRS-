@@ -76,7 +76,8 @@
   overflow: hidden;
 }
 .app { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-.app.page-overview main.is-hidden { display: none; }
+.app.page-overview main.is-hidden,
+.app.page-traffic main.is-hidden { display: none; }
 .sidebar-items { position: relative; z-index: 1; padding-bottom: 72px; }
 .sidebar-logo {
   display: flex;
