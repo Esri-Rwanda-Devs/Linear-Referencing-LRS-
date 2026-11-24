@@ -1238,6 +1238,11 @@ export default function App() {
         const applied = applyRates(report, rates);
         setPlanReport(applied);
         if (activeId) persistScenarioGeometry(activeId, path, width, applied);
+        if (report?.landPrices?.error) {
+          setStatus(`Village land prices could not be loaded (${report.landPrices.error}); land is not costed.`);
+        } else if (applied?.parcels?.length && applied.villagePriced < applied.parcels.length) {
+          setStatus(`${applied.parcels.length - applied.villagePriced} parcel(s) have no village price, so their land is not costed.`);
+        }
       })
       .catch((error) =>
         setPlanReport({

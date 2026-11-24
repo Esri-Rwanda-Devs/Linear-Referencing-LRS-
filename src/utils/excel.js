@@ -344,8 +344,14 @@ export function exportComparison(a, b) {
   ]);
 }
 
-const metres = (value) => Math.round((Number(value) || 0) * 10) / 10;
-const francs = (value) => Math.round(Number(value) || 0);
+const metres = (value) => {
+  const amount = Number(value) || 0;
+  return Number(amount.toFixed(4));
+};
+const francs = (value) => {
+  const amount = Number(value) || 0;
+  return Number(amount.toFixed(2));
+};
 
 export function exportBudgetReport(report, options = []) {
   const summary = [
@@ -357,7 +363,8 @@ export function exportBudgetReport(report, options = []) {
     ["Parcel area taken m2", metres(report.parcelSqm)],
     ["Buildings", report.buildings?.length || 0],
     ["Building area m2", metres(report.buildingSqm)],
-    ["Land rate RWF per m2", francs(report.landRate)],
+    ["Land price basis", "Village maximum reference price (RWF per m2) x area taken"],
+    ["Parcels priced by village", `${report.villagePriced ?? 0} of ${report.parcels?.length || 0}`],
     ["Land cost RWF", francs(report.landCost)],
     ["Building rate RWF per m2", francs(report.buildingRate)],
     ["Building cost RWF", francs(report.buildingCost)],
@@ -367,14 +374,17 @@ export function exportBudgetReport(report, options = []) {
     ["Mapped assets", report.assets?.length || 0],
   ];
   const parcels = [[
-    "UPI", "Parcel", "Province", "District", "Sector", "Cell", "Village", "Recorded size", "Area taken m2", "Cost RWF",
+    "UPI", "Parcel", "Province", "District", "Sector", "Cell", "Village", "Recorded size", "Area taken m2",
+    "Price village", "Price year", "Price RWF per m2", "Price source", "Cost RWF",
   ]];
   (report.parcels || []).forEach((parcel) => parcels.push([
     parcel.upi || "", parcel.parcelNumber || "", parcel.province || "", parcel.district || "",
     parcel.sector || "", parcel.cell || "", parcel.village || "", parcel.recordedSize ?? "",
-    metres(parcel.sqm), francs(parcel.cost),
+    metres(parcel.sqm), parcel.priceVillage || "", parcel.priceYear ?? "",
+    parcel.rate ? francs(parcel.rate) : "", parcel.rateSource === "village" ? "Village maximum" : "No village price",
+    francs(parcel.cost),
   ]));
-  if (parcels.length === 1) parcels.push(["", "", "", "", "", "", "", "", 0, 0]);
+  if (parcels.length === 1) parcels.push(["", "", "", "", "", "", "", "", 0, "", "", 0, "", 0]);
   const buildings = [["UPI", "Name", "Use", "District", "Kind", "Area m2", "Cost RWF"]];
   (report.buildings || []).forEach((building) => buildings.push([
     building.upi || "", building.name || "", building.use || "", building.district || "",

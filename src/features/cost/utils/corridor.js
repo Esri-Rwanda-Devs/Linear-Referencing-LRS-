@@ -213,8 +213,14 @@ export function applyRates(report, rates) {
     && report.compensationPct === compensationPct
     && report.contingencyPct === contingencyPct
     && report.totalCost != null
+    && report.priceBasis === "village"
   ) return report;
-  const parcels = (report.parcels || []).map((parcel) => ({ ...parcel, cost: parcel.sqm * landRate }));
+  // Land is priced only by the village maximum (land_reference_prices); no village price means no cost.
+  const parcels = (report.parcels || []).map((parcel) => {
+    const village = Number(parcel.priceSqm) > 0;
+    const rate = village ? Number(parcel.priceSqm) : null;
+    return { ...parcel, rate, rateSource: village ? "village" : "none", cost: village ? parcel.sqm * rate : 0 };
+  });
   const buildings = (report.buildings || []).map((building) => ({ ...building, cost: (building.sqm || 0) * buildingRate }));
   const landCost = parcels.reduce((sum, parcel) => sum + parcel.cost, 0);
   const buildingCost = buildings.reduce((sum, building) => sum + building.cost, 0);
@@ -240,6 +246,8 @@ export function applyRates(report, rates) {
     parcelCost: landCost,
     parcelSqm,
     buildingSqm,
+    villagePriced: parcels.filter((parcel) => parcel.rateSource === "village").length,
+    priceBasis: "village",
   };
 }
 
@@ -298,16 +306,25 @@ export function corridorRing(path, widthM) {
   return [...left, ...right.reverse(), left[0]];
 }
 
+export function formatNumber(value, maxDigits = 2) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return amount.toLocaleString("en-RW", {
+    maximumFractionDigits: maxDigits,
+    minimumFractionDigits: 0,
+  });
+}
+
 export function formatSqm(value) {
-  return `${new Intl.NumberFormat("en-RW", { maximumFractionDigits: 1 }).format(value || 0)} m²`;
+  return `${formatNumber(value, 4)} m²`;
 }
 
 export function formatMetre(value) {
-  return `${new Intl.NumberFormat("en-RW", { maximumFractionDigits: 1 }).format(value || 0)} m`;
+  return `${formatNumber(value, 2)} m`;
 }
 
 export function formatRwf(value) {
-  return `${new Intl.NumberFormat("en-RW", { maximumFractionDigits: 0 }).format(Math.round(value || 0))} RWF`;
+  return `${formatNumber(value, 2)} RWF`;
 }
 
 export function rateLabel() {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ADMIN, BUILDING_FOOTPRINT_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
+import { ADMIN, BUILDING_FOOTPRINT_URL, LAND_PRICE_URL, GEOCODE_KEY, GEOCODE_URL, LRS_LAYER_DEFS, PARCEL_MIN_SCALE, PARCEL_SERVICES, PARCELS_ROOT, VALUE_COLORS, WATER } from "../../../config";
 import { distanceToPathM, insertOnPath, pathLengthM, pointInRing, rectangleRing, simplifyRing } from "../../cost/utils/corridor";
 import { flattenPaths, haversineKm, locateOnRoute, pointAtMeasure, sliceVertices, toLonLat } from "../../analysis/utils/geometry";
 import { ACCIDENT_LAYER, accidentInLastMonth, accidentTime, featuresForRoute, hotspotSpans, lineTone, loadLayerInExtent, loadRoadsInExtent, prepareRoads, routeKey, segmentAccidents, signInToLrs } from "../services/lrsService";
@@ -1108,8 +1108,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         ["cell", "Cell"],
         ["village", "Village"],
       ];
-      const fmtNum = (value, digits = 0) =>
-        Number(value).toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+      const fmtNum = (value, digits = 2) =>
+        Number(value).toLocaleString("en-US", {
+          maximumFractionDigits: digits,
+          minimumFractionDigits: 0,
+        });
       /** Report buildings that sit on this parcel (matched by parcel key, else by centre inside the parcel). */
       const affectedOnParcel = (graphic) => {
         const attr = graphic?.attributes || {};
@@ -1655,6 +1658,183 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         }
         return features;
       };
+      const LAND_PRICE_FIELDS =
+        "province,district,sector,cell,village,minimum,average,maximum,year,p_d_s_c_v_key";
+      const landPriceQuery = async (params) => {
+        const { token } = await signInToLrs();
+        const features = [];
+        let offset = 0;
+        for (let page = 0; page < 8; page += 1) {
+          const body = new URLSearchParams({
+            f: "json",
+            outFields: LAND_PRICE_FIELDS,
+            resultOffset: String(offset),
+            resultRecordCount: "2000",
+            token,
+            ...params,
+          });
+          const response = await fetch(`${LAND_PRICE_URL}/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body,
+            signal: AbortSignal.timeout(25000),
+          });
+          if (!response.ok) throw new Error(`Land prices failed ${response.status}`);
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message || "Could not load land reference prices");
+          const pageFeatures = data.features || [];
+          features.push(...pageFeatures);
+          if (!data.exceededTransferLimit || !pageFeatures.length) break;
+          offset += pageFeatures.length;
+        }
+        return features;
+      };
+      /** Village price polygons around the reserve (land_reference_prices). */
+      const landPriceFeatures = async (box) =>
+        landPriceQuery({
+          ...parcelBoxParams(box),
+          outSR: "4326",
+          returnGeometry: "true",
+        });
+      /** Attribute lookup when the spatial box misses a village (or geometry is absent). */
+      const landPriceByAdmin = async (parcels) => {
+        const villages = [
+          ...new Set(
+            parcels
+              .map((parcel) => String(parcel.village || "").trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, 40);
+        if (!villages.length) return [];
+        const escape = (value) => String(value).replace(/'/g, "''");
+        const where =
+          villages.length === 1
+            ? `village = '${escape(villages[0])}'`
+            : `village IN (${villages.map((name) => `'${escape(name)}'`).join(",")})`;
+        return landPriceQuery({ where, returnGeometry: "false" });
+      };
+      const adminText = (value) =>
+        String(value ?? "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[\s_-]+/g, " ");
+      const sameAdmin = (left, right) => {
+        const a = adminText(left);
+        const b = adminText(right);
+        return Boolean(a) && Boolean(b) && a === b;
+      };
+      const toPriceRow = (feature) => {
+        const attr = feature.attributes || {};
+        const price = Number(attr.maximum);
+        if (!(price > 0)) return null;
+        const rings = geographicRings(feature.geometry?.rings);
+        return {
+          attr,
+          price,
+          year: Number(attr.year) || 0,
+          polygon: rings.length
+            ? new Polygon({ rings, spatialReference: { wkid: 4326 } })
+            : null,
+        };
+      };
+      /** Prefer the most specific admin match; loosen cell/sector if needed; newest year wins ties. */
+      const byName = (parcel, villages) => {
+        if (!adminText(parcel.village)) return null;
+        const candidates = villages.filter((item) =>
+          sameAdmin(item.attr.village, parcel.village),
+        );
+        if (!candidates.length) return null;
+        const pick = (rows) => {
+          if (!rows.length) return null;
+          rows.sort((a, b) => b.year - a.year);
+          const topYear = rows.filter((row) => row.year === rows[0].year);
+          const prices = new Set(topYear.map((row) => row.price));
+          if (prices.size > 1) return null;
+          return topYear[0];
+        };
+        const levels = [
+          ["district", "sector", "cell"],
+          ["district", "sector"],
+          ["district", "cell"],
+          ["district"],
+          ["sector", "cell"],
+          ["sector"],
+          ["cell"],
+          [],
+        ];
+        for (const keys of levels) {
+          if (keys.some((key) => !adminText(parcel[key]))) continue;
+          const rows = candidates.filter((item) =>
+            keys.every((key) => sameAdmin(item.attr[key], parcel[key])),
+          );
+          const hit = pick(rows);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      /** Gives each parcel the maximum village price (RWF/m²) where its affected part lies. */
+      const priceParcels = async (parcels, box) => {
+        if (!parcels.length) return { loaded: false, error: "" };
+        let rows = [];
+        try {
+          const [spatial, byAdmin] = await Promise.all([
+            landPriceFeatures(box).catch((error) => {
+              console.warn("[LRS] Spatial land prices failed", error);
+              return [];
+            }),
+            landPriceByAdmin(parcels).catch((error) => {
+              console.warn("[LRS] Attribute land prices failed", error);
+              return [];
+            }),
+          ]);
+          rows = [...spatial, ...byAdmin];
+          if (!rows.length) {
+            return {
+              loaded: false,
+              error: "Land reference prices returned no villages for this reserve",
+            };
+          }
+        } catch (error) {
+          console.warn("[LRS] Land reference prices failed", error);
+          return { loaded: false, error: error.message || "Land reference prices could not be loaded" };
+        }
+        const villages = rows
+          .map(toPriceRow)
+          .filter(Boolean)
+          .sort((a, b) => b.year - a.year);
+        parcels.forEach((parcel) => {
+          let match = null;
+          if (parcel.hitCenter) {
+            const point = new Point({
+              longitude: parcel.hitCenter[0],
+              latitude: parcel.hitCenter[1],
+            });
+            match = villages.find((item) => {
+              if (!item.polygon) return false;
+              try {
+                return (
+                  geometryEngine.contains(item.polygon, point) ||
+                  geometryEngine.intersects(item.polygon, point)
+                );
+              } catch {
+                return false;
+              }
+            });
+          }
+          if (!match) match = byName(parcel, villages);
+          if (!match) return;
+          parcel.priceSqm = match.price;
+          parcel.priceVillage = match.attr.village || "";
+          parcel.priceCell = match.attr.cell || "";
+          parcel.priceSector = match.attr.sector || "";
+          parcel.priceDistrict = match.attr.district || "";
+          parcel.priceYear = match.attr.year ?? "";
+          parcel.priceKey = match.attr.p_d_s_c_v_key || "";
+        });
+        return { loaded: true, error: "" };
+      };
       const geographicRings = (rings) => (rings || []).map((ring) => {
         if (!ring?.length || Math.abs(ring[0][0]) <= 180) return ring;
         return ring.map((point) => {
@@ -1735,7 +1915,9 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           const attr = feature.attributes || {};
           const ring = simplifyRing(rings[0], 120);
           const distanceM = distanceToPathM(path, ring);
+          const centroid = hit?.centroid;
           parcels.push({
+            hitCenter: centroid ? [centroid.longitude ?? centroid.x, centroid.latitude ?? centroid.y] : null,
             key: `${attr.district || "parcel"}-${attr.OBJECTID || attr.upi || parcels.length}`,
             upi: attr.upi || "",
             parcelNumber: attr.parcel_number ?? "",
@@ -1753,6 +1935,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           planLayer.add(new Graphic({ geometry: hit, symbol: planHit }));
         });
         parcels.sort((a, b) => b.sqm - a.sqm);
+        const landPrices = await priceParcels(parcels, box);
         let footprintCount = null;
         let loadedFootprints = [];
         try {
@@ -1856,6 +2039,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           if (!host) return;
           building.upi = host.upi || host.parcelNumber || "";
           building.parcelKey = host.key;
+          if (host.priceSqm) {
+            building.landPriceSqm = host.priceSqm;
+            building.priceVillage = host.priceVillage;
+          }
         });
         const samplePoint = (geometry) => {
           if (!geometry) return null;
@@ -1964,6 +2151,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           assets,
           parcelSqm,
           buildingSqm,
+          landPrices,
         };
       };
       view.watch("stationary", (isStationary) => {

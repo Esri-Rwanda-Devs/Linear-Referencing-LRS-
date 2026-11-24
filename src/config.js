@@ -492,6 +492,10 @@ export const BUILDING_RATE_RWF = 15000;
 /** Disturbance compensation, as a percent of land plus building cost. */
 export const COMPENSATION_PERCENT = 5;
 
+/** Village land reference prices (RWF per m²). RRMS charges each parcel the `maximum` of the village it sits in. */
+export const LAND_PRICE_URL =
+  "https://gh.space.gov.rw/server/rest/services/land_reference_prices/FeatureServer/4";
+
 /** RRMS buildings come only from this footprint layer. An area with no features here is not analysed for buildings. */
 export const BUILDING_FOOTPRINT_URL =
   "https://gh.space.gov.rw/server/rest/services/KiyovuBuildingFootprint/FeatureServer/4";

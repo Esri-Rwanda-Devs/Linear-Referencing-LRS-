@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import RoutePicker from "../../analysis/components/RoutePicker";
-import { URBAN_PARCEL_RATE_RWF } from "../../../config";
 import { exportBudgetReport } from "../../../utils/excel";
 import {
   corridorRing,
   formatMetre,
+  formatNumber,
   formatRwf,
   formatSqm,
   lineLengthM,
@@ -560,7 +560,7 @@ function limitPoints(path, max = 48) {
   return out;
 }
 
-/** Light densify — capped so the register diagram never freezes. */
+/** Light densify, then evenly thinned to `max` so the whole path is kept (never cut short). */
 function densifyPath(path, stepM = 14, max = 56) {
   if (!path || path.length < 2) return [];
   const out = [[path[0][0], path[0][1]]];
@@ -575,10 +575,9 @@ function densifyPath(path, stepM = 14, max = 56) {
         start[0] + (end[0] - start[0]) * t,
         start[1] + (end[1] - start[1]) * t,
       ]);
-      if (out.length >= max) return out;
     }
   }
-  return out;
+  return limitPoints(out, max);
 }
 
 function chaikinSmooth(path, iterations = 2) {
@@ -623,7 +622,7 @@ function extractCorridorNear(path, center, reachM) {
   hi = Math.min(path.length - 1, hi + 2);
   const slice = path.slice(lo, hi + 1);
   if (slice.length < 2) return densifyPath(path.slice(0, Math.min(path.length, 24)), 18, 32);
-  return limitPoints(chaikinSmooth(densifyPath(slice, 16, 40), 2), 40);
+  return limitPoints(chaikinSmooth(densifyPath(slice, 16, 60), 2), 60);
 }
 
 function nearestGuideM(point, guides) {
@@ -722,11 +721,9 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
       ? localRoad
       : fullRoad.length >= 2
         ? fullRoad
-        : alignment || [];
-  const reservePoly = corridorRing(
-    limitPoints(chaikinSmooth(densifyPath(roadForBand, 14, 48), 2), 48),
-    widthM,
-  );
+        : limitPoints(alignment || [], 56);
+  // Band follows the same centreline as the dashed road, at the true reserve width.
+  const reservePoly = corridorRing(roadForBand, widthM);
   const guides = ring.slice();
   roadForBand.forEach((point) => guides.push(point));
   for (let index = 1; index < ring.length; index += 1) {
@@ -1117,13 +1114,6 @@ export default function CostPlan({
   const [statusDraft, setStatusDraft] = useState(null);
   const [statusProofs, setStatusProofs] = useState([]);
   const [statusProofError, setStatusProofError] = useState("");
-  const [areaKind, setAreaKind] = useState("rural");
-  const [zoneRates, setZoneRates] = useState({
-    urban: String(URBAN_PARCEL_RATE_RWF),
-    peri: "",
-    rural: String(landRate),
-    agri: "",
-  });
   const source =
     options.find((option) => option.id === activeId)?.report || report;
   const ready = Boolean(source && !source.error);
@@ -1167,6 +1157,8 @@ export default function CostPlan({
   const [projectOpen, setProjectOpen] = useState(false);
   const [parcelPage, setParcelPage] = useState(0);
   const [buildingPage, setBuildingPage] = useState(0);
+  /** Parcel opened in the Map and budget affected list (empty = buildings panel waits for a click). */
+  const [focusParcelKey, setFocusParcelKey] = useState("");
   const parcelsRef = useRef(null);
   const [tableH, setTableH] = useState(() => {
     const saved = Number(localStorage.getItem("rwanda-lrs-reserve-table"));
@@ -1209,22 +1201,41 @@ export default function CostPlan({
   const buildingStamp = buildings.map((building) => building.key).join("|");
   useEffect(() => {
     setParcelPage(0);
+    setFocusParcelKey("");
   }, [parcelStamp]);
   useEffect(() => {
     setBuildingPage(0);
-  }, [buildingStamp]);
+  }, [buildingStamp, focusParcelKey]);
+  const focusedParcel =
+    parcels.find((parcel) => parcel.key === focusParcelKey) || null;
+  const focusedBuildings = useMemo(
+    () =>
+      focusedParcel
+        ? buildings.filter((building) => buildingOnParcel(focusedParcel, building))
+        : [],
+    [focusedParcel, buildings],
+  );
   const parcelPages = Math.max(1, Math.ceil(parcels.length / PAGE_SIZE));
-  const buildingPages = Math.max(1, Math.ceil(buildings.length / PAGE_SIZE));
+  const buildingPages = Math.max(1, Math.ceil(focusedBuildings.length / PAGE_SIZE));
   const parcelAt = Math.min(parcelPage, parcelPages - 1);
   const buildingAt = Math.min(buildingPage, buildingPages - 1);
   const parcelRows = parcels.slice(
     parcelAt * PAGE_SIZE,
     parcelAt * PAGE_SIZE + PAGE_SIZE,
   );
-  const buildingRows = buildings.slice(
+  const buildingRows = focusedBuildings.slice(
     buildingAt * PAGE_SIZE,
     buildingAt * PAGE_SIZE + PAGE_SIZE,
   );
+  const openAffectedParcel = (parcel) => {
+    setFocusParcelKey(parcel.key);
+    setSelectedKey(parcel.key);
+    setBuildingPage(0);
+  };
+  const rateOf = (parcel) => {
+    const value = Number(parcel?.rate ?? parcel?.priceSqm);
+    return value > 0 ? value : null;
+  };
   const seenSavePrompt = useRef(0);
   useEffect(() => {
     if (!savePrompt || savePrompt === seenSavePrompt.current || busy) return;
@@ -1368,14 +1379,6 @@ export default function CostPlan({
     options.find((option) => option.id === activeId)?.vertices ||
     vertices ||
     [];
-  const areaRate = Number(
-    areaKind === "urban" ? zoneRates.urban : zoneRates.rural,
-  );
-  const chooseArea = (kind) => {
-    setAreaKind(kind);
-    const rate = Number(kind === "urban" ? zoneRates.urban : zoneRates.rural);
-    if (Number.isFinite(rate)) onLand(Math.max(0, rate));
-  };
   const registerRows = useMemo(() => {
     const wanted = registerQuery.trim().toLowerCase();
     return sourceParcels.filter((parcel) => {
@@ -1858,7 +1861,7 @@ export default function CostPlan({
             />
             <div className="rr-parcels-body">
               <div
-                className={`rr-affected${parcels.length && buildings.length ? "" : " single"}`}
+                className={`rr-affected${parcels.length ? "" : " single"}`}
               >
                 <div>
                   <header>
@@ -1873,62 +1876,88 @@ export default function CostPlan({
                     </button>
                   </header>
                   <table className="rr-table">
-        <thead>
-          <tr>
+                    <thead>
+                      <tr>
                         <th>Parcel ID</th>
                         <th>Parcel area (m²)</th>
                         <th>Overlap with reserve</th>
+                        <th>Affected (m²)</th>
+                        <th>Max price / m²</th>
+                        <th>Price of affected</th>
                         <th>Building</th>
                         <th>Acquisition status</th>
                         <th></th>
-          </tr>
-        </thead>
-        <tbody>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {!ready && (
                         <tr>
-                          <td colSpan={6}>
+                          <td colSpan={9}>
                             {busy
                               ? "Measuring…"
                               : "Draw and finish an alignment to list parcels."}
                           </td>
                         </tr>
                       )}
-                      {parcelRows.map((parcel) => (
-            <tr key={parcel.key}>
-                          <td>
-                            <button
-                              type="button"
-                              className="link"
-                              onClick={() => onShowParcel?.(parcel)}
-                            >
-                              {parcelCode(parcel)}
-                            </button>
-                          </td>
-                          <td>
-                            {parcel.recordedSize ||
-                              Math.round(parcel.sqm).toLocaleString()}
-                          </td>
-                          <td>{overlapOf(parcel)}</td>
-                          <td>
-                            {hasBuilding(parcel, buildings) ? "Yes" : "No"}
-                          </td>
-                          <td>{parcelStatus[parcel.key] || "Not started"}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="link"
-                              onClick={() => {
-                                setSelectedKey(parcel.key);
-                                onSection("register");
-                              }}
-                            >
-                              Open
-                            </button>
-                          </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                      {parcelRows.map((parcel) => {
+                        const rate = rateOf(parcel);
+                        return (
+                          <tr
+                            key={parcel.key}
+                            className={focusParcelKey === parcel.key ? "on" : ""}
+                            onClick={() => openAffectedParcel(parcel)}
+                            style={{ cursor: "pointer" }}
+                          >
+                            <td>
+                              <button
+                                type="button"
+                                className="link"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAffectedParcel(parcel);
+                                  onShowParcel?.(parcel);
+                                }}
+                              >
+                                {parcelCode(parcel)}
+                              </button>
+                            </td>
+                            <td>
+                              {parcel.recordedSize || formatNumber(parcel.sqm, 4)}
+                            </td>
+                            <td>{overlapOf(parcel)}</td>
+                            <td>
+                              {Number.isFinite(parcel.sqm)
+                                ? formatNumber(parcel.sqm, 4)
+                                : "—"}
+                            </td>
+                            <td title={parcel.priceVillage || ""}>
+                              {rate != null ? formatNumber(rate, 2) : "No price"}
+                            </td>
+                            <td>
+                              {rate != null ? formatRwf(parcel.cost) : "—"}
+                            </td>
+                            <td>
+                              {hasBuilding(parcel, buildings) ? "Yes" : "No"}
+                            </td>
+                            <td>{parcelStatus[parcel.key] || "Not started"}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="link"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAffectedParcel(parcel);
+                                  onSection("register");
+                                }}
+                              >
+                                Open
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                   <Pager
                     page={parcelAt}
                     pages={parcelPages}
@@ -1936,25 +1965,39 @@ export default function CostPlan({
                     onPage={setParcelPage}
                   />
                 </div>
-                {parcels.length > 0 && buildings.length > 0 && (
+                {parcels.length > 0 && (
                   <i className="rr-affected-line" aria-hidden="true" />
                 )}
                 <div>
                   <header>
-                    <h3>Affected buildings ({ready ? buildings.length : 0})</h3>
+                    <h3>
+                      Affected buildings
+                      {focusedParcel
+                        ? ` (${focusedBuildings.length}) · ${parcelCode(focusedParcel)}`
+                        : ""}
+                    </h3>
+                    {focusedParcel && (
+                      <button
+                        type="button"
+                        className="rr-btn"
+                        onClick={() => setFocusParcelKey("")}
+                      >
+                        Clear
+                      </button>
+                    )}
                   </header>
                   <table className="rr-table">
-        <thead>
+                    <thead>
                       <tr>
                         <th>Parcel ID</th>
-                        {/* <th>Building</th> */}
                         <th>Use</th>
                         <th>Affected %</th>
                         <th>Affected (m²)</th>
-                        <th>Land Price</th>
+                        <th>Max price / m²</th>
+                        <th>Price of affected</th>
                       </tr>
-        </thead>
-        <tbody>
+                    </thead>
+                    <tbody>
                       {!ready && (
                         <tr>
                           <td colSpan={6}>
@@ -1964,10 +2007,36 @@ export default function CostPlan({
                           </td>
                         </tr>
                       )}
+                      {ready && !focusedParcel && (
+                        <tr>
+                          <td colSpan={6}>
+                            Click a parcel on the left to see its affected buildings.
+                          </td>
+                        </tr>
+                      )}
+                      {ready && focusedParcel && focusedBuildings.length === 0 && (
+                        <tr>
+                          <td colSpan={6}>
+                            {buildings.length === 0
+                              ? buildingGap(source)
+                              : "No building on this parcel intersects the reserve."}
+                          </td>
+                        </tr>
+                      )}
                       {buildingRows.map((building) => {
-                        const host = parcelForBuilding(building, parcels);
+                        const host =
+                          focusedParcel || parcelForBuilding(building, parcels);
+                        const rate =
+                          rateOf(host) ??
+                          (Number(building.landPriceSqm) > 0
+                            ? Number(building.landPriceSqm)
+                            : null);
+                        const landCost =
+                          rate != null && Number(building.sqm) > 0
+                            ? rate * building.sqm
+                            : null;
                         return (
-            <tr key={building.key}>
+                          <tr key={building.key}>
                             <td>
                               {host ? (
                                 <button
@@ -1984,24 +2053,27 @@ export default function CostPlan({
                             <td>
                               {building.name || building.use || "Building"}
                             </td>
-              <td>{building.use || "—"}</td>
                             <td>{buildingAffectedPct(building)}</td>
-                            <td>{Math.round(building.sqm).toLocaleString()}</td>
-                            <td>{formatRwf(building.cost)}</td>
-            </tr>
+                            <td>
+                              {Number.isFinite(building.sqm)
+                                ? formatNumber(building.sqm, 4)
+                                : "—"}
+                            </td>
+                            <td>
+                              {rate != null ? formatNumber(rate, 2) : "No price"}
+                            </td>
+                            <td>
+                              {landCost != null ? formatRwf(landCost) : "—"}
+                            </td>
+                          </tr>
                         );
                       })}
-                      {ready && buildings.length === 0 && (
-                        <tr>
-                          <td colSpan={6}>{buildingGap(source)}</td>
-                        </tr>
-                      )}
-        </tbody>
-      </table>
+                    </tbody>
+                  </table>
                   <Pager
                     page={buildingAt}
                     pages={buildingPages}
-                    total={buildings.length}
+                    total={focusedBuildings.length}
                     onPage={setBuildingPage}
                   />
                 </div>
@@ -2121,16 +2193,24 @@ export default function CostPlan({
                     <tr>
                       <th>Parcel ID</th>
                       <th>Owner</th>
+                      <th>Village</th>
                       <th>Area (m²)</th>
+                      <th>Price / m² (RWF)</th>
                       <th>Building</th>
                       <th>Property cost (RWF M)</th>
+                      <th>Land taken cost (RWF)</th>
                       <th>Date paid</th>
                       <th>Date moved</th>
                       <th>Status</th>
                     </tr>
         </thead>
         <tbody>
-                    {registerSlice.map((parcel) => (
+                    {registerSlice.map((parcel) => {
+                      const buildingCost = (source?.buildings || [])
+                        .filter((building) => buildingOnParcel(parcel, building))
+                        .reduce((sum, building) => sum + (Number(building.cost) || 0), 0);
+                      const landCost = Number(parcel.cost) || 0;
+                      return (
                       <tr
                         key={parcel.key}
                         className={selected?.key === parcel.key ? "on" : ""}
@@ -2146,13 +2226,18 @@ export default function CostPlan({
                           </button>
                         </td>
                         <td>—</td>
-                        <td>{Math.round(parcel.sqm).toLocaleString()}</td>
+                        <td>{parcel.priceVillage || parcel.village || "—"}</td>
+                        <td>{formatNumber(parcel.sqm, 4)}</td>
+                        <td title={parcel.rateSource === "village" ? "Village maximum reference price" : "No village price found"}>
+                          {parcel.rate ? formatNumber(parcel.rate, 2) : "No price"}
+                        </td>
                         <td>
                           {hasBuilding(parcel, source?.buildings)
                             ? "Yes"
                             : "No"}
                         </td>
-                        <td>{millions(parcel.cost)}</td>
+                        <td>{millions(landCost + buildingCost)}</td>
+                        <td>{landCost > 0 ? formatRwf(landCost) : "—"}</td>
                         <td>—</td>
                         <td>—</td>
                         <td>
@@ -2166,10 +2251,11 @@ export default function CostPlan({
                           </span>
                         </td>
             </tr>
-          ))}
+                      );
+                    })}
                     {registerRows.length === 0 && (
                       <tr>
-                        <td colSpan={8}>
+                        <td colSpan={11}>
                           {sourceParcels.length
                             ? "No parcel matches this search."
                             : "Draw an alignment on Map and budget. Its parcels appear here."}
@@ -2275,12 +2361,29 @@ export default function CostPlan({
                   <section className="rr-fact">
                     <h4>PROPERTY COST</h4>
                     <p>
-                      <span>Land taken Cost</span>
-                      <b>{millions(selected.cost)} M</b>
+                      <span>Land price per m²</span>
+                      <b>
+                        {selected.rate ? `${formatRwf(selected.rate)}` : "—"}
+                      </b>
+                    </p>
+                    <p>
+                      <span>Price source</span>
+                      <b>
+                        {selected.rateSource === "village"
+                          ? `Village max · ${[selected.priceVillage, selected.priceCell, selected.priceSector].filter(Boolean).join(", ")}${selected.priceYear ? ` (${selected.priceYear})` : ""}`
+                          : "No village price found · land not costed"}
+                      </b>
                     </p>
                     <p>
                       <span>Area inside reserve</span>
                       <b>{formatSqm(selected.sqm)}</b>
+                    </p>
+                    <p>
+                      <span>Land taken Cost</span>
+                      <b>
+                        {millions(selected.cost)} M
+                        {selected.rate ? ` (${formatSqm(selected.sqm)} × ${formatRwf(selected.rate)})` : ""}
+                      </b>
                     </p>
                     <p>
                       <span>
@@ -2701,7 +2804,7 @@ export default function CostPlan({
                         <td>{building.use || "—"}</td>
                         <td>{buildingAffectedPct(building)}</td>
                         <td>
-                          {Math.round(building.sqm || 0).toLocaleString()}
+                          {formatNumber(building.sqm || 0, 4)}
                         </td>
                         <td>{formatRwf(building.cost)}</td>
                       </tr>
@@ -2998,62 +3101,21 @@ export default function CostPlan({
               <p>Road Reserve / Rates and rules</p>
               <h2>Rates, widths and workflow rules</h2>
             </div>
-            <div className="rr-actions">
-              <button
-                type="button"
-                className="solid"
-                onClick={() =>
-                  onLand(
-                    Number(
-                      areaKind === "urban" ? zoneRates.urban : zoneRates.rural,
-                    ) || landRate,
-                  )
-                }
-              >
-                Save changes
-              </button>
-            </div>
           </div>
           <section className="rr-page">
             <p className="rr-hint">
-              Choose Urban or Rural on Map and budget. That choice sets the land
-              rate per m². Peri-urban and agricultural rates stay on this screen
-              until you use them.
+              Land is priced by location: each parcel uses the maximum reference
+              price (RWF per m²) of the village it lies in, times the area
+              inside the reserve.
             </p>
             <div className="rr-rates">
               <section className="rr-card">
-                <h3>Land rates by area</h3>
-                <table className="rr-table rr-mini">
-              <tbody>
-                    {[
-                      ["urban", "Urban"],
-                      ["rural", "Rural"],
-                      ["peri", "Peri-urban"],
-                      ["agri", "Agricultural"],
-                    ].map(([key, label]) => (
-                      <tr key={key}>
-                        <td>
-                          {label}
-                          {key === areaKind ? " · used" : ""}
-                        </td>
-                        <td>
-                          <input
-                            value={zoneRates[key]}
-                            onChange={(event) => {
-                              const next = {
-                                ...zoneRates,
-                                [key]: event.target.value,
-                              };
-                              setZoneRates(next);
-                              if (key === areaKind)
-                                onLand(Number(event.target.value) || 0);
-                            }}
-                          />
-                        </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                <h3>Land price</h3>
+                <p className="rr-hint">
+                  Village maximum from the land reference prices layer
+                  (land_reference_prices). A parcel with no village price is
+                  flagged and not costed.
+                </p>
               </section>
               <section className="rr-card">
                 <h3>Building rate</h3>
