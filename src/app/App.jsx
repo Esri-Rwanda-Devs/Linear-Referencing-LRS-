@@ -895,7 +895,7 @@ export default function App() {
   );
   const onSegmentClick = useCallback(
     (longitude, latitude) => {
-      if (!route) return;
+      if (!route) return false;
       const hit = locateOnRoute(
         route.vertices,
         route.measures,
@@ -903,6 +903,7 @@ export default function App() {
         0.3,
       );
       if (hit) onSegmentPoint(hit.measure);
+      return Boolean(hit);
     },
     [route, onSegmentPoint],
   );
@@ -1126,7 +1127,7 @@ export default function App() {
       setEditNotice("");
       setStatus(`Loading route ${id}…`);
     },
-    [placingId, route, routeId],
+    [placingId, route, routeId, setRouteId],
   );
   const [focusing, setFocusing] = useState(null);
   const mapApi = useRef(null);
@@ -1341,6 +1342,13 @@ export default function App() {
     onEditPlace,
     placeMarks,
     placeAnchor: lineAnchor,
+    planReports: !costPage
+      ? null
+      : planReport && !planReport.error
+        ? [{ report: planReport, name: "" }]
+        : planShowAll
+          ? planOptions.filter((option) => option.report).map((option) => ({ report: option.report, name: option.label || "" }))
+          : null,
   });
 
   const shownEvents = useMemo(() => {

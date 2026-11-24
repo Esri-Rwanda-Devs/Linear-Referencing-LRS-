@@ -40,7 +40,10 @@ export interface Station {
   routeId: string
   routeName: string
   measure: number | null
+  province: string | null
   district: string | null
+  sector: string | null
+  cell: string | null
   category: string | null
   aadt: number | null
   pcu: number | null
@@ -48,6 +51,13 @@ export interface Station {
   vc: number | null
   x: number
   y: number
+}
+
+export interface AdminFilter {
+  province?: string
+  district?: string
+  sector?: string
+  cell?: string
 }
 
 /** A length measured in kilometres, written with its unit: metres when it is under a kilometre, otherwise km. */
@@ -184,25 +194,63 @@ export async function loadStations(layer: number): Promise<Station[]> {
     .map((f) => {
       const a = f.attributes
       return {
-        id: a.objectid as number,
-        code: str(a.station_code) ?? `#${a.objectid}`,
-        name: str(a.station_name) ?? '',
-        routeId: str(a.routeid) ?? '—',
-        routeName: str(a.routename) ?? '',
-        measure: num(a.measure),
-        district: str(a.district),
-        category: str(a.traffic_category),
-        aadt: num(a.annual_average_daily_traffic),
-        pcu: num(a.pcu),
-        capacity: num(a.traffic_capacity),
-        counts: Object.fromEntries(STATION_TYPES.map((t) => [t.key, num(a[t.key])])) as StationCounts,
-        adt: num(a.average_daily_traffic),
-        seasonFactor: num(a.season_factor),
-        vc: num(a.vc_ratio),
+        id: (attr(a, 'objectid') as number | undefined) ?? (a.objectid as number),
+        code: str(attr(a, 'station_code')) ?? `#${a.objectid}`,
+        name: str(attr(a, 'station_name')) ?? '',
+        routeId: str(attr(a, 'routeid')) ?? '—',
+        routeName: str(attr(a, 'routename')) ?? '',
+        measure: num(attr(a, 'measure')),
+        province: str(attr(a, 'province')),
+        district: str(attr(a, 'district')),
+        sector: str(attr(a, 'sector')),
+        cell: str(attr(a, 'cell')),
+        category: str(attr(a, 'traffic_category')),
+        aadt: num(attr(a, 'annual_average_daily_traffic')),
+        pcu: num(attr(a, 'pcu')),
+        capacity: num(attr(a, 'traffic_capacity')),
+        counts: Object.fromEntries(
+          STATION_TYPES.map((t) => [t.key, num(attr(a, t.key) ?? a[t.key])]),
+        ) as StationCounts,
+        adt: num(attr(a, 'average_daily_traffic')),
+        seasonFactor: num(attr(a, 'season_factor')),
+        vc: num(attr(a, 'vc_ratio')),
         x: f.geometry!.x!,
         y: f.geometry!.y!,
       }
     })
+}
+
+/** Distinct admin values from stations, optionally narrowed by parent selections. */
+export function adminChoices(
+  stations: Pick<Station, 'province' | 'district' | 'sector' | 'cell'>[],
+  level: 'province' | 'district' | 'sector' | 'cell',
+  filter: AdminFilter = {},
+): string[] {
+  const seen = new Set<string>()
+  for (const s of stations) {
+    if (filter.province && s.province !== filter.province) continue
+    if (filter.district && s.district !== filter.district) continue
+    if (filter.sector && s.sector !== filter.sector) continue
+    const value = s[level]
+    if (value) seen.add(value)
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b))
+}
+
+export function matchAdmin(
+  item: {
+    province?: string | null
+    district?: string | null
+    sector?: string | null
+    cell?: string | null
+  },
+  filter: AdminFilter,
+): boolean {
+  if (filter.province && item.province !== filter.province) return false
+  if (filter.district && item.district !== filter.district) return false
+  if (filter.sector && item.sector !== filter.sector) return false
+  if (filter.cell && item.cell !== filter.cell) return false
+  return true
 }
 
 export interface StationStatus extends Station {

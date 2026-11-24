@@ -76,7 +76,9 @@ function loadModules(names) {
   });
 }
 
-export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, rivers = false, buildings = false, pavement = false, planDraw = false, planMeasure = false, planVertices = null, planEdit = false, planVertexMode = "move", planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, planSnapPoint, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null }) {
+export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent, hiddenLayerIds, segment, segmentStart, segmentPicking, onSegmentClick, compareRoute, compareEvents, compareCursor, compareEvent, uiPanel, analysis, pickingOrigin, onOrigin, onHoverMeasure, onLeave, onFocusChange, onPickRoute, routeLoadingRef, editing = false, placing = false, planning = false, rivers = false, buildings = false, pavement = false, planDraw = false, planMeasure = false, planVertices = null, planEdit = false, planVertexMode = "move", planWidth = 20, onPlanClick, onPlanFinish, onPlanCommit, planSnapPoint, onEditHit, onEditPlace, placeMarks = null, placeAnchor = null, planReports = null }) {
+  const planReportsRef = useRef(planReports);
+  planReportsRef.current = planReports;
   const pickRef = useRef(onPickRoute);
   pickRef.current = onPickRoute;
   const busyRef = useRef(routeLoadingRef);
@@ -352,7 +354,7 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
       const segmentCasing = new SimpleLineSymbol({ color: [255, 255, 255, 1], width: 8, cap: "round", join: "round" });
       const drawnRoads = new globalThis.Map();
       const roadLines = [];
-      const accidentsSeen = new Map();
+      const accidentsSeen = new globalThis.Map();
       let accidentFeatures = [];
       const routeWhere = { value: null };
       const effectFor = () => (routeWhere.value
@@ -954,8 +956,11 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           }).catch(() => finish("", null));
           return;
         }
-        if (segmentPickRef.current) {
-          segmentClickRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude);
+        // Off the active route, a segment-mode click picks another road instead.
+        if (
+          segmentPickRef.current &&
+          segmentClickRef.current?.(event.mapPoint.longitude, event.mapPoint.latitude) !== false
+        ) {
           return;
         }
         if (pickingRef.current) {
@@ -974,8 +979,10 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
           applyRouteEffect({ id: routeId }, null);
           pickRef.current?.(routeId);
         };
+        const parcels = map.findLayerById("lrs-parcels");
+        const include = parcels?.visible && parcels.graphics.length ? [roadLayer, parcels] : [roadLayer];
         view
-          .hitTest(event, { include: [roadLayer] })
+          .hitTest(event, { include })
           .then((response) => {
             const hit = response.results.find(
               (result) => result.graphic?.layer === roadLayer,
@@ -985,6 +992,8 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
               pick(id);
               return;
             }
+            // A parcel click opens its details; it should not snap to a nearby road.
+            if (response.results.some((result) => result.graphic?.layer === parcels)) return;
             // Thin centreline is easy to miss — snap to nearest painted road.
             if (Number.isFinite(longitude) && Number.isFinite(latitude)) {
               pick(nearestRoadId(longitude, latitude));
@@ -1089,21 +1098,106 @@ export function useRoadMap({ mapApi, route, events, cursor, project, activeEvent
         color: [0, 0, 0, 0],
         outline: { color: [180, 83, 9, 0.85], width: 1.1 },
       });
+      const PARCEL_FIELDS = [
+        ["upi", "UPI"],
+        ["parcel_number", "Parcel number"],
+        ["size", "Size"],
+        ["province", "Province"],
+        ["district", "District"],
+        ["sector", "Sector"],
+        ["cell", "Cell"],
+        ["village", "Village"],
+      ];
+      const fmtNum = (value, digits = 0) =>
+        Number(value).toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+      /** Report buildings that sit on this parcel (matched by parcel key, else by centre inside the parcel). */
+      const affectedOnParcel = (graphic) => {
+        const attr = graphic?.attributes || {};
+        const key = `${attr.district || "parcel"}-${attr.OBJECTID || attr.upi}`;
+        const rings = graphic?.geometry?.rings || [];
+        const out = [];
+        (planReportsRef.current || []).forEach((entry) => {
+          const report = entry?.report || entry;
+          (report?.buildings || []).forEach((building) => {
+            const onParcel =
+              (building.parcelKey && building.parcelKey === key) ||
+              (building.center && rings.some((ring) => pointInRing(building.center, ring)));
+            if (onParcel) out.push({ building, scenario: entry?.name || "" });
+          });
+        });
+        return out;
+      };
+      const parcelContent = (target) => {
+        const graphic = target?.graphic;
+        const attr = graphic?.attributes || {};
+        const root = document.createElement("div");
+        root.className = "parcel-popup";
+        const table = document.createElement("table");
+        table.className = "esri-widget__table";
+        PARCEL_FIELDS.forEach(([field, label]) => {
+          const value = attr[field];
+          if (value == null || value === "") return;
+          const row = table.insertRow();
+          const th = document.createElement("th");
+          th.className = "esri-feature-fields__field-header";
+          th.textContent = label;
+          const td = document.createElement("td");
+          td.className = "esri-feature-fields__field-data";
+          td.textContent = String(value);
+          row.append(th, td);
+        });
+        root.appendChild(table);
+        const heading = document.createElement("h4");
+        heading.className = "parcel-popup-head";
+        root.appendChild(heading);
+        if (!(planReportsRef.current || []).length) {
+          heading.textContent = "Affected buildings";
+          const note = document.createElement("p");
+          note.className = "parcel-popup-note";
+          note.textContent = "Draw or open a reserve scenario to see buildings affected on this parcel.";
+          root.appendChild(note);
+          return root;
+        }
+        const hits = affectedOnParcel(graphic);
+        heading.textContent = `Affected buildings (${hits.length})`;
+        if (!hits.length) {
+          const note = document.createElement("p");
+          note.className = "parcel-popup-note";
+          note.textContent = "No buildings on this parcel are affected by the reserve.";
+          root.appendChild(note);
+          return root;
+        }
+        const list = document.createElement("table");
+        list.className = "esri-widget__table parcel-popup-buildings";
+        const head = list.createTHead().insertRow();
+        ["Building", "Footprint", "Affected", "Cost"].forEach((label) => {
+          const th = document.createElement("th");
+          th.textContent = label;
+          head.appendChild(th);
+        });
+        const body = list.createTBody();
+        hits.forEach(({ building, scenario }, index) => {
+          const row = body.insertRow();
+          const name = [building.name || building.use || `Building ${index + 1}`, scenario].filter(Boolean).join(" · ");
+          const footprint = building.shapeArea || building.footprint;
+          const cells = [
+            name,
+            footprint ? `${fmtNum(footprint)} m²` : "—",
+            `${building.sqm ? `${fmtNum(building.sqm, 1)} m²` : "—"}${Number.isFinite(building.affectedPct) ? ` · ${fmtNum(building.affectedPct, 1)}%` : ""}`,
+            building.cost > 0 ? `${fmtNum(building.cost)} RWF` : "—",
+          ];
+          cells.forEach((text) => {
+            const td = row.insertCell();
+            td.textContent = text;
+          });
+        });
+        root.appendChild(list);
+        return root;
+      };
       const parcelPopup = {
         title: "{district} · {parcel_number}",
-        content: [{
-          type: "fields",
-          fieldInfos: [
-            { fieldName: "upi", label: "UPI" },
-            { fieldName: "parcel_number", label: "Parcel number" },
-            { fieldName: "size", label: "Size" },
-            { fieldName: "province", label: "Province" },
-            { fieldName: "district", label: "District" },
-            { fieldName: "sector", label: "Sector" },
-            { fieldName: "cell", label: "Cell" },
-            { fieldName: "village", label: "Village" },
-          ],
-        }],
+        outFields: ["*"],
+        content: parcelContent,
       };
       const parcelIds = new globalThis.Map();
       const parcelLayerId = async (name) => {

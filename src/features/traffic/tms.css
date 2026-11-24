@@ -317,7 +317,10 @@
 
 .tms .signout:hover { background: rgb(255 255 255 / 10%); color: #fff; }
 /* Road_Network base lines and RouteId labels */
-.tms .map-base { fill: none; stroke: #9aa8a4; stroke-width: 1; opacity: 0.7; stroke-linecap: round; pointer-events: none; }
+.tms .map-base { fill: none; stroke: #9aa8a4; stroke-width: 1; opacity: 0.7; stroke-linecap: round; pointer-events: none; transition: opacity 0.2s, stroke 0.2s; }
+.tms .map-base.sel { stroke: var(--accent); opacity: 1; stroke-width: 2.25; }
+.tms .map-base.dim { opacity: 0.2; }
+.tms .map-base-hit { fill: none; stroke: transparent; stroke-width: 12; stroke-linecap: round; cursor: pointer; }
 
 .tms .map-label { font-size: 11px; font-weight: 600; fill: var(--text); paint-order: stroke; stroke: var(--map-bg); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
 /* Basemap switch */

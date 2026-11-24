@@ -78,7 +78,7 @@ export const EVENT_LAYERS = [
   {
     id: "culverts",
     group: "LOC",
-    layerId: 5,
+    layerId: 1,
     service: "road",
     title: "Culverts",
     kind: "point",
@@ -152,7 +152,7 @@ export const groupLabel = (id) =>
   GROUPS.find((group) => group.id === id)?.label || id;
 
 /** Default-on overview points: KM stones, Bridge, Culvert, Camera, Accidents. */
-export const OVERVIEW_DEFAULT_POINTS = [7, 2, 5, 20, 19];
+export const OVERVIEW_DEFAULT_POINTS = [7, 2, 25, 20, 19];
 
 export const LRS_LAYER_DEFS = [
   {
@@ -225,7 +225,7 @@ export const LRS_LAYER_DEFS = [
     swatch: "#ff2d6a",
   },
   {
-    id: 5,
+    id: 25,
     title: "Culverts",
     group: "POI",
     kind: "point",
@@ -267,7 +267,7 @@ export const LRS_LAYER_DEFS = [
     swatch: "#2563eb",
   },
   {
-    id: 15,
+    id: 16,
     title: "Traffic Station",
     group: "POI",
     kind: "point",

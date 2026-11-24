@@ -8,7 +8,21 @@ import { BAND_COLOURS, BAND_LABELS, type VcBand } from '../config/parameters'
 import { FILTER_CHIPS, GROUPS, GROUP_COLOURS, GROUP_ICONS, type GroupKey } from '../config/vehicleClasses'
 import { StationDialog } from '../components/StationDialog'
 import { VehicleIcon } from '../components/VehicleIcons'
-import { discoverLayers, loadLinks, loadRoadNetwork, formatMeasure, loadStations, loadYears, sortLinks, withStatus, type Link, type SortMode, type StationStatus } from '../lib/trafficData'
+import {
+  adminChoices,
+  discoverLayers,
+  formatMeasure,
+  loadLinks,
+  loadRoadNetwork,
+  loadStations,
+  loadYears,
+  matchAdmin,
+  sortLinks,
+  withStatus,
+  type Link,
+  type SortMode,
+  type StationStatus,
+} from '../lib/trafficData'
 
 type ColourBy = 'vc' | 'aadt' | 'pcu' | 'heavy'
 
@@ -41,6 +55,9 @@ export function NetworkMap() {
   const [openStation, setOpenStation] = useState<StationStatus | null>(null)
   const [showStations, setShowStations] = useState(true)
   const [showNames, setShowNames] = useState(true)
+  const [province, setProvince] = useState('')
+  const [district, setDistrict] = useState('')
+  const [sector, setSector] = useState('')
 
   const layers = useQuery({ queryKey: ['layers'], queryFn: discoverLayers, staleTime: Infinity })
   const years = useQuery({
@@ -62,16 +79,41 @@ export function NetworkMap() {
     queryFn: () => loadStations(layers.data!.points),
     enabled: !!layers.data,
   })
-
   // Base roads and their RouteId labels come from the Road_Network feature class.
   // A failure here must not block the traffic data, so it is reported separately.
   const networkQ = useQuery({ queryKey: ['network'], queryFn: loadRoadNetwork, staleTime: Infinity })
 
   const error = (layers.error ?? years.error ?? linksQ.error ?? stationsQ.error) as Error | null
   const all = linksQ.data ?? []
+  const adminFilter = useMemo(
+    () => ({
+      province: province || undefined,
+      district: district || undefined,
+      sector: sector || undefined,
+    }),
+    [province, district, sector],
+  )
+  const provinces = useMemo(
+    () => adminChoices(stationsQ.data ?? [], 'province'),
+    [stationsQ.data],
+  )
+  const districts = useMemo(
+    () => adminChoices(stationsQ.data ?? [], 'district', { province: province || undefined }),
+    [stationsQ.data, province],
+  )
+  const sectors = useMemo(
+    () =>
+      adminChoices(stationsQ.data ?? [], 'sector', {
+        province: province || undefined,
+        district: district || undefined,
+      }),
+    [stationsQ.data, province, district],
+  )
   // Each station gets a congestion status from its V/C, matching the segment colours.
-  const stations = useMemo(() => withStatus(stationsQ.data ?? [], all), [stationsQ.data, all])
-
+  const stations = useMemo(() => {
+    const ranked = withStatus(stationsQ.data ?? [], all)
+    return ranked.filter((s) => matchAdmin(s, adminFilter))
+  }, [stationsQ.data, all, adminFilter])
   // Metric used for colouring and ranking. A vehicle-class chip swaps AADT for that class's count.
   const aadtOf = (l: Link) => (cls === 'all' ? l.aadt : l.groups[cls])
   const metric = (l: Link): number | null =>
@@ -118,7 +160,28 @@ export function NetworkMap() {
     () => sortLinks(links, sortMode).slice(0, sortMode === 'vc' ? 100 : 500),
     [links, sortMode],
   )
-  const selected = links.find((l) => l.id === selectedId) ?? null
+  const selected = links.find((l) => l.id === selectedId) ?? all.find((l) => l.id === selectedId) ?? null
+  const selectedRouteId = search.trim() || selected?.routeId || null
+
+  const selectLink = (id: number | null) => {
+    setSelectedId(id)
+    if (id == null) return
+    const link = all.find((l) => l.id === id)
+    if (link?.routeId) setSearch(link.routeId)
+  }
+
+  const selectRoad = (routeId: string | null) => {
+    if (!routeId) {
+      setSearch('')
+      setSelectedId(null)
+      return
+    }
+    setSearch(routeId)
+    const onRoad = all.filter((l) => l.routeId === routeId)
+    const keep = selectedId != null && onRoad.some((l) => l.id === selectedId)
+    if (!keep) setSelectedId(onRoad[0]?.id ?? null)
+  }
+
   const exportCsv = useExport(links)
 
   const congested = links.filter((l) => (l.vc ?? 0) > 0.85).length
@@ -167,12 +230,58 @@ export function NetworkMap() {
               </select>
             </label>
             <Autocomplete
-              label="Search road"
-              placeholder="Route or road name"
+              label="Road"
+              placeholder="Search or click a road on the map"
               value={search}
-              onChange={setSearch}
+              onChange={(v) => {
+                setSearch(v)
+                if (!v) setSelectedId(null)
+              }}
               options={roadOptions}
             />
+            <label className="field"><span>Province</span>
+              <select
+                className="select"
+                value={province}
+                onChange={(e) => {
+                  setProvince(e.target.value)
+                  setDistrict('')
+                  setSector('')
+                }}
+              >
+                <option value="">All provinces</option>
+                {provinces.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field"><span>District</span>
+              <select
+                className="select"
+                value={district}
+                onChange={(e) => {
+                  setDistrict(e.target.value)
+                  setSector('')
+                }}
+              >
+                <option value="">All districts</option>
+                {districts.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field"><span>Sector</span>
+              <select
+                className="select"
+                value={sector}
+                onChange={(e) => setSector(e.target.value)}
+              >
+                <option value="">All sectors</option>
+                {sectors.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </label>
             <div className="field"><span>Vehicle class</span>
               <div className="chips">
                 {FILTER_CHIPS.map((c) => (
@@ -212,7 +321,9 @@ export function NetworkMap() {
               colourOf={colourOf}
               widthOf={widthOf}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={selectLink}
+              selectedRouteId={selectedRouteId}
+              onRoadSelect={selectRoad}
               showStations={showStations}
               showNames={showNames}
               onStationClick={setOpenStation}
@@ -234,7 +345,13 @@ export function NetworkMap() {
 
         <aside className="side">
           <div className="card">
-            {selected ? <Detail link={selected} /> : <div className="placeholder">Select a link on the map or in the ranking to see its details.</div>}
+            {selected ? (
+              <Detail link={selected} />
+            ) : (
+              <div className="placeholder">
+                Click a road on the map, search above, or pick a link in the ranking.
+              </div>
+            )}
           </div>
           <div className="card">
             <h3>{sortMode === 'vc' ? 'Ranking by V/C ratio' : 'Links by road and measure'}</h3>
@@ -243,7 +360,7 @@ export function NetworkMap() {
             <ol className="rank">
               {ranked.map((l, i) => (
                 <li key={l.id}>
-                  <button className={selectedId === l.id ? 'sel' : ''} onClick={() => setSelectedId(l.id)}>
+                  <button className={selectedId === l.id ? 'sel' : ''} onClick={() => selectLink(l.id)}>
                     <span className="n">{i + 1}</span>
                     <span className="name" title={`${l.label} (${l.range})`}>
                       {l.label}

@@ -9,7 +9,14 @@ import { KpiIcon } from '../components/KpiIcon'
 import { StationInsights } from '../components/StationInsights'
 import { formatSurveyYear, useSurveys, vcTrend, yearsInScope } from '../lib/trafficCounts'
 import { useStations } from '../lib/useStations'
-import { formatMeasure, loadRoadNetwork, type Link, type StationStatus } from '../lib/trafficData'
+import {
+  adminChoices,
+  formatMeasure,
+  loadRoadNetwork,
+  matchAdmin,
+  type Link,
+  type StationStatus,
+} from '../lib/trafficData'
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d })
@@ -22,9 +29,13 @@ const BAND_ORDER: Record<VcBand, number> = { free: 0, near: 1, congested: 2, ove
 const BAR_MAX = 1.5
 
 function exportCsv(rows: StationStatus[], year: string | null) {
-  const head = ['Survey year', 'Station','Code', 'Road', 'Measure', 'District', 'Status', 'V/C', 'PCU', 'Capacity', 'AADT', '% of capacity']
+  const head = [
+    'Survey year', 'Station', 'Code', 'Road', 'Measure',
+    'Province', 'District', 'Sector', 'Status', 'V/C', 'PCU', 'Capacity', 'AADT', '% of capacity',
+  ]
   const body = rows.map((s) => [
-    year ? formatSurveyYear(year) : '', s.name, s.code, s.routeName || s.routeId, s.measure, s.district, BAND_STATUS[s.band],
+    year ? formatSurveyYear(year) : '', s.name, s.code, s.routeName || s.routeId, s.measure,
+    s.province, s.district, s.sector, BAND_STATUS[s.band],
     s.effectiveVc?.toFixed(2), s.pcu, s.capacity, s.aadt, s.effectiveVc != null ? Math.round(s.effectiveVc * 100) : '',
   ])
   const csv = [head, ...body].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
@@ -45,7 +56,9 @@ export function CountStations() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>())
   const [query, setQuery] = useState('')
+  const [province, setProvince] = useState('')
   const [district, setDistrict] = useState('')
+  const [sector, setSector] = useState('')
   const [band, setBand] = useState<VcBand | 'all'>('all')
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'vc', dir: -1 })
 
@@ -54,9 +67,26 @@ export function CountStations() {
     if (years.length && year != null && !years.includes(year)) setYear(years[0])
   }, [years, year, setYear])
 
+  const adminFilter = useMemo(
+    () => ({
+      province: province || undefined,
+      district: district || undefined,
+      sector: sector || undefined,
+    }),
+    [province, district, sector],
+  )
+  const provinces = useMemo(() => adminChoices(stations, 'province'), [stations])
   const districts = useMemo(
-    () => [...new Set(stations.map((s) => s.district).filter((d): d is string => !!d))].sort(),
-    [stations],
+    () => adminChoices(stations, 'district', { province: province || undefined }),
+    [stations, province],
+  )
+  const sectors = useMemo(
+    () =>
+      adminChoices(stations, 'sector', {
+        province: province || undefined,
+        district: district || undefined,
+      }),
+    [stations, province, district],
   )
 
   // Suggestions: every station (by name and code) and every road that has stations.
@@ -80,15 +110,18 @@ export function CountStations() {
     return [...out.values()]
   }, [stations])
 
-  // Stations matching the search and district. The indicators and the status chips count these.
+  // Stations matching search and admin location. Indicators and status chips use this set.
   const inScope = useMemo(() => {
     const q = query.trim().toLowerCase()
     return stations.filter(
       (s) =>
-        (!district || s.district === district) &&
-        (!q || `${s.name} ${s.code} ${s.routeName} ${s.routeId} ${s.district ?? ''}`.toLowerCase().includes(q)),
+        matchAdmin(s, adminFilter) &&
+        (!q ||
+          `${s.name} ${s.code} ${s.routeName} ${s.routeId} ${s.province ?? ''} ${s.district ?? ''} ${s.sector ?? ''}`
+            .toLowerCase()
+            .includes(q)),
     )
-  }, [stations, query, district])
+  }, [stations, query, adminFilter])
 
   const counts = useMemo(() => {
     const c: Record<VcBand, number> = { free: 0, near: 0, congested: 0, over: 0, none: 0 }
@@ -125,9 +158,16 @@ export function CountStations() {
   }, [selectedId])
 
   const selected = stations.find((s) => s.id === selectedId) ?? null
-  const filtered = !!query || !!district || band !== 'all'
+  const filtered = !!query || !!province || !!district || !!sector || band !== 'all'
   const scopeCodes = useMemo(() => new Set(inScope.map((s) => s.code)), [inScope])
-  const scopeLabel = [district || 'All districts', query && `matching "${query}"`].filter(Boolean).join(', ')
+  const scopeLabel = [
+    province || null,
+    district || (!province ? 'All districts' : null),
+    sector || null,
+    query && `matching "${query}"`,
+  ]
+    .filter(Boolean)
+    .join(', ')
   const surveys = useSurveys()
   const scopeTrend = useMemo(() => vcTrend(yearsInScope(surveys.data ?? [], scopeCodes)), [surveys.data, scopeCodes])
   const trendChange = scopeTrend ? Math.round(scopeTrend.last.vc * 100) / 100 - Math.round(scopeTrend.first.vc * 100) / 100 : null
@@ -164,10 +204,37 @@ export function CountStations() {
 
       {/* Selection: everything below (indicators, table, map) follows these choices. */}
       <section className="card selection-bar" aria-label="Selection">
+        <label className="inline-field"><span>Province</span>
+          <select
+            className="select"
+            value={province}
+            onChange={(e) => {
+              setProvince(e.target.value)
+              setDistrict('')
+              setSector('')
+            }}
+          >
+            <option value="">All provinces</option>
+            {provinces.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
         <label className="inline-field"><span>District</span>
-          <select className="select" value={district} onChange={(e) => setDistrict(e.target.value)}>
+          <select
+            className="select"
+            value={district}
+            onChange={(e) => {
+              setDistrict(e.target.value)
+              setSector('')
+            }}
+          >
             <option value="">All districts</option>
             {districts.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="inline-field"><span>Sector</span>
+          <select className="select" value={sector} onChange={(e) => setSector(e.target.value)}>
+            <option value="">All sectors</option>
+            {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <Autocomplete
@@ -187,7 +254,18 @@ export function CountStations() {
           ))}
         </div>
         {filtered && (
-          <button className="btn clear" onClick={() => { setQuery(''); setDistrict(''); setBand('all') }}>Clear</button>
+          <button
+            className="btn clear"
+            onClick={() => {
+              setQuery('')
+              setProvince('')
+              setDistrict('')
+              setSector('')
+              setBand('all')
+            }}
+          >
+            Clear
+          </button>
         )}
       </section>
 

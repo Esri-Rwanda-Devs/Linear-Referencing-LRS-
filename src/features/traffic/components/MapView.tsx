@@ -12,6 +12,10 @@ interface Props {
   widthOf: (l: Link) => number
   selectedId: number | null
   onSelect: (id: number | null) => void
+  /** RouteId highlighted / filtered from the map or search. */
+  selectedRouteId?: string | null
+  /** Called when a base road or traffic link is chosen on the map. */
+  onRoadSelect?: (routeId: string | null) => void
   showStations: boolean
   showNames: boolean
   /** Called when a count station marker is clicked. */
@@ -32,7 +36,11 @@ function project(lon: number, lat: number): readonly [number, number] {
   return [((lon + 180) / 360) * W, ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * W] as const
 }
 
-function boundsOf(links: Link[], stations: StationStatus[], network: NetworkRoad[]): readonly [number, number, number, number] {
+function boundsOf(
+  links: Link[],
+  stations: StationStatus[],
+  network: NetworkRoad[],
+): readonly [number, number, number, number] {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
   const add = (lon: number, lat: number) => {
     const [x, y] = project(lon, lat)
@@ -45,7 +53,21 @@ function boundsOf(links: Link[], stations: StationStatus[], network: NetworkRoad
   return x0 === Infinity ? [0, 0, W, W] : [x0, y0, x1, y1]
 }
 
-export function MapView({ network, links, stations, colourOf, widthOf, selectedId, onSelect, showStations, showNames, onStationClick, selectedStationId }: Props) {
+export function MapView({
+  network,
+  links,
+  stations,
+  colourOf,
+  widthOf,
+  selectedId,
+  onSelect,
+  selectedRouteId = null,
+  onRoadSelect,
+  showStations,
+  showNames,
+  onStationClick,
+  selectedStationId,
+}: Props) {
   const [basemapId, setBasemapId] = useState<string>(() => {
     try { return localStorage.getItem('basemap') ?? DEFAULT_BASEMAP } catch { return DEFAULT_BASEMAP }
   })
@@ -83,7 +105,7 @@ export function MapView({ network, links, stations, colourOf, widthOf, selectedI
       }
     }
     return {
-      lines: network.map((r) => ({ id: r.id, d: toD(r.paths) })),
+      lines: network.map((r) => ({ id: r.id, routeId: r.routeId, d: toD(r.paths) })),
       // Longer routes first, so they win when labels compete for space.
       labels: [...longest.entries()].sort((a, b) => b[1].len - a[1].len).map(([routeId, v]) => ({ routeId, ...v })),
     }
@@ -173,8 +195,16 @@ export function MapView({ network, links, stations, colourOf, widthOf, selectedI
   }
   const onPointerUp = () => {
     // A click that barely moved on empty map clears the selection.
-    if (drag.current && drag.current.moved < 4) onSelect(null)
+    if (drag.current && drag.current.moved < 4) {
+      onSelect(null)
+      onRoadSelect?.(null)
+    }
     drag.current = null
+  }
+
+  const pickRoad = (routeId: string, linkId?: number) => {
+    onRoadSelect?.(routeId)
+    if (linkId != null) onSelect(linkId)
   }
 
   const hover = (e: React.MouseEvent, text: string | null) => {
@@ -248,23 +278,61 @@ export function MapView({ network, links, stations, colourOf, widthOf, selectedI
               pointerEvents="none"
             />
           ))}
-          {base.lines.map((r) => (
-            <path key={`n${r.id}`} d={r.d} className="map-base" vectorEffect="non-scaling-stroke" />
-          ))}
-          {ordered.map(({ link, d }) => (
-            <path
-              key={link.id}
-              d={d}
-              className={`map-link${selectedId != null && selectedId !== link.id ? ' dim' : ''}${selectedId === link.id ? ' sel' : ''}`}
-              stroke={colourOf(link)}
-              strokeWidth={selectedId === link.id ? widthOf(link) + 2 : widthOf(link)}
-              vectorEffect="non-scaling-stroke"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onSelect(link.id) }}
-              onMouseMove={(e) => hover(e, `${link.label} (${link.range})${link.vc != null ? ` · V/C ${link.vc.toFixed(2)}` : ''}`)}
-              onMouseLeave={() => setTip(null)}
-            />
-          ))}
+          {base.lines.map((r) => {
+            const onRoute = !!selectedRouteId && r.routeId === selectedRouteId
+            const dim = !!selectedRouteId && r.routeId !== selectedRouteId
+            return (
+              <g key={`n${r.id}`}>
+                <path
+                  d={r.d}
+                  className={`map-base${onRoute ? ' sel' : ''}${dim ? ' dim' : ''}`}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {r.routeId && (
+                  <path
+                    d={r.d}
+                    className="map-base-hit"
+                    vectorEffect="non-scaling-stroke"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      pickRoad(r.routeId)
+                    }}
+                    onMouseMove={(e) => hover(e, r.routeId)}
+                    onMouseLeave={() => setTip(null)}
+                  />
+                )}
+              </g>
+            )
+          })}
+          {ordered.map(({ link, d }) => {
+            const onRoute = !!selectedRouteId && link.routeId === selectedRouteId
+            const dim =
+              (selectedId != null && selectedId !== link.id && !onRoute) ||
+              (!!selectedRouteId && link.routeId !== selectedRouteId)
+            return (
+              <path
+                key={link.id}
+                d={d}
+                className={`map-link${dim ? ' dim' : ''}${selectedId === link.id || onRoute ? ' sel' : ''}`}
+                stroke={colourOf(link)}
+                strokeWidth={selectedId === link.id || onRoute ? widthOf(link) + 2 : widthOf(link)}
+                vectorEffect="non-scaling-stroke"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  pickRoad(link.routeId, link.id)
+                }}
+                onMouseMove={(e) =>
+                  hover(
+                    e,
+                    `${link.label} (${link.range})${link.vc != null ? ` · V/C ${link.vc.toFixed(2)}` : ''}`,
+                  )
+                }
+                onMouseLeave={() => setTip(null)}
+              />
+            )
+          })}
         </g>
 
         {showNames && <g className="map-labels">{visibleLabels}</g>}

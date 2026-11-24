@@ -1214,6 +1214,14 @@ main.focus-chart .map-pane { overflow: hidden; visibility: hidden; }
 :root[data-theme="dark"] .esri-ui-corner .esri-component { box-shadow: var(--shadow-md); }
 :root[data-theme="dark"] .esri-attribution { background-color: var(--color-overlay); color: var(--color-text-muted); }
 
+.parcel-popup-head { margin: 12px 0 6px; font-size: 13px; font-weight: 600; }
+.parcel-popup-note { margin: 0; font-size: 12px; color: var(--color-text-muted); }
+.parcel-popup-buildings { width: 100%; font-size: 12px; }
+.parcel-popup-buildings th { text-align: left; font-weight: 600; padding: 4px 6px; }
+.parcel-popup-buildings td { padding: 4px 6px; vertical-align: top; }
+.parcel-popup-buildings td:not(:first-child),
+.parcel-popup-buildings th:not(:first-child) { text-align: right; white-space: nowrap; }
+
 /* Native controls. */
 :root[data-theme="dark"] input[type="checkbox"] {
   appearance: none;

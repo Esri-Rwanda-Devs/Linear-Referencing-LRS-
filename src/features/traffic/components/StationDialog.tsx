@@ -22,7 +22,10 @@ export function StationHeading({ station, badge = 'status', extra }: { station: 
         <h2 id="station-title">{station.name || station.code}</h2>
         <div className="sub">
           {station.routeName || station.routeId}
-          {station.district && ` · ${station.district}`}
+          {[station.province, station.district, station.sector]
+            .filter(Boolean)
+            .map((part) => ` · ${part}`)
+            .join('')}
         </div>
       </div>
       <span className="status-pill" style={{ color: colour, background: `color-mix(in srgb, ${colour} 14%, transparent)` }}>

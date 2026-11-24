@@ -128,7 +128,7 @@ export default function RouteCompare({ catalog, route, events, onCompareRoute, o
                     <dt>Pavement</dt><dd title={dominant(10)}>{dominant(10)}</dd>
                     <dt>Drain</dt><dd title={dominant(6)}>{dominant(6)}</dd>
                     <dt>Speed</dt><dd title="Sum of each segment’s length times its speed, divided by the full route length. Stretches with no speed count as 0.">{formatSpeed(side === "a" ? speedA : speedB)}</dd>
-                    <dt>Culverts</dt><dd>{count(5)}</dd>
+                    <dt>Culverts</dt><dd>{count(25)}</dd>
                     <dt>Bridges</dt><dd>{count(2)}</dd>
                   </dl>
                 </div>

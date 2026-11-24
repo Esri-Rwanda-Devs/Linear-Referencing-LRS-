@@ -310,7 +310,10 @@ function carriagewayType(attributes) {
       ? Number(String(widthRaw).match(/-?\d+(?:\.\d+)?/)?.[0])
       : NaN;
   const widthNote = Number.isFinite(width) ? ` (${width} m)` : "";
-  const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const compact = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
   if (/four|4\s*lane/.test(compact))
     return `Four Lane divided carriageway${widthNote}`;
   if (/two|2\s*lane/.test(compact)) return `Two lane${widthNote}`;
@@ -620,7 +623,10 @@ function pciStatus(raw) {
   const text = String(raw ?? "").trim();
   if (!text) return "No data";
   const before = text.split("(")[0].trim();
-  const compact = before.toLowerCase().replace(/[^a-z\s]/g, " ").trim();
+  const compact = before
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .trim();
   if (/very\s*poor/.test(compact)) return "Very Poor";
   if (/\bpoor\b/.test(compact)) return "Poor";
   if (/\bfair\b/.test(compact)) return "Fair";
@@ -636,7 +642,10 @@ function typeName(layerId, raw, fieldName = "") {
     return pciStatus(text);
   }
   if (layerId === 3) {
-    const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const compact = text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
     if (/four|4\s*lane/.test(compact)) return "Four Lane divided";
     if (/two|2\s*lane/.test(compact)) return "Two lane";
     if (/intermediate/.test(compact)) return "Intermediate Lane";
@@ -1023,7 +1032,8 @@ export async function loadOverviewFields() {
           const name = fieldNamed(meta, level.pattern);
           if (!name) continue;
           const type =
-            (meta.fields || []).find((field) => field.name === name)?.type || "";
+            (meta.fields || []).find((field) => field.name === name)?.type ||
+            "";
           boundary[level.id] = { name, type };
         }
         const value = valueFieldOf(meta, def);
@@ -1032,8 +1042,9 @@ export async function loadOverviewFields() {
           fieldNames.some((item) => item.toLowerCase() === name.toLowerCase()),
         ).map(
           (name) =>
-            fieldNames.find((item) => item.toLowerCase() === name.toLowerCase()) ||
-            name,
+            fieldNames.find(
+              (item) => item.toLowerCase() === name.toLowerCase(),
+            ) || name,
         );
         return [
           def.id,
@@ -1066,8 +1077,9 @@ function typeEqualsClause(fieldName, fieldType, rawValue) {
   const value = String(rawValue ?? "").trim();
   if (!value) return "";
   const numeric =
-    /Integer|SmallInteger|Double|Single|OID|Long/i.test(String(fieldType || "")) ||
-    /^-?\d+(\.\d+)?$/.test(value);
+    /Integer|SmallInteger|Double|Single|OID|Long/i.test(
+      String(fieldType || ""),
+    ) || /^-?\d+(\.\d+)?$/.test(value);
   if (numeric && Number.isFinite(Number(value))) {
     return `${safe} = ${Number(value)}`;
   }
@@ -1086,7 +1098,9 @@ export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
     // applies a spatial filter against the selected boundary polygon.
     if (field?.name) parts.push(whereEquals(field.name, areaName, field.type));
   }
-  const needle = String(typeNeedle || "").trim().toLowerCase();
+  const needle = String(typeNeedle || "")
+    .trim()
+    .toLowerCase();
   if (needle && spec?.value?.name) {
     const safe = String(spec.value.name).replace(/[^A-Za-z0-9_]/g, "");
     if (safe) {
@@ -1111,11 +1125,7 @@ export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
       (typeValue === "paved" || typeValue === "unpaved"
         ? VALUE_FIELD_ALIASES[PAVEMENT_LAYER_ID]?.[0]
         : null);
-    const clause = typeEqualsClause(
-      fieldName,
-      spec?.value?.type,
-      typeValue,
-    );
+    const clause = typeEqualsClause(fieldName, spec?.value?.type, typeValue);
     if (clause) parts.push(clause);
   }
   const roadFields = (spec?.roadFields || []).length
@@ -1130,7 +1140,11 @@ export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
   if (roadKey && safeRoadFields.length) {
     // Route-id columns also match the road's route ids (code → ids from the network).
     const ids = (extras.roadIds || [])
-      .map((item) => String(item || "").trim().replace(/'/g, "''"))
+      .map((item) =>
+        String(item || "")
+          .trim()
+          .replace(/'/g, "''"),
+      )
       .filter(Boolean)
       .slice(0, 200);
     const clauses = safeRoadFields.map((name) =>
@@ -1139,11 +1153,19 @@ export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
         : `${name} = '${roadKey}'`,
     );
     parts.push(`(${clauses.join(" OR ")})`);
-  } else if (!roadKey && Array.isArray(extras.roadKeys) && extras.roadKeys.length) {
+  } else if (
+    !roadKey &&
+    Array.isArray(extras.roadKeys) &&
+    extras.roadKeys.length
+  ) {
     const keys = [
       ...new Set(
         extras.roadKeys
-          .map((item) => String(item || "").trim().replace(/'/g, "''"))
+          .map((item) =>
+            String(item || "")
+              .trim()
+              .replace(/'/g, "''"),
+          )
           .filter(Boolean),
       ),
     ].slice(0, 200);
@@ -1196,9 +1218,7 @@ async function adminNameField(levelId, layerId) {
   const fallback = (meta.fields || []).find((field) =>
     new RegExp(`^${levelId}(_name)?$`, "i").test(field.name),
   );
-  return fallback
-    ? { name: fallback.name, type: fallback.type || "" }
-    : null;
+  return fallback ? { name: fallback.name, type: fallback.type || "" } : null;
 }
 
 /** Geographic extent for the selected admin boundary (WGS84). */
@@ -1262,10 +1282,9 @@ export async function loadBoundaryGeometry(level, areaName) {
     outSR: "4326",
     resultRecordCount: "50",
   });
-  const response = await fetch(
-    `${devUrl(ADMIN)}/${layerId}/query?${query}`,
-    { signal: AbortSignal.timeout(10000) },
-  );
+  const response = await fetch(`${devUrl(ADMIN)}/${layerId}/query?${query}`, {
+    signal: AbortSignal.timeout(10000),
+  });
   if (!response.ok) throw new Error(`Query failed ${response.status}`);
   const data = await response.json();
   if (data.error) throw new Error(data.error.message || "Query failed");
@@ -1525,7 +1544,13 @@ function routeCodeMap() {
   return routeCodesPromise;
 }
 
-const ROAD_NAME_FIELDS = ["routename", "route_name", "link_name", "road_name", "roadname"];
+const ROAD_NAME_FIELDS = [
+  "routename",
+  "route_name",
+  "link_name",
+  "road_name",
+  "roadname",
+];
 const ROAD_CODE_FIELDS = ["road_code", "roadcode", "routecode", "route_code"];
 const ROUTE_ID_FIELDS = ROUTE_FIELDS.filter((name) => !/name/.test(name));
 
@@ -1574,18 +1599,20 @@ export async function loadLineEventRoadStats(
   const fields = meta.fields || [];
   const override = String(options.valueField || "").trim();
   const value = override
-    ? fields.find((field) => field.name.toLowerCase() === override.toLowerCase()) ||
-      { name: override, type: "" }
+    ? fields.find(
+        (field) => field.name.toLowerCase() === override.toLowerCase(),
+      ) || { name: override, type: "" }
     : valueFieldOf(meta, def);
-  const drain = def.id === 6
-    ? drainagePair(fields, options.drainageMode || "type")
-    : null;
+  const drain =
+    def.id === 6 ? drainagePair(fields, options.drainageMode || "type") : null;
   const dualDrain = Boolean(drain?.lhs && drain?.rhs);
   const widthField = fields.find((field) => /^width(_m|m)?$/i.test(field.name));
   const speedField =
     def.id === 14
       ? value ||
-        fields.find((field) => /maxspeed|speed_limit|speedlimit/i.test(field.name))
+        fields.find((field) =>
+          /maxspeed|speed_limit|speedlimit/i.test(field.name),
+        )
       : null;
   const codeField = namedField(fields, ROAD_CODE_FIELDS);
   const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
@@ -1718,9 +1745,7 @@ export async function loadLineEventRoadStats(
     .map((road) => ({
       ...road,
       avgSpeed:
-        road.speedLen > 0
-          ? Math.round(road.speedKmSum / road.speedLen)
-          : null,
+        road.speedLen > 0 ? Math.round(road.speedKmSum / road.speedLen) : null,
     }))
     .sort((a, b) => b.totalKm - a.totalKm);
 }
@@ -1744,8 +1769,10 @@ const sqlText = (value) => `'${String(value ?? "").replace(/'/g, "''")}'`;
 
 /** WHERE clause that picks one road on a layer, or null when it has no road column. */
 function roadWhere(fields, road) {
-  const typeOf = (name) => fields.find((field) => field.name === name)?.type || "";
-  const numeric = (name) => /Integer|Double|Single|Small|OID/i.test(typeOf(name));
+  const typeOf = (name) =>
+    fields.find((field) => field.name === name)?.type || "";
+  const numeric = (name) =>
+    /Integer|Double|Single|Small|OID/i.test(typeOf(name));
   const codeField = namedField(fields, ROAD_CODE_FIELDS);
   const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
   const nameField = namedField(fields, ROAD_NAME_FIELDS);
@@ -1806,11 +1833,14 @@ async function countNearLine(def, line, extraWhere) {
     units: "esriSRUnit_Meter",
     returnCountOnly: "true",
   });
-  const response = await fetch(`${devUrl(def.service || LRS)}/${def.id}/query`, {
-    method: "POST",
-    body,
-    signal: AbortSignal.timeout(30000),
-  });
+  const response = await fetch(
+    `${devUrl(def.service || LRS)}/${def.id}/query`,
+    {
+      method: "POST",
+      body,
+      signal: AbortSignal.timeout(30000),
+    },
+  );
   if (!response.ok) throw new Error(`Query failed ${response.status}`);
   const data = await response.json();
   if (data.error) throw new Error(data.error.message || "Query failed");
@@ -1833,8 +1863,11 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
       try {
         const meta = await layerMeta(def.id, def.service || LRS);
         const fields = meta.fields || [];
-        const area = levelId && areaName ? await assetField(def, levelId) : null;
-        const areaWhere = area ? whereEquals(area.name, areaName, area.type) : "";
+        const area =
+          levelId && areaName ? await assetField(def, levelId) : null;
+        const areaWhere = area
+          ? whereEquals(area.name, areaName, area.type)
+          : "";
         const clause = roadWhere(fields, road);
         if (def.kind === "point") {
           if (clause) {
