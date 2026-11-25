@@ -253,15 +253,29 @@ const POINT_RANK = [
   "Transformers",
 ];
 
-const DEFAULT_MUTED = LRS_LAYER_DEFS.filter(
-  (def) =>
-    def.kind === "point" && !OVERVIEW_DEFAULT_POINTS.includes(def.id),
+/** Point layers that stay off unless the user turns them on. */
+const DEFAULT_POINT_MUTED = LRS_LAYER_DEFS.filter(
+  (def) => def.kind === "point" && !OVERVIEW_DEFAULT_POINTS.includes(def.id),
 ).map((def) => def.id);
+
+/** Mute every layer except the active analysis line event (pavement-first). */
+function mutedExcept(focusId) {
+  if (
+    focusId == null ||
+    focusId === "all" ||
+    !Number.isFinite(Number(focusId))
+  ) {
+    return DEFAULT_POINT_MUTED;
+  }
+  const keep = Number(focusId);
+  return LRS_LAYER_DEFS.filter((def) => def.id !== keep).map((def) => def.id);
+}
+
+const DEFAULT_MUTED = mutedExcept(PAVEMENT_LAYER_ID);
 
 const LINE_ORDER = [10, 3, 14, 6]; // Pavement, Carriageway, Speed, Drainage
 const ANALYSIS_ORDERED = [...ANALYSIS_DEFS].sort(
-  (a, b) =>
-    (LINE_ORDER.indexOf(a.id) + 99) - (LINE_ORDER.indexOf(b.id) + 99),
+  (a, b) => LINE_ORDER.indexOf(a.id) + 99 - (LINE_ORDER.indexOf(b.id) + 99),
 );
 
 function rankOf(title) {
@@ -295,9 +309,13 @@ function typeColor(layerId, name, fallback, dim = "") {
   if (Number(layerId) === 3) {
     if (/four/.test(key)) return colors["four lane divided"] || fallback;
     if (/two/.test(key)) return colors["two lane"] || fallback;
-    if (/intermediate/.test(key)) return colors["intermediate lane"] || fallback;
+    if (/intermediate/.test(key))
+      return colors["intermediate lane"] || fallback;
   }
-  if (Number(layerId) === PAVEMENT_LAYER_ID && /pci|poor|fair|good|excellent/i.test(key)) {
+  if (
+    Number(layerId) === PAVEMENT_LAYER_ID &&
+    /pci|poor|fair|good|excellent/i.test(key)
+  ) {
     const pci = PAVEMENT_FIELDS.pci.colors;
     if (/very\s*poor/.test(key)) return pci["very poor"];
     if (/\bpoor\b/.test(key)) return pci.poor;
@@ -348,7 +366,10 @@ function bandTypeShares(roads) {
     (item) => item.km > 0 || item.count > 0,
   );
   const total = list.reduce((sum, item) => sum + item.km, 0);
-  return complementTypeShares(list, total);
+  return complementTypeShares(list, total).map((item) => ({
+    ...item,
+    roads: Number(item.count) || 0,
+  }));
 }
 
 function Bars({ items }) {
@@ -369,6 +390,92 @@ function Bars({ items }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Clickable vertical bar chart: filter roads by category and show them on the map. */
+function CountFilterBars({
+  items,
+  layerId,
+  dim = "",
+  selected = "",
+  onSelect,
+  metric = "count",
+}) {
+  const rows = (items || []).filter(
+    (item) =>
+      Number(item.count) > 0 || Number(item.roads) > 0 || Number(item.km) > 0,
+  );
+  if (!rows.length) return null;
+  const valueOf = (item) =>
+    metric === "roads"
+      ? Number(item.roads) || 0
+      : Number(item.count) || Number(item.roads) || 0;
+  const max = Math.max(1, ...rows.map(valueOf));
+  const step = niceStep(max);
+  const top = Math.max(step, Math.ceil(max / step) * step);
+  const ticks = [];
+  for (let value = top; value >= 0; value -= step) ticks.push(value);
+  const unit = metric === "roads" ? "roads" : "seg";
+  return (
+    <div className="ov-count-bars" role="group" aria-label="Filter by value">
+      <div className="ov-count-bars-head">
+        {selected ? (
+          <button
+            type="button"
+            className="ov-count-clear"
+            onClick={() => onSelect?.("")}
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <div
+        className="ov-count-chart"
+        style={{ "--ov-ticks": Math.max(1, ticks.length - 1) }}
+      >
+        <div className="ov-count-axis" aria-hidden="true">
+          {ticks.map((value) => (
+            <span key={value}>{numberText(value)}</span>
+          ))}
+        </div>
+        <div className="ov-count-plot">
+          {rows.map((item) => {
+            const on = sameName(selected, item.name);
+            const value = valueOf(item);
+            const roads = Number(item.roads);
+            const color = typeColor(layerId, item.name, "#94a3b8", dim);
+            const label = typeLabel(layerId, item.name);
+            return (
+              <button
+                key={item.name}
+                type="button"
+                className={`ov-count-col${on ? " on" : ""}`}
+                style={{
+                  "--ov-bar": `${Math.max(6, (value / top) * 100)}%`,
+                  "--ov-bar-color": color,
+                }}
+                aria-pressed={on}
+                title={`${label} · ${numberText(value)} ${unit}${
+                  Number.isFinite(item.km) ? ` · ${kmText(item.km)} km` : ""
+                }${
+                  Number.isFinite(roads) && metric !== "roads"
+                    ? ` · ${numberText(roads)} roads`
+                    : ""
+                }${Number.isFinite(item.pct) ? ` · ${item.pct}%` : ""}`}
+                onClick={() =>
+                  onSelect?.(on ? "" : String(item.name).trim().toLowerCase())
+                }
+              >
+                <b>{numberText(value)}</b>
+                <i aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -483,42 +590,61 @@ function LengthChart({ title, items, loading, mark }) {
   );
 }
 
-function roadTypeShare(road, typeNeedle, layerId, opts = {}) {
-  const totalKm = Number(road?.totalKm) || 0;
-  const types = analysisTypeShares(
-    Object.values(road?.byType || {}),
-    totalKm,
-    layerId,
-    opts,
-  );
-  if (!types.length || !(totalKm > 0)) {
-    return { pct: null, label: "", matchKm: 0, matchSeg: 0 };
-  }
+function roadHasType(road, typeNeedle) {
   const needle = String(typeNeedle || "")
     .trim()
     .toLowerCase();
-  let match;
+  if (!needle) return false;
+  return Object.values(road?.byType || {}).some((item) => {
+    const name = String(item.name || "")
+      .trim()
+      .toLowerCase();
+    if (name !== needle) return false;
+    return Number(item.count) > 0 || Number(item.km) > 0;
+  });
+}
+
+function roadTypeShare(road, typeNeedle, layerId, opts = {}) {
+  const totalKm = Number(road?.totalKm) || 0;
+  const rawTypes = Object.values(road?.byType || {});
+  const types = analysisTypeShares(rawTypes, totalKm, layerId, opts);
+  const needle = String(typeNeedle || "")
+    .trim()
+    .toLowerCase();
+  // Prefer share rows; fall back to raw byType so speed/etc. still count roads
+  // even when totalKm is missing.
+  let match = null;
   if (needle) {
-    match = types.find(
-      (item) =>
-        String(item.name || "")
-          .trim()
-          .toLowerCase() === needle,
-    );
-  } else {
-    // Default share: paved when present, otherwise the longest type.
     match =
       types.find(
         (item) =>
           String(item.name || "")
             .trim()
+            .toLowerCase() === needle,
+      ) ||
+      rawTypes.find(
+        (item) =>
+          String(item.name || "")
+            .trim()
+            .toLowerCase() === needle,
+      );
+  } else if (types.length || rawTypes.length) {
+    const pool = types.length ? types : rawTypes;
+    match =
+      pool.find(
+        (item) =>
+          String(item.name || "")
+            .trim()
             .toLowerCase() === "paved",
-      ) || [...types].sort((a, b) => (b.km || 0) - (a.km || 0))[0];
+      ) || [...pool].sort((a, b) => (b.km || 0) - (a.km || 0))[0];
+  }
+  if (!match) {
+    return { pct: null, label: "", matchKm: 0, matchSeg: 0 };
   }
   const matchKm = Number(match?.km) || 0;
   const matchSeg = Number(match?.count) || 0;
   return {
-    pct: sharePct(matchKm, totalKm),
+    pct: totalKm > 0 ? sharePct(matchKm, totalKm) : null,
     label: match?.name || "",
     matchKm,
     matchSeg,
@@ -697,38 +823,14 @@ function AnalysisBox({
         </div>
       ) : null}
       {(categories || []).length > 0 ? (
-        <div className="ov-analysis-chips" aria-label="Category filter">
-          <button
-            type="button"
-            className={typeValue ? "" : "on"}
-            onClick={() => onType?.("")}
-          >
-            All
-          </button>
-          {categories.map((item) => {
-            const on = sameName(typeValue, item.name);
-            return (
-              <button
-                key={item.name}
-                type="button"
-                className={on ? "on" : ""}
-                aria-pressed={on}
-                title={`${kmText(item.km)} km · ${numberText(item.count)} seg`}
-                onClick={() =>
-                  onType?.(on ? "" : String(item.name).trim().toLowerCase())
-                }
-              >
-                <i
-                  style={{
-                    background: typeColor(layerId, item.name, "#94a3b8", dim),
-                  }}
-                />
-                {typeLabel(layerId, item.name)}
-                <b>{item.pct}%</b>
-              </button>
-            );
-          })}
-        </div>
+        <CountFilterBars
+          items={categories}
+          layerId={layerId}
+          dim={dim}
+          selected={typeValue}
+          onSelect={onType}
+          metric="roads"
+        />
       ) : null}
       <div className="ov-analysis-kpis">
         <div>
@@ -826,8 +928,7 @@ function AnalysisBox({
                   .join(" · ")
               : parts
                   .map(
-                    (item) =>
-                      `${typeLabel(layerId, item.name)} ${item.pct}%`,
+                    (item) => `${typeLabel(layerId, item.name)} ${item.pct}%`,
                   )
                   .join(" · ");
             const speedNote =
@@ -891,7 +992,10 @@ function SegmentStrip({ def, layer, typeValue }) {
   const segments = layer?.segments || [];
   const groups = analysisTypeShares(
     layer?.groups || [],
-    (layer?.groups || []).reduce((sum, item) => sum + (Number(item.km) || 0), 0),
+    (layer?.groups || []).reduce(
+      (sum, item) => sum + (Number(item.km) || 0),
+      0,
+    ),
     def.id,
   );
   const routes = new Map();
@@ -918,7 +1022,9 @@ function SegmentStrip({ def, layer, typeValue }) {
     const end = Math.max(...items.map((item) => item.to));
     return { route, items, start, end, span: end - start || 1 };
   });
-  const focus = String(typeValue || "").trim().toLowerCase();
+  const focus = String(typeValue || "")
+    .trim()
+    .toLowerCase();
   const collapse = Number(def.id) === PAVEMENT_LAYER_ID;
   const colorOf = (type) =>
     typeColor(
@@ -948,7 +1054,9 @@ function SegmentStrip({ def, layer, typeValue }) {
       </header>
       {layer?.error ? <p className="ov-strip-note">{layer.error}</p> : null}
       {layer && !layer.error && !segments.length ? (
-        <p className="ov-strip-note">No {def.title.toLowerCase()} segments on this road.</p>
+        <p className="ov-strip-note">
+          No {def.title.toLowerCase()} segments on this road.
+        </p>
       ) : null}
       {rows.map((row) => (
         <div className="ov-strip-row" key={row.route || "road"}>
@@ -976,8 +1084,13 @@ function SegmentStrip({ def, layer, typeValue }) {
       {groups.length > 0 ? (
         <ul className="ov-road-bar-legend">
           {groups.map((item) => (
-            <li key={item.name} className={matches(item.name) && focus ? "on" : ""}>
-              <i style={{ background: typeColor(def.id, item.name, def.swatch) }} />
+            <li
+              key={item.name}
+              className={matches(item.name) && focus ? "on" : ""}
+            >
+              <i
+                style={{ background: typeColor(def.id, item.name, def.swatch) }}
+              />
               <span>
                 {typeLabel(def.id, item.name)} {item.pct}%
               </span>
@@ -1062,7 +1175,8 @@ function RoadPicker({ options, query, selectedKey, onQuery, onPick, onClear }) {
     if (!open) return undefined;
     const measure = () => {
       const rect = inputRef.current?.getBoundingClientRect();
-      if (rect) setPlace({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+      if (rect)
+        setPlace({ top: rect.bottom + 4, left: rect.left, width: rect.width });
     };
     measure();
     window.addEventListener("resize", measure);
@@ -1153,7 +1267,11 @@ function RoadPicker({ options, query, selectedKey, onQuery, onPick, onClear }) {
             id="ov-road-list"
             role="listbox"
             ref={listRef}
-            style={place ? { top: place.top, left: place.left, width: place.width } : undefined}
+            style={
+              place
+                ? { top: place.top, left: place.left, width: place.width }
+                : undefined
+            }
           >
             {matches.length ? (
               matches.map((item, index) => (
@@ -1392,8 +1510,7 @@ export default function Overview({ query = "", onQuery }) {
         .filter((item) => item.kind === "line" && !item.route)
         .sort(
           (a, b) =>
-            (LINE_ORDER.indexOf(a.id) + 99) -
-            (LINE_ORDER.indexOf(b.id) + 99),
+            LINE_ORDER.indexOf(a.id) + 99 - (LINE_ORDER.indexOf(b.id) + 99),
         ),
     [rows],
   );
@@ -1455,12 +1572,7 @@ export default function Overview({ query = "", onQuery }) {
     const options = {};
     if (valueField) options.valueField = valueField;
     if (statsLayerId === 6) options.drainageMode = drainageMode;
-    loadLineEventRoadStats(
-      statsLayerId,
-      active?.id || "",
-      place || "",
-      options,
-    )
+    loadLineEventRoadStats(statsLayerId, active?.id || "", place || "", options)
       .then((result) => {
         if (!dead) setRoadStats(result || []);
       })
@@ -1517,10 +1629,7 @@ export default function Overview({ query = "", onQuery }) {
     [analysisDim, statsLayerId],
   );
   const analysisRoads = useMemo(() => {
-    if (
-      statsLayerId === PAVEMENT_LAYER_ID &&
-      pavementField === "paved_band"
-    ) {
+    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
       return roadsToPavedBands(roadStats);
     }
     return roadStats;
@@ -1534,37 +1643,50 @@ export default function Overview({ query = "", onQuery }) {
     return "";
   }, [typeValue, statsLayerId, pavementField]);
   const categories = useMemo(() => {
-    if (
-      statsLayerId === PAVEMENT_LAYER_ID &&
-      pavementField === "paved_band"
-    ) {
+    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
       return bandTypeShares(analysisRoads);
     }
     const { types, totalKm } = aggregateTypes(analysisRoads);
-    return analysisTypeShares(types, totalKm, statsLayerId, shareOpts);
+    const shares = analysisTypeShares(types, totalKm, statsLayerId, shareOpts);
+    // How many roads carry each category (for the count bars / map filter).
+    return shares.map((item) => {
+      const needle = String(item.name || "")
+        .trim()
+        .toLowerCase();
+      const roads = analysisRoads.filter((road) => {
+        if (
+          statsLayerId === PAVEMENT_LAYER_ID &&
+          pavementField === "paved_band"
+        ) {
+          return (
+            String(road.pavedBand || "")
+              .trim()
+              .toLowerCase() === needle
+          );
+        }
+        if (roadHasType(road, needle)) return true;
+        const share = roadTypeShare(road, needle, statsLayerId, shareOpts);
+        return share.matchSeg > 0 || share.matchKm > 0;
+      }).length;
+      return { ...item, roads };
+    });
   }, [analysisRoads, statsLayerId, shareOpts, pavementField]);
   const typeFilteredRoads = useMemo(() => {
     const typeNeedle = String(typeValue || "")
       .trim()
       .toLowerCase();
     if (!typeNeedle) return analysisRoads;
-    if (
-      statsLayerId === PAVEMENT_LAYER_ID &&
-      pavementField === "paved_band"
-    ) {
-      return analysisRoads.filter((road) =>
-        String(road.pavedBand || "")
-          .trim()
-          .toLowerCase() === typeNeedle,
+    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
+      return analysisRoads.filter(
+        (road) =>
+          String(road.pavedBand || "")
+            .trim()
+            .toLowerCase() === typeNeedle,
       );
     }
     return analysisRoads.filter((road) => {
-      const share = roadTypeShare(
-        road,
-        typeNeedle,
-        statsLayerId,
-        shareOpts,
-      );
+      if (roadHasType(road, typeNeedle)) return true;
+      const share = roadTypeShare(road, typeNeedle, statsLayerId, shareOpts);
       return share.matchSeg > 0 || share.matchKm > 0;
     });
   }, [analysisRoads, typeValue, statsLayerId, shareOpts, pavementField]);
@@ -1581,14 +1703,13 @@ export default function Overview({ query = "", onQuery }) {
     );
   }, [typeFilteredRoads, roadKey]);
   const typeShares = useMemo(() => {
-    if (
-      statsLayerId === PAVEMENT_LAYER_ID &&
-      pavementField === "paved_band"
-    ) {
-      return bandTypeShares(typeFilteredRoads);
+    // When a road is picked, share/KPI follow that road's distribution.
+    const sourceRoads = roadKey ? filteredRoadStats : typeFilteredRoads;
+    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
+      return bandTypeShares(sourceRoads);
     }
-    if (typeFilteredRoads.length) {
-      const { types, totalKm } = aggregateTypes(typeFilteredRoads);
+    if (sourceRoads.length) {
+      const { types, totalKm } = aggregateTypes(sourceRoads);
       const shares = analysisTypeShares(
         types,
         totalKm,
@@ -1597,10 +1718,7 @@ export default function Overview({ query = "", onQuery }) {
       );
       if (shares.length) return shares;
     }
-    if (
-      statsLayerId !== PAVEMENT_LAYER_ID ||
-      pavementField !== "category"
-    )
+    if (statsLayerId !== PAVEMENT_LAYER_ID || pavementField !== "category")
       return [];
     const groups = pavementGroups || [];
     const total = groups.reduce(
@@ -1613,6 +1731,8 @@ export default function Overview({ query = "", onQuery }) {
     });
   }, [
     typeFilteredRoads,
+    filteredRoadStats,
+    roadKey,
     pavementGroups,
     statsLayerId,
     pavementField,
@@ -1634,6 +1754,21 @@ export default function Overview({ query = "", onQuery }) {
     }
     return "";
   }, [categories, typeValue, statsLayerId, pavementGroups]);
+  // Same colours as the analysis chart → unique-value renderer on the map.
+  const chartColors = useMemo(
+    () =>
+      Object.fromEntries(
+        (categories || []).map((item) => [
+          String(item.name || "")
+            .trim()
+            .toLowerCase()
+            .replace(/[_-]+/g, " ")
+            .replace(/\s+/g, " "),
+          typeColor(statsLayerId, item.name, "#94a3b8", analysisDim),
+        ]),
+      ),
+    [categories, statsLayerId, analysisDim],
+  );
   const typeOptions = useMemo(() => {
     // Offer the categories the analysed roads actually carry.
     if (categories.length && (!focusDef || !focusDef.route)) {
@@ -1788,6 +1923,7 @@ export default function Overview({ query = "", onQuery }) {
               const next = event.target.value;
               setLineFocus(next);
               setTypeValue("");
+              setMuted(mutedExcept(next));
               if (next !== "all") setScope("line");
             }}
           >
@@ -1826,6 +1962,12 @@ export default function Overview({ query = "", onQuery }) {
             setRoadKey(item.key);
             setRoadQuery(item.label);
             setRoadZoomNonce((value) => value + 1);
+            const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
+            if (networkId != null) {
+              setMuted((current) =>
+                current.includes(networkId) ? current : [...current, networkId],
+              );
+            }
           }}
           onClear={() => {
             setRoadKey("");
@@ -1928,9 +2070,17 @@ export default function Overview({ query = "", onQuery }) {
               roadIds={roadProfile?.ids || EMPTY_IDS}
               typeRoadKeys={
                 typeValue
-                  ? typeFilteredRoads.map((road) => road.code || road.key)
+                  ? [
+                      ...new Set(
+                        typeFilteredRoads
+                          .flatMap((road) => [road.code, road.key, road.label])
+                          .map((item) => String(item || "").trim())
+                          .filter(Boolean),
+                      ),
+                    ]
                   : []
               }
+              chartColors={chartColors}
               analysisLabel={analysisLabel}
               headline={headline}
               pavementField={pavementField}
@@ -1964,11 +2114,34 @@ export default function Overview({ query = "", onQuery }) {
               onLayer={(id) => {
                 setLineFocus(String(id));
                 setTypeValue("");
+                setMuted(mutedExcept(id));
               }}
-              onType={setTypeValue}
+              onType={(value) => {
+                setTypeValue(value);
+                // Show network so Surface / PCI / Paved band selection paints in chart colour.
+                if (value) {
+                  const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
+                  if (networkId != null) {
+                    setMuted((current) =>
+                      current.filter((id) => id !== networkId),
+                    );
+                  }
+                }
+              }}
               onPavementField={(key) => {
                 setPavementField(key);
                 setTypeValue("");
+                // PCI / Surface: start with segment colour distribution (hide solid network).
+                if (key === "pci" || key === "surface_type") {
+                  const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
+                  if (networkId != null) {
+                    setMuted((current) =>
+                      current.includes(networkId)
+                        ? current
+                        : [...current, networkId],
+                    );
+                  }
+                }
               }}
               onDrainageMode={(key) => {
                 setDrainageMode(key);
@@ -1988,10 +2161,22 @@ export default function Overview({ query = "", onQuery }) {
                 setRoadKey(key);
                 setRoadQuery(road.code || road.label || key);
                 setRoadZoomNonce((value) => value + 1);
+                // Hide solid network so pavement condition colours show along the road.
+                const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
+                if (networkId != null) {
+                  setMuted((current) =>
+                    current.includes(networkId)
+                      ? current
+                      : [...current, networkId],
+                  );
+                }
               }}
             />
             {roadKey ? (
-              <section className="ov-strips" aria-label="Line events along the road">
+              <section
+                className="ov-strips"
+                aria-label="Line events along the road"
+              >
                 <h4>
                   Segments along {roadLabel || roadKey}
                   {roadProfileLoading ? " · loading…" : ""}
@@ -2003,7 +2188,11 @@ export default function Overview({ query = "", onQuery }) {
                   <SegmentStrip
                     key={def.id}
                     def={def}
-                    layer={roadProfile ? roadProfile.layers?.[def.id] || { segments: [] } : null}
+                    layer={
+                      roadProfile
+                        ? roadProfile.layers?.[def.id] || { segments: [] }
+                        : null
+                    }
                     typeValue={def.id === statsLayerId ? typeValue : ""}
                   />
                 ))}

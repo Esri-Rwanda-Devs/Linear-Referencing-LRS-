@@ -1076,6 +1076,9 @@ function typeEqualsClause(fieldName, fieldType, rawValue) {
   if (!safe) return "";
   const value = String(rawValue ?? "").trim();
   if (!value) return "";
+  if (/^no\s*data$/i.test(value)) {
+    return `(${safe} IS NULL OR ${safe} = '' OR UPPER(${safe}) = 'NO DATA')`;
+  }
   const numeric =
     /Integer|SmallInteger|Double|Single|OID|Long/i.test(
       String(fieldType || ""),
@@ -1084,6 +1087,20 @@ function typeEqualsClause(fieldName, fieldType, rawValue) {
     return `${safe} = ${Number(value)}`;
   }
   const text = value.replace(/'/g, "''").toUpperCase();
+  // PCI labels are often "Fair(25-50)" — match the status prefix.
+  if (/pci_range|pci_status|pci$|condition/i.test(safe)) {
+    if (/^VERY\s*POOR$/i.test(value)) {
+      return `UPPER(${safe}) LIKE 'VERY%POOR%'`;
+    }
+    if (/^POOR$/i.test(value)) {
+      return `(UPPER(${safe}) LIKE 'POOR%' AND UPPER(${safe}) NOT LIKE 'VERY%')`;
+    }
+    return `UPPER(${safe}) LIKE '${text}%'`;
+  }
+  // Surface / type: keep exact match, also allow the value as a whole-word prefix.
+  if (/surface|pavement_type|pavement_category/i.test(safe)) {
+    return `(UPPER(${safe}) = '${text}' OR UPPER(${safe}) LIKE '${text} %' OR UPPER(${safe}) LIKE '% ${text}' OR UPPER(${safe}) LIKE '% ${text} %')`;
+  }
   return `UPPER(${safe}) = '${text}'`;
 }
 
@@ -1170,20 +1187,15 @@ export function overviewWhere(spec, boundary, typeNeedle = "", extras = {}) {
       ),
     ].slice(0, 200);
     if (keys.length && safeRoadFields.length) {
-      const codeField =
-        safeRoadFields.find((name) => /road_code/i.test(name)) ||
-        safeRoadFields[0];
-      if (keys.length === 1) {
-        parts.push(
-          `(${safeRoadFields
-            .map((name) => `${name} = '${keys[0]}'`)
-            .join(" OR ")})`,
-        );
-      } else {
-        parts.push(
-          `${codeField} IN (${keys.map((item) => `'${item}'`).join(",")})`,
-        );
-      }
+      const list = keys.map((item) => `'${item}'`).join(",");
+      // Match road_code / routeid / name — codes and ids both appear in analysis lists.
+      parts.push(
+        `(${safeRoadFields
+          .map((name) =>
+            keys.length === 1 ? `${name} = '${keys[0]}'` : `${name} IN (${list})`,
+          )
+          .join(" OR ")})`,
+      );
     }
   }
   return { hide: false, where: parts.length ? parts.join(" AND ") : null };

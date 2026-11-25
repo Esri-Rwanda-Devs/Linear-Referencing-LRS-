@@ -427,7 +427,9 @@ export const PAVEMENT_FIELDS = {
     label: "Type",
     colors: {
       "asphalt mix on asphalt base": "#1e293b",
+      asphalt: "#1e293b",
       earth: "#a16207",
+      "no data": "#94a3b8",
       "jointed reinforced concrete pavement": "#64748b",
     },
   },
@@ -437,7 +439,8 @@ export const PAVEMENT_FIELDS = {
     colors: {
       unseal: "#d6d3d1",
       "cement concrete": "#94a3b8",
-      bituminous: "#0f172a",
+      bituminous: "#1e293b",
+      "no data": "#cbd5e1",
     },
   },
   pci: {
@@ -449,6 +452,7 @@ export const PAVEMENT_FIELDS = {
       fair: "#eab308",
       good: "#a3e635",
       excellent: "#16a34a",
+      "no data": "#94a3b8",
     },
   },
   paved_band: {

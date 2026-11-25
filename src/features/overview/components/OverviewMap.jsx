@@ -51,46 +51,107 @@ function popupFor(def) {
   };
 }
 
+function cssToRgb(value, alpha = 0.95) {
+  if (Array.isArray(value)) return value;
+  const hex = String(value || "")
+    .trim()
+    .replace(/^#/, "");
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+      alpha,
+    ];
+  }
+  return value;
+}
+
+/** Pure black/near-black vanishes on satellite — lift it so paved segments stay visible. */
+function mapLineColor(value, alpha = 0.98) {
+  const rgb = cssToRgb(value, alpha);
+  if (
+    Array.isArray(rgb) &&
+    rgb.length >= 3 &&
+    rgb[0] < 45 &&
+    rgb[1] < 45 &&
+    rgb[2] < 45
+  ) {
+    return [248, 250, 252, alpha];
+  }
+  return rgb;
+}
+
 function lineRenderer(def, valueField, colorMap = null) {
   // Thin enough that satellite / streets basemap stays visible under events.
   const width = def.route
     ? 1.8
     : Math.min(Math.max(Number(def.width) || 2, 1.6), 3);
-  const simple = {
+  const fallback = {
     type: "simple-line",
-    color: def.color,
+    color: cssToRgb("#64748b", 0.55),
     width,
     cap: "round",
     join: "round",
   };
   const rule = VALUE_COLORS[def.id];
   const colors = colorMap || rule?.colors;
-  if (!colors || !valueField?.name || def.kind !== "line" || def.route)
-    return { type: "simple", symbol: simple };
+  if (!colors || !valueField?.name || def.kind !== "line" || def.route) {
+    return {
+      type: "simple",
+      symbol: {
+        type: "simple-line",
+        color: cssToRgb(def.color),
+        width,
+        cap: "round",
+        join: "round",
+      },
+    };
+  }
   const safe = String(valueField.name).replace(/"/g, "");
-  // PCI / condition labels often look like "Fair(25-50)" — strip the range.
+  // Normalize like the chart: lower, trim, strip PCI "(25-50)", collapse spaces.
   const needsStatus =
     /pci|condition/i.test(valueField.name) ||
     Object.keys(colors).some((key) =>
       /poor|fair|good|excellent/i.test(key),
     );
   const valueExpression = needsStatus
-    ? `var t = Lower(Text($feature["${safe}"])); var p = Find('(', t); return p > 0 ? Trim(Left(t, p)) : t;`
-    : `Lower(Text($feature["${safe}"]))`;
-  return {
-    type: "unique-value",
-    valueExpression,
-    defaultSymbol: simple,
-    uniqueValueInfos: Object.entries(colors).map(([value, color]) => ({
-      value: String(value).toLowerCase(),
+    ? `var raw = $feature["${safe}"];
+       if (IsEmpty(raw)) return "no data";
+       var t = Lower(Trim(Text(raw)));
+       if (t == "" || t == "null" || t == "nan") return "no data";
+       t = Replace(Replace(Replace(t, "_", " "), "-", " "), "  ", " ");
+       var p = Find("(", t);
+       return p > 0 ? Trim(Left(t, p - 1)) : Trim(t);`
+    : `var raw = $feature["${safe}"];
+       if (IsEmpty(raw)) return "no data";
+       var t = Lower(Trim(Text(raw)));
+       if (t == "" || t == "null" || t == "nan") return "no data";
+       return Trim(Replace(Replace(Replace(t, "_", " "), "-", " "), "  ", " "));`;
+  const infos = Object.entries(colors).map(([value, color]) => {
+    const key = String(value)
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Keep fully paved / paved as true black when that is the configured colour.
+    const keepBlack = key === "fully paved" || key === "paved";
+    return {
+      value: key,
       symbol: {
         type: "simple-line",
-        color,
-        width: Math.max(width, 2.4),
+        color: keepBlack ? cssToRgb(color, 0.98) : mapLineColor(color),
+        width: Math.max(width, needsStatus ? 3.6 : 3.2),
         cap: "round",
         join: "round",
       },
-    })),
+    };
+  });
+  return {
+    type: "unique-value",
+    valueExpression,
+    defaultSymbol: fallback,
+    uniqueValueInfos: infos,
   };
 }
 
@@ -123,6 +184,7 @@ function layerChoice(
   roadKey = "",
   typeRoadKeys = [],
   roadIds = [],
+  pavementField = "category",
 ) {
   const typeOn = Boolean(String(typeValue || "").trim());
   const roadOn = Boolean(String(roadKey || "").trim());
@@ -130,6 +192,8 @@ function layerChoice(
     !roadOn && Array.isArray(typeRoadKeys) && typeRoadKeys.length > 0;
   const isLineish = def.kind === "line";
   const isRoute = Boolean(def.route);
+  const pavedBand =
+    pavementField === "paved_band" && def.id === PAVEMENT_LAYER_ID;
   // When Line event is "all" but a type is set, treat Pavement as the focus layer
   // (paved/unpaved) or keep the explicit focus id.
   const focusId = (() => {
@@ -189,23 +253,29 @@ function layerChoice(
   const roadColumns = (spec?.roadFields || []).length > 0;
   // A picked road keeps point assets on: by road column, else near the road line.
   const roadPoint = roadOn && isPoint;
+  // Picked road + pavement focus: show pavement segment colours (distribution),
+  // not a solid network line covering them — network stays off unless user checks it.
   const forceOn =
     (roadPoint && !muted.includes(def.id)) ||
     (focusOn && isFocusLayer) ||
-    (isRoute && (roadOn || typeRoadsOn)) ||
+    (isRoute && typeRoadsOn && !roadOn) ||
+    (isRoute && roadOn && !focusOn) ||
     (roadOn && !focusOn && !typeOn && isLineish);
   if (muted.includes(def.id) && !forceOn)
     return { on: false, where: null, reason: "Turned off", locked: false };
 
-  const applyType = typeOn && isFocusLayer && !isRoute;
+  // Paved band is a derived road attribute — filter by road list, not pavement_category.
+  // Surface / Type / PCI / Category: filter pavement segments by the field value so
+  // non-matching conditions are hidden; road list only for network (+ paved band).
+  const applyType = typeOn && isFocusLayer && !isRoute && !pavedBand;
   const applyRoad =
     roadOn &&
     (isFocusLayer ||
       isRoute ||
       (!focusOn && !typeOn && isLineish) ||
       (roadPoint && fieldsReady && roadColumns));
-  // Type-filtered route codes apply on the road network (and keep event layer on type only).
-  const applyRoadList = typeRoadsOn && isRoute;
+  const applyRoadList =
+    typeRoadsOn && (isRoute || (pavedBand && isFocusLayer));
   const extras = {
     typeValue: applyType ? typeValue : "",
     layerId: applyType ? def.id : null,
@@ -213,15 +283,31 @@ function layerChoice(
     roadKeys: applyRoadList ? typeRoadKeys : [],
     roadIds: applyRoad ? roadIds : [],
   };
+  const baseSpec = fieldsReady
+    ? spec
+    : {
+        boundary: {},
+        value: spec?.value || null,
+        roadFields: spec?.roadFields || [],
+        route: Boolean(def.route),
+      };
+  // Match the active pavement dimension (type / surface / PCI), not only category.
+  const pavementSpec =
+    applyType &&
+    def.id === PAVEMENT_LAYER_ID &&
+    pavementField &&
+    pavementField !== "paved_band" &&
+    PAVEMENT_FIELDS[pavementField]?.field
+      ? {
+          ...baseSpec,
+          value: {
+            name: PAVEMENT_FIELDS[pavementField].field,
+            type: baseSpec?.value?.type || "esriFieldTypeString",
+          },
+        }
+      : baseSpec;
   const filter = overviewWhere(
-    fieldsReady
-      ? spec
-      : {
-          boundary: {},
-          value: spec?.value || null,
-          roadFields: spec?.roadFields || [],
-          route: Boolean(def.route),
-        },
+    pavementSpec,
     boundary,
     needle && !titleHit ? needle : "",
     extras,
@@ -267,6 +353,7 @@ export default function OverviewMap({
   analysisLabel = "",
   pavedPct = null,
   headline = "",
+  chartColors = null,
   onToggle,
 }) {
   const host = useRef(null);
@@ -274,6 +361,7 @@ export default function OverviewMap({
   const layersRef = useRef(new Map());
   const districtLayerRef = useRef(null);
   const highlightRef = useRef(null);
+  const routeLabelsRef = useRef(null);
   const fieldsRef = useRef({});
   const focusRef = useRef(() => {});
   const homeTargetRef = useRef(RWANDA);
@@ -366,19 +454,7 @@ export default function OverviewMap({
           customParameters: token ? { token } : undefined,
           opacity: 0.55,
           outFields: ["district", "province"],
-          labelingInfo: [
-            {
-              labelExpressionInfo: { expression: "$feature.district" },
-              symbol: {
-                type: "text",
-                color: [255, 255, 255, 0.95],
-                haloColor: [15, 23, 42, 0.85],
-                haloSize: 1.2,
-                font: { size: 9, weight: "bold" },
-              },
-              minScale: 2500000,
-            },
-          ],
+          labelsVisible: false,
           renderer: {
             type: "simple",
             symbol: {
@@ -395,9 +471,14 @@ export default function OverviewMap({
           listMode: "hide",
         });
         highlightRef.current = highlight;
+        const routeLabels = new GraphicsLayer({
+          id: "overview-route-labels",
+          listMode: "hide",
+        });
+        routeLabelsRef.current = routeLabels;
         const map = new Map({
           basemap: "satellite",
-          layers: [districtLayer, ...assetLayers, highlight],
+          layers: [districtLayer, ...assetLayers, highlight, routeLabels],
         });
         view = new MapView({
           container: host.current,
@@ -469,6 +550,7 @@ export default function OverviewMap({
       layersRef.current = new Map();
       districtLayerRef.current = null;
       highlightRef.current = null;
+      routeLabelsRef.current = null;
       view?.destroy();
     };
   }, []);
@@ -641,6 +723,7 @@ export default function OverviewMap({
         roadKey,
         typeRoadKeys,
         roadIds,
+        pavementField,
       ),
     };
   });
@@ -694,18 +777,213 @@ export default function OverviewMap({
     });
   }, [ready, filterKey]);
 
-  // Retheme pavement / drainage lines when analysis dimension changes.
+  // One route-code label per filtered road (not one label per segment).
+  const typeRoadsKey = Array.isArray(typeRoadKeys)
+    ? typeRoadKeys.join("|")
+    : "";
+  useEffect(() => {
+    if (!ready) return undefined;
+    const labels = routeLabelsRef.current;
+    const Graphic = GraphicRef.current;
+    const networkDef = LRS_LAYER_DEFS.find((item) => item.route);
+    const network = networkDef
+      ? layersRef.current.get(networkDef.id)
+      : null;
+    if (!labels) return undefined;
+    labels.removeAll();
+    if (network) {
+      network.labelsVisible = false;
+      network.labelingInfo = null;
+    }
+    const show = Boolean(typeRoadsKey) && !roadKey && network && Graphic;
+    if (!show) return undefined;
+    const codeField =
+      (fieldsRef.current[networkDef.id]?.roadFields || []).find((name) =>
+        /road_code/i.test(name),
+      ) || "road_code";
+    const safe = String(codeField).replace(/[^A-Za-z0-9_]/g, "") || "road_code";
+    const keys = [
+      ...new Set(
+        typeRoadKeys.map((item) => String(item || "").trim()).filter(Boolean),
+      ),
+    ].slice(0, 80);
+    if (!keys.length) return undefined;
+    let dead = false;
+    const where =
+      network.definitionExpression ||
+      `${safe} IN (${keys.map((key) => `'${key.replace(/'/g, "''")}'`).join(",")})`;
+    network
+      .queryFeatures({
+        where,
+        outFields: [safe],
+        returnGeometry: true,
+        maxRecordCount: 2000,
+      })
+      .then((result) => {
+        if (dead || !result?.features?.length) return;
+        const seen = new Set();
+        const graphics = [];
+        for (const feature of result.features) {
+          const code = String(
+            feature.attributes?.[safe] ??
+              feature.attributes?.[safe.toLowerCase()] ??
+              "",
+          ).trim();
+          if (!code || seen.has(code.toLowerCase())) continue;
+          const paths = feature.geometry?.paths || [];
+          const midPath = paths[Math.floor(paths.length / 2)] || paths[0];
+          if (!midPath?.length) continue;
+          const mid = midPath[Math.floor(midPath.length / 2)];
+          if (!mid || mid.length < 2) continue;
+          seen.add(code.toLowerCase());
+          graphics.push(
+            new Graphic({
+              geometry: {
+                type: "point",
+                x: mid[0],
+                y: mid[1],
+                spatialReference: feature.geometry.spatialReference,
+              },
+              symbol: {
+                type: "text",
+                text: code,
+                color: [255, 255, 255, 0.98],
+                haloColor: [15, 23, 42, 0.92],
+                haloSize: 1.5,
+                font: { size: 10, weight: "bold", family: "Arial" },
+              },
+            }),
+          );
+        }
+        labels.addMany(graphics);
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+      labels.removeAll();
+    };
+  }, [ready, typeRoadsKey, roadKey, typeRoadKeys]);
+
+  // Fit the map to roads matching the selected pavement bar.
+  useEffect(() => {
+    if (!ready || !typeRoadsKey || roadKey) return undefined;
+    const networkDef = LRS_LAYER_DEFS.find((item) => item.route);
+    const network = networkDef
+      ? layersRef.current.get(networkDef.id)
+      : null;
+    const view = viewRef.current;
+    if (!network || !view) return undefined;
+    let dead = false;
+    network
+      .queryExtent({ where: network.definitionExpression || "1=1" })
+      .then((result) => {
+        if (dead || !result?.extent || !(result.count > 0)) return;
+        return view.goTo(
+          { target: result.extent, padding: FIT_PADDING },
+          { duration: 550 },
+        );
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, [ready, typeRoadsKey, roadKey, filterKey]);
+
+  // Colour pavement by the active analysis field. A selected chart condition
+  // (Surface / PCI / Paved band / …) paints matching roads in that bar's colour.
   useEffect(() => {
     if (!ready) return;
     const pavement = layersRef.current.get(PAVEMENT_LAYER_ID);
-    if (pavement && pavementField !== "paved_band") {
-      const spec = PAVEMENT_FIELDS[pavementField];
-      if (spec?.field) {
-        pavement.renderer = lineRenderer(
-          LRS_LAYER_DEFS.find((item) => item.id === PAVEMENT_LAYER_ID),
-          { name: spec.field },
-          spec.colors,
+    const pavementDef = LRS_LAYER_DEFS.find(
+      (item) => item.id === PAVEMENT_LAYER_ID,
+    );
+    const networkDef = LRS_LAYER_DEFS.find((item) => item.route);
+    const network = networkDef
+      ? layersRef.current.get(networkDef.id)
+      : null;
+    const focusSpec =
+      pavementField === "paved_band"
+        ? PAVEMENT_FIELDS.paved_band
+        : PAVEMENT_FIELDS[pavementField] || PAVEMENT_FIELDS.category;
+    const selectedKey = String(typeValue || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ");
+    const mergedColors = {
+      ...(focusSpec?.colors || {}),
+      ...(chartColors || {}),
+    };
+    const resolveColor = (key) => {
+      if (!key) return null;
+      if (mergedColors[key]) return mergedColors[key];
+      const hit = Object.entries(mergedColors).find(([name]) => {
+        const n = String(name)
+          .toLowerCase()
+          .replace(/[_-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        return n === key || n.includes(key) || key.includes(n);
+      });
+      return hit?.[1] || null;
+    };
+    const selectedColor = resolveColor(selectedKey);
+    const keepBlack =
+      selectedKey === "fully paved" || selectedKey === "paved";
+    const solidLine = (color, width = 3.6, asBlack = false) => ({
+      type: "simple",
+      symbol: {
+        type: "simple-line",
+        color: asBlack ? cssToRgb(color, 0.98) : mapLineColor(color),
+        width,
+        cap: "round",
+        join: "round",
+      },
+    });
+    if (pavement && pavementDef) {
+      if (selectedColor) {
+        // Clicked Surface / PCI / Paved band / Category bar → map uses that colour.
+        const paint = solidLine(
+          selectedColor,
+          roadKey ? 4.4 : 3.8,
+          keepBlack,
         );
+        pavement.renderer = paint;
+        if (network) {
+          network.renderer = paint;
+          network.opacity = 0.95;
+        }
+      } else {
+        // No bar selected — show full segment distribution (PCI / Surface / …).
+        const fieldSpec =
+          pavementField === "paved_band"
+            ? PAVEMENT_FIELDS.category
+            : focusSpec;
+        if (fieldSpec?.field) {
+          const distWidth =
+            pavementField === "pci" || roadKey ? 4.2 : pavementDef.width;
+          pavement.renderer = lineRenderer(
+            { ...pavementDef, width: distWidth },
+            { name: fieldSpec.field },
+            mergedColors,
+          );
+        }
+        if (network) {
+          // Keep network quiet so PCI/Surface segment colours read clearly.
+          network.renderer = solidLine(networkDef.color || "#38bdf8", 1.1);
+          network.opacity =
+            pavementField === "pci" || pavementField === "surface_type"
+              ? 0.25
+              : roadKey
+                ? 0.35
+                : 0.88;
+        }
+      }
+      try {
+        pavement.refresh?.();
+        network?.refresh?.();
+      } catch {
+        /* ignore */
       }
     }
     const drainage = layersRef.current.get(6);
@@ -718,7 +996,18 @@ export default function OverviewMap({
         spec.colors,
       );
     }
-  }, [ready, pavementField, drainageMode]);
+  }, [ready, pavementField, drainageMode, typeValue, chartColors, roadKey]);
+
+  // Hide district administrative boundaries while a chart / road filter is active.
+  useEffect(() => {
+    if (!ready) return;
+    const district = districtLayerRef.current;
+    if (!district) return;
+    const filtering = Boolean(
+      String(typeValue || "").trim() || typeRoadsKey || roadKey,
+    );
+    district.visible = !filtering;
+  }, [ready, typeValue, typeRoadsKey, roadKey]);
 
   // Point layers without a road column: show only those within snapping distance of the road.
   const nearKey = choices

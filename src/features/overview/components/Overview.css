@@ -106,7 +106,7 @@
 .ov-main {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.85fr) minmax(260px, 0.72fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
   gap: 10px;
   align-items: stretch;
 }
@@ -124,6 +124,7 @@
 }
 .ov-lines {
   max-width: 100%;
+  overflow: auto;
 }
 .ov-analysis {
   flex: none;
@@ -201,6 +202,131 @@
 }
 .ov-analysis-chips b {
   font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.ov-count-bars {
+  margin: 0 0 12px;
+  padding: 10px 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-muted);
+}
+.ov-count-bars-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.ov-count-clear {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.ov-count-chart {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: stretch;
+  min-height: 200px;
+}
+.ov-count-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: end;
+  min-height: 168px;
+  padding: 18px 0 36px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ov-count-plot {
+  display: flex;
+  align-items: end;
+  justify-content: space-around;
+  gap: 6px;
+  min-height: 168px;
+  padding: 18px 6px 0;
+  border-left: 1px solid var(--chart-grid, var(--color-border));
+  border-bottom: 1px solid var(--chart-grid, var(--color-border));
+  background-image: linear-gradient(
+    to bottom,
+    var(--chart-grid, var(--color-border)) 1px,
+    transparent 1px
+  );
+  background-size: 100% calc(100% / var(--ov-ticks, 4));
+  background-position: 0 18px;
+}
+.ov-count-col {
+  position: relative;
+  flex: 1 1 0;
+  max-width: 56px;
+  height: 100%;
+  min-height: 150px;
+  margin: 0;
+  padding: 0 0 36px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.ov-count-col i {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: 36px;
+  height: var(--ov-bar);
+  min-height: 4px;
+  border-radius: 5px 5px 0 0;
+  background: var(--ov-bar-color, #94a3b8);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ov-bar-color) 35%, transparent);
+  transition: height 160ms ease, filter 120ms ease;
+}
+.ov-count-col b {
+  position: absolute;
+  left: 50%;
+  bottom: calc(36px + var(--ov-bar) + 3px);
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1;
+}
+.ov-count-col span {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 64px;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ov-count-col:hover i {
+  filter: brightness(1.08);
+}
+.ov-count-col.on i {
+  box-shadow:
+    0 0 0 2px var(--color-accent),
+    0 0 0 1px color-mix(in srgb, var(--ov-bar-color) 35%, transparent);
+}
+.ov-count-col.on span {
+  color: var(--color-text-strong);
   font-weight: 600;
 }
 .ov-analysis-note {
@@ -851,8 +977,8 @@
 }
 .ov-chart-axis {
   height: 100%;
-  min-height: 120px;
-  max-height: 140px;
+  min-height: 160px;
+  max-height: 200px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -865,8 +991,8 @@
 }
 .ov-chart-plot {
   height: 100%;
-  min-height: 120px;
-  max-height: 140px;
+  min-height: 160px;
+  max-height: 200px;
   margin-top: 8px;
   display: flex;
   align-items: end;
@@ -926,7 +1052,7 @@
 }
 @media (max-width: 1100px) {
   .ov-main {
-    grid-template-columns: minmax(0, 1.55fr) minmax(240px, 0.8fr);
+    grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.95fr);
   }
   .ov-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -214,9 +214,7 @@ const buildingAffectedPct = (building) => {
       stored < 10 ? Math.round(stored * 10) / 10 : Math.round(stored);
     return `${rounded}%`;
   }
-  const footprint = Number(
-    building?.shapeArea || building?.footprint || 0,
-  );
+  const footprint = Number(building?.shapeArea || building?.footprint || 0);
   const affected = Number(building?.sqm);
   if (!(footprint > 0) || !Number.isFinite(affected) || affected < 0)
     return "—";
@@ -633,7 +631,8 @@ function extractCorridorNear(path, center, reachM) {
   lo = Math.max(0, lo - 2);
   hi = Math.min(path.length - 1, hi + 2);
   const slice = path.slice(lo, hi + 1);
-  if (slice.length < 2) return densifyPath(path.slice(0, Math.min(path.length, 24)), 18, 32);
+  if (slice.length < 2)
+    return densifyPath(path.slice(0, Math.min(path.length, 24)), 18, 32);
   return limitPoints(chaikinSmooth(densifyPath(slice, 16, 60), 2), 60);
 }
 
@@ -663,7 +662,10 @@ function riverThrough(path, guides, reach) {
   let lo = best;
   let hi = best;
   while (lo > 0 && nearestGuideM(source[lo - 1], guides) <= reach) lo -= 1;
-  while (hi < source.length - 1 && nearestGuideM(source[hi + 1], guides) <= reach)
+  while (
+    hi < source.length - 1 &&
+    nearestGuideM(source[hi + 1], guides) <= reach
+  )
     hi += 1;
   lo = Math.max(0, lo - 1);
   hi = Math.min(source.length - 1, hi + 1);
@@ -774,8 +776,7 @@ function ParcelScene({ parcel, alignment, buildings, rivers, width }) {
       .join(" ");
   const close = (path) =>
     `${chain(path)} ${sx(path[0][0]).toFixed(1)},${sy(path[0][1]).toFixed(1)}`;
-  const toScreen = (path) =>
-    path.map((point) => [sx(point[0]), sy(point[1])]);
+  const toScreen = (path) => path.map((point) => [sx(point[0]), sy(point[1])]);
   const roadD =
     roadForBand.length > 1 ? smoothPathD(toScreen(roadForBand)) : "";
   const recorded = Number(String(parcel.recordedSize ?? "").replace(/,/g, ""));
@@ -1232,12 +1233,17 @@ export default function CostPlan({
   const focusedBuildings = useMemo(
     () =>
       focusedParcel
-        ? buildings.filter((building) => buildingOnParcel(focusedParcel, building))
+        ? buildings.filter((building) =>
+            buildingOnParcel(focusedParcel, building),
+          )
         : [],
     [focusedParcel, buildings],
   );
   const parcelPages = Math.max(1, Math.ceil(parcels.length / PAGE_SIZE));
-  const buildingPages = Math.max(1, Math.ceil(focusedBuildings.length / PAGE_SIZE));
+  const buildingPages = Math.max(
+    1,
+    Math.ceil(focusedBuildings.length / PAGE_SIZE),
+  );
   const parcelAt = Math.min(parcelPage, parcelPages - 1);
   const buildingAt = Math.min(buildingPage, buildingPages - 1);
   const parcelRows = parcels.slice(
@@ -1299,8 +1305,7 @@ export default function CostPlan({
   const finishLine = () => onFinish();
   const confirmSave = () => {
     if (!projectId || full || busy || !ready || report?.error) return;
-    const label =
-      scenarioName.trim() || `Scenario ${letterOf(options.length)}`;
+    const label = scenarioName.trim() || `Scenario ${letterOf(options.length)}`;
     if ((options || []).some((option) => sameLabel(option.label, label))) {
       setScenarioNameError(
         "Two scenarios in this project cannot have the same name.",
@@ -1766,9 +1771,7 @@ export default function CostPlan({
                   </div>
                   <div>
                     <span>River crossings</span>
-                    <b>
-                      {ready && source.rivers ? source.rivers.length : "—"}
-                    </b>
+                    <b>{ready && source.rivers ? source.rivers.length : "—"}</b>
                   </div>
                   <div>
                     <span>Reserve area</span>
@@ -1927,7 +1930,9 @@ export default function CostPlan({
                         return (
                           <tr
                             key={parcel.key}
-                            className={focusParcelKey === parcel.key ? "on" : ""}
+                            className={
+                              focusParcelKey === parcel.key ? "on" : ""
+                            }
                             onClick={() => openAffectedParcel(parcel)}
                             style={{ cursor: "pointer" }}
                           >
@@ -1945,7 +1950,8 @@ export default function CostPlan({
                               </button>
                             </td>
                             <td>
-                              {parcel.recordedSize || formatNumber(parcel.sqm, 4)}
+                              {parcel.recordedSize ||
+                                formatNumber(parcel.sqm, 4)}
                             </td>
                             <td>{overlapOf(parcel)}</td>
                             <td>
@@ -1954,7 +1960,9 @@ export default function CostPlan({
                                 : "—"}
                             </td>
                             <td title={parcel.priceVillage || ""}>
-                              {rate != null ? formatNumber(rate, 2) : "No price"}
+                              {rate != null
+                                ? formatNumber(rate, 2)
+                                : "No price"}
                             </td>
                             <td>
                               {rate != null ? formatRwf(parcel.cost) : "—"}
@@ -2182,7 +2190,7 @@ export default function CostPlan({
                   </div>
                 </div>
                 <table className="rr-table">
-        <thead>
+                  <thead>
                     <tr>
                       <th>Parcel ID</th>
                       <th>Owner</th>
@@ -2196,54 +2204,69 @@ export default function CostPlan({
                       <th>Date moved</th>
                       <th>Status</th>
                     </tr>
-        </thead>
-        <tbody>
+                  </thead>
+                  <tbody>
                     {registerSlice.map((parcel) => {
                       const buildingCost = (source?.buildings || [])
-                        .filter((building) => buildingOnParcel(parcel, building))
-                        .reduce((sum, building) => sum + (Number(building.cost) || 0), 0);
+                        .filter((building) =>
+                          buildingOnParcel(parcel, building),
+                        )
+                        .reduce(
+                          (sum, building) => sum + (Number(building.cost) || 0),
+                          0,
+                        );
                       const landCost = Number(parcel.cost) || 0;
                       return (
-                      <tr
-                        key={parcel.key}
-                        className={selected?.key === parcel.key ? "on" : ""}
-                        onClick={() => setSelectedKey(parcel.key)}
-                      >
-                        <td>
-                          <button
-                            type="button"
-                            className="link"
-                            onClick={() => setSelectedKey(parcel.key)}
+                        <tr
+                          key={parcel.key}
+                          className={selected?.key === parcel.key ? "on" : ""}
+                          onClick={() => setSelectedKey(parcel.key)}
+                        >
+                          <td>
+                            <button
+                              type="button"
+                              className="link"
+                              onClick={() => setSelectedKey(parcel.key)}
+                            >
+                              {parcelCode(parcel)}
+                            </button>
+                          </td>
+                          <td>—</td>
+                          <td>
+                            {parcel.priceVillage || parcel.village || "—"}
+                          </td>
+                          <td>{formatNumber(parcel.sqm, 4)}</td>
+                          <td
+                            title={
+                              parcel.rateSource === "village"
+                                ? "Village maximum reference price"
+                                : "No village price found"
+                            }
                           >
-                            {parcelCode(parcel)}
-                          </button>
-                        </td>
-                        <td>—</td>
-                        <td>{parcel.priceVillage || parcel.village || "—"}</td>
-                        <td>{formatNumber(parcel.sqm, 4)}</td>
-                        <td title={parcel.rateSource === "village" ? "Village maximum reference price" : "No village price found"}>
-                          {parcel.rate ? formatNumber(parcel.rate, 2) : "No price"}
-                        </td>
-                        <td>
-                          {hasBuilding(parcel, source?.buildings)
-                            ? "Yes"
-                            : "No"}
-                        </td>
-                        <td>{millions(landCost + buildingCost)}</td>
-                        {/* <td>{landCost > 0 ? formatRwf(landCost) : "—"}</td> */}
-                        <td>—</td>
-                        <td>—</td>
-                        <td>
-                          <span
-                            className={`rr-badge ${statusClass(parcelStatus[parcel.key])}`}
-                          >
-                            {parcelStatus[parcel.key] || "Identified"}
-                            {(parcelProofs?.[parcel.key] || []).length
-                              ? ` · ${(parcelProofs[parcel.key] || []).length} proof`
-                              : ""}
-                          </span>
-                        </td>
-            </tr>
+                            {parcel.rate
+                              ? formatNumber(parcel.rate, 2)
+                              : "No price"}
+                          </td>
+                          <td>
+                            {hasBuilding(parcel, source?.buildings)
+                              ? "Yes"
+                              : "No"}
+                          </td>
+                          <td>{millions(landCost + buildingCost)}</td>
+                          {/* <td>{landCost > 0 ? formatRwf(landCost) : "—"}</td> */}
+                          <td>—</td>
+                          <td>—</td>
+                          <td>
+                            <span
+                              className={`rr-badge ${statusClass(parcelStatus[parcel.key])}`}
+                            >
+                              {parcelStatus[parcel.key] || "Identified"}
+                              {(parcelProofs?.[parcel.key] || []).length
+                                ? ` · ${(parcelProofs[parcel.key] || []).length} proof`
+                                : ""}
+                            </span>
+                          </td>
+                        </tr>
                       );
                     })}
                     {registerRows.length === 0 && (
@@ -2255,8 +2278,8 @@ export default function CostPlan({
                         </td>
                       </tr>
                     )}
-        </tbody>
-      </table>
+                  </tbody>
+                </table>
                 <div className="rr-register-foot">
                   <span>
                     Showing{" "}
@@ -2375,7 +2398,9 @@ export default function CostPlan({
                       <span>Land taken Cost</span>
                       <b>
                         {millions(selected.cost)} M
-                        {selected.rate ? ` (${formatSqm(selected.sqm)} × ${formatRwf(selected.rate)})` : ""}
+                        {selected.rate
+                          ? ` (${formatSqm(selected.sqm)} × ${formatRwf(selected.rate)})`
+                          : ""}
                       </b>
                     </p>
                     <p>
@@ -2636,7 +2661,7 @@ export default function CostPlan({
                         : status === "Paid, not moved"
                           ? "#d97706"
                           : "#94a3b8";
-  return (
+                  return (
                     <span
                       key={parcel.key}
                       style={{ flex: 1, background: color }}
@@ -2790,15 +2815,13 @@ export default function CostPlan({
                       building,
                       sourceParcels || [],
                     );
-  return (
+                    return (
                       <tr key={building.key}>
                         <td>{host ? parcelCode(host) : "—"}</td>
                         <td>{building.name || building.use || "Building"}</td>
                         <td>{building.use || "—"}</td>
                         <td>{buildingAffectedPct(building)}</td>
-                        <td>
-                          {formatNumber(building.sqm || 0, 4)}
-                        </td>
+                        <td>{formatNumber(building.sqm || 0, 4)}</td>
                         <td>{formatRwf(building.cost)}</td>
                       </tr>
                     );
@@ -2854,11 +2877,11 @@ export default function CostPlan({
                   ? `${(projects || []).find((project) => project.id === projectId)?.name || "Project"} · ${options.length} of 3 scenarios`
                   : "Compare alignments"}
               </h2>
-        </div>
+            </div>
             <div className="rr-actions">
               <button type="button" onClick={() => onSection("budget")}>
                 Add saved scenario
-          </button>
+              </button>
               <button
                 type="button"
                 disabled={!options.length}
@@ -2946,7 +2969,7 @@ export default function CostPlan({
                 </article>
               ))}
             </div>
-        {options.length > 0 && (
+            {options.length > 0 && (
               <div className="rr-card">
                 <h3>Side-by-side comparison</h3>
                 <p className="rr-hint">
@@ -3196,14 +3219,14 @@ export default function CostPlan({
               </section>
             </div>
           </section>
-          </>
-        )}
+        </>
+      )}
       {busy && (
         <div className="rr-loader" role="status" aria-live="polite">
           <div className="rr-loader-card">
             <span className="rr-spinner" aria-hidden="true" />
             <p>Analyzing the reserve</p>
-              </div>
+          </div>
         </div>
       )}
       {saveOpen && (
@@ -3269,9 +3292,9 @@ export default function CostPlan({
                   type="button"
                   className="solid"
                   onClick={() => {
-                  setProjectNameError("");
-                  setProjectOpen(true);
-                }}
+                    setProjectNameError("");
+                    setProjectOpen(true);
+                  }}
                 >
                   Create project
                 </button>
@@ -3286,7 +3309,7 @@ export default function CostPlan({
                   Save scenario
                 </button>
               )}
-              </div>
+            </div>
           </div>
         </div>
       )}
