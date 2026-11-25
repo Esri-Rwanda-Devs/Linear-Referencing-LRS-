@@ -194,6 +194,18 @@ const overlapOf = (parcel) => {
   if (!(recorded > 1)) return "—";
   return `${Math.min(999, Math.round((parcel.sqm / recorded) * 100))}%`;
 };
+/** Higher overlap first, then larger affected area — most affected parcels at the top. */
+const affectRank = (parcel) => {
+  const taken = Number(parcel?.sqm) || 0;
+  const recorded = Number(String(parcel?.recordedSize ?? "").replace(/,/g, ""));
+  const overlap = recorded > 1 ? taken / recorded : 0;
+  return { overlap, taken };
+};
+const byMostAffected = (left, right) => {
+  const a = affectRank(left);
+  const b = affectRank(right);
+  return b.overlap - a.overlap || b.taken - a.taken;
+};
 /** Affected % = affected m² / SHAPE__Area (full building). */
 const buildingAffectedPct = (building) => {
   const stored = Number(building?.affectedPct);
@@ -1117,8 +1129,17 @@ export default function CostPlan({
   const source =
     options.find((option) => option.id === activeId)?.report || report;
   const ready = Boolean(source && !source.error);
-  const parcels = source?.parcels || [];
-  const buildings = source?.buildings || [];
+  const parcels = useMemo(
+    () => [...(source?.parcels || [])].sort(byMostAffected),
+    [source?.parcels],
+  );
+  const buildings = useMemo(
+    () =>
+      [...(source?.buildings || [])].sort(
+        (left, right) => (Number(right.sqm) || 0) - (Number(left.sqm) || 0),
+      ),
+    [source?.buildings],
+  );
   const sourceParcels = parcels;
   const selected =
     sourceParcels.find((parcel) => parcel.key === selectedKey) ||
@@ -1236,6 +1257,8 @@ export default function CostPlan({
     const value = Number(parcel?.rate ?? parcel?.priceSqm);
     return value > 0 ? value : null;
   };
+  /** Buildings panel only opens when the chosen parcel has affected buildings. */
+  const showBuildingsPanel = Boolean(focusedParcel && focusedBuildings.length);
   const seenSavePrompt = useRef(0);
   useEffect(() => {
     if (!savePrompt || savePrompt === seenSavePrompt.current || busy) return;
@@ -1861,7 +1884,7 @@ export default function CostPlan({
             />
             <div className="rr-parcels-body">
               <div
-                className={`rr-affected${parcels.length ? "" : " single"}`}
+                className={`rr-affected${showBuildingsPanel ? "" : " single"}`}
               >
                 <div>
                   <header>
@@ -1965,118 +1988,88 @@ export default function CostPlan({
                     onPage={setParcelPage}
                   />
                 </div>
-                {parcels.length > 0 && (
-                  <i className="rr-affected-line" aria-hidden="true" />
-                )}
-                <div>
-                  <header>
-                    <h3>
-                      Affected buildings
-                      {focusedParcel
-                        ? ` (${focusedBuildings.length}) · ${parcelCode(focusedParcel)}`
-                        : ""}
-                    </h3>
-                    {focusedParcel && (
-                      <button
-                        type="button"
-                        className="rr-btn"
-                        onClick={() => setFocusParcelKey("")}
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </header>
-                  <table className="rr-table">
-                    <thead>
-                      <tr>
-                        <th>Parcel ID</th>
-                        <th>Use</th>
-                        <th>Affected %</th>
-                        <th>Affected (m²)</th>
-                        <th>Max price / m²</th>
-                        <th>Price of affected</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {!ready && (
-                        <tr>
-                          <td colSpan={6}>
-                            {busy
-                              ? "Measuring…"
-                              : "Draw and finish an alignment to price building footprints."}
-                          </td>
-                        </tr>
-                      )}
-                      {ready && !focusedParcel && (
-                        <tr>
-                          <td colSpan={6}>
-                            Click a parcel on the left to see its affected buildings.
-                          </td>
-                        </tr>
-                      )}
-                      {ready && focusedParcel && focusedBuildings.length === 0 && (
-                        <tr>
-                          <td colSpan={6}>
-                            {buildings.length === 0
-                              ? buildingGap(source)
-                              : "No building on this parcel intersects the reserve."}
-                          </td>
-                        </tr>
-                      )}
-                      {buildingRows.map((building) => {
-                        const host =
-                          focusedParcel || parcelForBuilding(building, parcels);
-                        const rate =
-                          rateOf(host) ??
-                          (Number(building.landPriceSqm) > 0
-                            ? Number(building.landPriceSqm)
-                            : null);
-                        const landCost =
-                          rate != null && Number(building.sqm) > 0
-                            ? rate * building.sqm
-                            : null;
-                        return (
-                          <tr key={building.key}>
-                            <td>
-                              {host ? (
-                                <button
-                                  type="button"
-                                  className="link"
-                                  onClick={() => onShowParcel?.(host)}
-                                >
-                                  {parcelCode(host)}
-                                </button>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                            <td>
-                              {building.name || building.use || "Building"}
-                            </td>
-                            <td>{buildingAffectedPct(building)}</td>
-                            <td>
-                              {Number.isFinite(building.sqm)
-                                ? formatNumber(building.sqm, 4)
-                                : "—"}
-                            </td>
-                            <td>
-                              {rate != null ? formatNumber(rate, 2) : "No price"}
-                            </td>
-                            <td>
-                              {landCost != null ? formatRwf(landCost) : "—"}
-                            </td>
+                {showBuildingsPanel && (
+                  <>
+                    <i className="rr-affected-line" aria-hidden="true" />
+                    <div>
+                      <header>
+                        <h3>
+                          Affected buildings ({focusedBuildings.length}) ·{" "}
+                          {parcelCode(focusedParcel)}
+                        </h3>
+                        <button
+                          type="button"
+                          className="rr-btn"
+                          onClick={() => setFocusParcelKey("")}
+                        >
+                          Clear
+                        </button>
+                      </header>
+                      <table className="rr-table">
+                        <thead>
+                          <tr>
+                            <th>Parcel ID</th>
+                            <th>Use</th>
+                            <th>Affected %</th>
+                            <th>Affected (m²)</th>
+                            <th>Max price / m²</th>
+                            <th>Price of affected</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <Pager
-                    page={buildingAt}
-                    pages={buildingPages}
-                    total={focusedBuildings.length}
-                    onPage={setBuildingPage}
-                  />
-                </div>
+                        </thead>
+                        <tbody>
+                          {buildingRows.map((building) => {
+                            const host = focusedParcel;
+                            const rate =
+                              rateOf(host) ??
+                              (Number(building.landPriceSqm) > 0
+                                ? Number(building.landPriceSqm)
+                                : null);
+                            const landCost =
+                              rate != null && Number(building.sqm) > 0
+                                ? rate * building.sqm
+                                : null;
+                            return (
+                              <tr key={building.key}>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="link"
+                                    onClick={() => onShowParcel?.(host)}
+                                  >
+                                    {parcelCode(host)}
+                                  </button>
+                                </td>
+                                <td>
+                                  {building.name || building.use || "Building"}
+                                </td>
+                                <td>{buildingAffectedPct(building)}</td>
+                                <td>
+                                  {Number.isFinite(building.sqm)
+                                    ? formatNumber(building.sqm, 4)
+                                    : "—"}
+                                </td>
+                                <td>
+                                  {rate != null
+                                    ? formatNumber(rate, 2)
+                                    : "No price"}
+                                </td>
+                                <td>
+                                  {landCost != null ? formatRwf(landCost) : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <Pager
+                        page={buildingAt}
+                        pages={buildingPages}
+                        total={focusedBuildings.length}
+                        onPage={setBuildingPage}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </section>
@@ -2198,7 +2191,7 @@ export default function CostPlan({
                       <th>Price / m² (RWF)</th>
                       <th>Building</th>
                       <th>Property cost (RWF M)</th>
-                      <th>Land taken cost (RWF)</th>
+                      {/* <th>Land taken cost (RWF)</th> */}
                       <th>Date paid</th>
                       <th>Date moved</th>
                       <th>Status</th>
@@ -2237,7 +2230,7 @@ export default function CostPlan({
                             : "No"}
                         </td>
                         <td>{millions(landCost + buildingCost)}</td>
-                        <td>{landCost > 0 ? formatRwf(landCost) : "—"}</td>
+                        {/* <td>{landCost > 0 ? formatRwf(landCost) : "—"}</td> */}
                         <td>—</td>
                         <td>—</td>
                         <td>
