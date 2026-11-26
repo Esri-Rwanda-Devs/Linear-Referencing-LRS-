@@ -20,6 +20,8 @@ import {
   loadPavementIndex,
   loadRoadProfile,
 } from "../../mapping/services/lrsService";
+
+const EMPTY_SEGMENT = { layerId: null, objectId: null, nonce: 0 };
 import OverviewMap from "./OverviewMap";
 import "./Overview.css";
 
@@ -988,15 +990,72 @@ function AnalysisBox({
 const kmAt = (value) => (Number.isFinite(value) ? value.toFixed(2) : "—");
 
 /** One line event along the picked road: segments placed by from/to measure, coloured by category. */
-function SegmentStrip({ def, layer, typeValue }) {
+function SegmentStrip({
+  def,
+  layer,
+  typeValue,
+  pavementField = "category",
+  drainageMode = "type",
+  onZoomSegment,
+  activeSegment,
+}) {
   const segments = layer?.segments || [];
+  const focus = String(typeValue || "")
+    .trim()
+    .toLowerCase();
+  const isPavement = Number(def.id) === PAVEMENT_LAYER_ID;
+  const dim = isPavement
+    ? pavementField === "paved_band"
+      ? "category"
+      : pavementField
+    : Number(def.id) === 6
+      ? drainageMode
+      : "";
+  // Only collapse to paved/unpaved for Category (and paved-band display).
+  const collapse =
+    isPavement && (pavementField === "category" || pavementField === "paved_band");
+  const colorOf = (type) =>
+    typeColor(
+      def.id,
+      collapse && !isPavedName(type) ? "unpaved" : type,
+      def.swatch,
+      dim,
+    );
+  const matches = (type) => {
+    if (!focus) return true;
+    if (sameName(type, focus)) return true;
+    if (collapse && focus === "paved") return isPavedName(type);
+    if (collapse && focus === "unpaved") return !isPavedName(type);
+    // PCI status may be stored as "Fair(25-50)" while the chart uses "Fair".
+    const raw = String(type || "")
+      .trim()
+      .toLowerCase();
+    const status = raw.includes("(") ? raw.slice(0, raw.indexOf("(")).trim() : raw;
+    return status === focus || raw.startsWith(`${focus}(`) || raw.startsWith(`${focus} `);
+  };
+  const visible = focus
+    ? segments.filter((item) => matches(item.type))
+    : segments;
+  const groupSource = focus
+    ? Object.values(
+        visible.reduce((map, segment) => {
+          const name = segment.type || "No data";
+          const entry = map[name] || { name, count: 0, km: 0 };
+          entry.count += 1;
+          entry.km += Number(segment.km) || 0;
+          map[name] = entry;
+          return map;
+        }, {}),
+      )
+    : layer?.groups || [];
   const groups = analysisTypeShares(
-    layer?.groups || [],
-    (layer?.groups || []).reduce(
-      (sum, item) => sum + (Number(item.km) || 0),
-      0,
-    ),
+    groupSource,
+    groupSource.reduce((sum, item) => sum + (Number(item.km) || 0), 0),
     def.id,
+    {
+      pavementField: isPavement ? dim : "",
+      collapsePavement: collapse,
+    },
   );
   const routes = new Map();
   segments.forEach((segment) => {
@@ -1022,34 +1081,22 @@ function SegmentStrip({ def, layer, typeValue }) {
     const end = Math.max(...items.map((item) => item.to));
     return { route, items, start, end, span: end - start || 1 };
   });
-  const focus = String(typeValue || "")
-    .trim()
-    .toLowerCase();
-  const collapse = Number(def.id) === PAVEMENT_LAYER_ID;
-  const colorOf = (type) =>
-    typeColor(
-      def.id,
-      collapse && !isPavedName(type) ? "unpaved" : type,
-      def.swatch,
-      Number(def.id) === 6 ? "type" : "",
-    );
-  const matches = (type) =>
-    !focus ||
-    sameName(type, focus) ||
-    (collapse && focus === "unpaved" && !isPavedName(type));
   return (
     <article className="ov-strip">
       <header>
         <span>
           <i style={{ background: def.swatch }} />
           {def.title}
+          {focus ? ` · ${typeLabel(def.id, typeValue)}` : ""}
         </span>
         <b>
           {layer == null
             ? "…"
             : layer.error
               ? "Unavailable"
-              : `${numberText(segments.length)} seg`}
+              : focus
+                ? `${numberText(visible.length)} / ${numberText(segments.length)} seg`
+                : `${numberText(segments.length)} seg`}
         </b>
       </header>
       {layer?.error ? <p className="ov-strip-note">{layer.error}</p> : null}
@@ -1062,18 +1109,34 @@ function SegmentStrip({ def, layer, typeValue }) {
         <div className="ov-strip-row" key={row.route || "road"}>
           {rows.length > 1 ? <em>{row.route || "—"}</em> : null}
           <div className="ov-strip-track">
-            {row.items.map((item, index) => (
-              <i
-                key={`${item.from}-${index}`}
-                className={matches(item.type) ? "" : "dim"}
-                style={{
-                  left: `${((item.from - row.start) / row.span) * 100}%`,
-                  width: `${Math.max(((item.to - item.from) / row.span) * 100, 0.4)}%`,
-                  background: colorOf(item.type),
-                }}
-                title={`${typeLabel(def.id, item.type)} · km ${kmAt(item.from)}–${kmAt(item.to)} · ${kmText(item.km)} km`}
-              />
-            ))}
+            {row.items.map((item, index) => {
+              const active =
+                activeSegment?.layerId === def.id &&
+                activeSegment?.objectId != null &&
+                Number(activeSegment.objectId) === Number(item.objectId);
+              return (
+                <button
+                  key={`${item.from}-${index}`}
+                  type="button"
+                  className={`ov-strip-seg${matches(item.type) ? "" : " dim"}${active ? " on" : ""}`}
+                  style={{
+                    left: `${((item.from - row.start) / row.span) * 100}%`,
+                    width: `${Math.max(((item.to - item.from) / row.span) * 100, 0.4)}%`,
+                    background: colorOf(item.type),
+                  }}
+                  title={`${typeLabel(def.id, item.type)} · km ${kmAt(item.from)}–${kmAt(item.to)} · ${kmText(item.km)} km — click to zoom`}
+                  disabled={!item.objectId}
+                  onClick={() =>
+                    item.objectId &&
+                    onZoomSegment?.({
+                      layerId: def.id,
+                      objectId: item.objectId,
+                      label: typeLabel(def.id, item.type),
+                    })
+                  }
+                />
+              );
+            })}
           </div>
           <div className="ov-strip-axis">
             <span>km {kmAt(row.start)}</span>
@@ -1089,7 +1152,9 @@ function SegmentStrip({ def, layer, typeValue }) {
               className={matches(item.name) && focus ? "on" : ""}
             >
               <i
-                style={{ background: typeColor(def.id, item.name, def.swatch) }}
+                style={{
+                  background: typeColor(def.id, item.name, def.swatch, dim),
+                }}
               />
               <span>
                 {typeLabel(def.id, item.name)} {item.pct}%
@@ -1102,8 +1167,11 @@ function SegmentStrip({ def, layer, typeValue }) {
         </ul>
       ) : null}
       {segments.length > 0 ? (
-        <details className="ov-strip-list">
-          <summary>Segments ({segments.length})</summary>
+        <details className="ov-strip-list" open={Boolean(focus)}>
+          <summary>
+            Segments ({focus ? visible.length : segments.length}
+            {focus ? ` matching` : ""})
+          </summary>
           <table>
             <thead>
               <tr>
@@ -1118,18 +1186,40 @@ function SegmentStrip({ def, layer, typeValue }) {
               {rows.flatMap((row) =>
                 row.items
                   .filter((item) => matches(item.type))
-                  .map((item, index) => (
-                    <tr key={`${row.route}-${item.from}-${index}`}>
-                      {rows.length > 1 ? <td>{row.route}</td> : null}
-                      <td>{kmAt(item.from)}</td>
-                      <td>{kmAt(item.to)}</td>
-                      <td>{kmText(item.km)} km</td>
-                      <td>
-                        <i style={{ background: colorOf(item.type) }} />
-                        {typeLabel(def.id, item.type)}
-                      </td>
-                    </tr>
-                  )),
+                  .map((item, index) => {
+                    const active =
+                      activeSegment?.layerId === def.id &&
+                      activeSegment?.objectId != null &&
+                      Number(activeSegment.objectId) === Number(item.objectId);
+                    return (
+                      <tr
+                        key={`${row.route}-${item.from}-${index}`}
+                        className={`ov-strip-row-click${active ? " on" : ""}${item.objectId ? "" : " off"}`}
+                        title={
+                          item.objectId
+                            ? "Click to zoom to this segment on the map"
+                            : "Segment geometry unavailable"
+                        }
+                        onClick={() =>
+                          item.objectId &&
+                          onZoomSegment?.({
+                            layerId: def.id,
+                            objectId: item.objectId,
+                            label: typeLabel(def.id, item.type),
+                          })
+                        }
+                      >
+                        {rows.length > 1 ? <td>{row.route}</td> : null}
+                        <td>{kmAt(item.from)}</td>
+                        <td>{kmAt(item.to)}</td>
+                        <td>{kmText(item.km)} km</td>
+                        <td>
+                          <i style={{ background: colorOf(item.type) }} />
+                          {typeLabel(def.id, item.type)}
+                        </td>
+                      </tr>
+                    );
+                  }),
               )}
             </tbody>
           </table>
@@ -1344,6 +1434,8 @@ export default function Overview({ query = "", onQuery }) {
   const [drainageMode, setDrainageMode] = useState("type");
   const [roadKey, setRoadKey] = useState("");
   const [roadZoomNonce, setRoadZoomNonce] = useState(0);
+  const [roadFromAnalysis, setRoadFromAnalysis] = useState(false);
+  const [segmentFocus, setSegmentFocus] = useState(EMPTY_SEGMENT);
   const [roadOptions, setRoadOptions] = useState([]);
   const [roadQuery, setRoadQuery] = useState("");
   const [roadStats, setRoadStats] = useState([]);
@@ -1591,6 +1683,7 @@ export default function Overview({ query = "", onQuery }) {
   }, [statsLayerId, active?.id, place, pavementField, drainageMode]);
   // Everything on the picked road: point counts and each line event's segments.
   useEffect(() => {
+    setSegmentFocus(EMPTY_SEGMENT);
     if (!roadKey) {
       setRoadProfile(null);
       setRoadProfileLoading(false);
@@ -1599,7 +1692,10 @@ export default function Overview({ query = "", onQuery }) {
     let dead = false;
     setRoadProfile(null);
     setRoadProfileLoading(true);
-    loadRoadProfile(roadKey, active?.id || "", place || "")
+    loadRoadProfile(roadKey, active?.id || "", place || "", {
+      pavementField,
+      drainageMode,
+    })
       .then((result) => {
         if (!dead) setRoadProfile(result);
       })
@@ -1612,7 +1708,7 @@ export default function Overview({ query = "", onQuery }) {
     return () => {
       dead = true;
     };
-  }, [roadKey, active?.id, place]);
+  }, [roadKey, active?.id, place, pavementField, drainageMode]);
   const analysisDim =
     statsLayerId === PAVEMENT_LAYER_ID
       ? pavementField
@@ -1956,11 +2052,15 @@ export default function Overview({ query = "", onQuery }) {
           selectedKey={roadKey}
           onQuery={(value) => {
             setRoadQuery(value);
-            if (!value.trim()) setRoadKey("");
+            if (!value.trim()) {
+              setRoadKey("");
+              setRoadFromAnalysis(false);
+            }
           }}
           onPick={(item) => {
             setRoadKey(item.key);
             setRoadQuery(item.label);
+            setRoadFromAnalysis(false);
             setRoadZoomNonce((value) => value + 1);
             const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
             if (networkId != null) {
@@ -1972,6 +2072,7 @@ export default function Overview({ query = "", onQuery }) {
           onClear={() => {
             setRoadKey("");
             setRoadQuery("");
+            setRoadFromAnalysis(false);
           }}
         />
         {levels.map((level, index) => {
@@ -2067,6 +2168,7 @@ export default function Overview({ query = "", onQuery }) {
               typeValue={typeValue}
               roadKey={roadKey}
               roadZoomNonce={roadZoomNonce}
+              segmentFocus={segmentFocus}
               roadIds={roadProfile?.ids || EMPTY_IDS}
               typeRoadKeys={
                 typeValue
@@ -2160,6 +2262,7 @@ export default function Overview({ query = "", onQuery }) {
                 const key = road.code || road.key;
                 setRoadKey(key);
                 setRoadQuery(road.code || road.label || key);
+                setRoadFromAnalysis(true);
                 setRoadZoomNonce((value) => value + 1);
                 // Hide solid network so pavement condition colours show along the road.
                 const networkId = LRS_LAYER_DEFS.find((def) => def.route)?.id;
@@ -2172,7 +2275,7 @@ export default function Overview({ query = "", onQuery }) {
                 }
               }}
             />
-            {roadKey ? (
+            {roadKey && roadFromAnalysis ? (
               <section
                 className="ov-strips"
                 aria-label="Line events along the road"
@@ -2194,6 +2297,22 @@ export default function Overview({ query = "", onQuery }) {
                         : null
                     }
                     typeValue={def.id === statsLayerId ? typeValue : ""}
+                    pavementField={pavementField}
+                    drainageMode={drainageMode}
+                    activeSegment={segmentFocus}
+                    onZoomSegment={({ layerId, objectId, label }) => {
+                      setSegmentFocus((current) => ({
+                        layerId,
+                        objectId,
+                        label: label || "",
+                        nonce: (current.nonce || 0) + 1,
+                      }));
+                      // Make sure the layer is visible for the zoomed segment.
+                      setMuted((current) =>
+                        current.filter((id) => id !== layerId),
+                      );
+                      setLineFocus(String(layerId));
+                    }}
                   />
                 ))}
               </section>

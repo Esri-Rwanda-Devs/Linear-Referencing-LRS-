@@ -110,8 +110,7 @@
   gap: 10px;
   align-items: stretch;
 }
-.ov-map-section,
-.ov-lines {
+.ov-map-section {
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -119,12 +118,27 @@
   overflow: hidden;
   padding-bottom: 10px;
 }
-.ov-map-section {
-  min-width: 0;
-}
 .ov-lines {
+  min-width: 0;
+  min-height: 0;
   max-width: 100%;
-  overflow: auto;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.ov-lines > h3 {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 0 6px;
+  padding: 2px 0 6px;
+  background: var(--color-background);
 }
 .ov-analysis {
   flex: none;
@@ -404,14 +418,40 @@
   overflow: hidden;
   background: color-mix(in srgb, var(--color-border) 55%, transparent);
 }
-.ov-strip-track i {
+.ov-strip-track i,
+.ov-strip-seg {
   position: absolute;
   top: 0;
   bottom: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--color-surface) 70%, transparent);
+  cursor: pointer;
 }
-.ov-strip-track i.dim {
+.ov-strip-track i.dim,
+.ov-strip-seg.dim {
   opacity: 0.18;
+}
+.ov-strip-seg:hover,
+.ov-strip-seg.on {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+  z-index: 1;
+}
+.ov-strip-seg:disabled {
+  cursor: default;
+}
+.ov-strip-row-click {
+  cursor: pointer;
+}
+.ov-strip-row-click:hover td,
+.ov-strip-row-click.on td {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.ov-strip-row-click.off {
+  cursor: default;
+  opacity: 0.75;
 }
 .ov-strip-axis {
   display: flex;

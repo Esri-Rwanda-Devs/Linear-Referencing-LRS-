@@ -16,6 +16,7 @@ import {
   loadBoundaryGeometry,
   loadModules,
   loadOverviewFields,
+  loadFeature,
   loadPavementRoad,
   overviewWhere,
   signInToLrs,
@@ -346,6 +347,7 @@ export default function OverviewMap({
   typeValue = "",
   roadKey = "",
   roadZoomNonce = 0,
+  segmentFocus = null,
   typeRoadKeys = [],
   roadIds = [],
   pavementField = "category",
@@ -760,6 +762,66 @@ export default function OverviewMap({
       dead = true;
     };
   }, [ready, roadKey, roadZoomNonce]);
+
+  // Zoom to a clicked line-event segment along the selected road.
+  useEffect(() => {
+    const objectId = Number(segmentFocus?.objectId);
+    const layerId = Number(segmentFocus?.layerId);
+    if (!ready || !Number.isFinite(objectId) || !Number.isFinite(layerId))
+      return undefined;
+    const def = LRS_LAYER_DEFS.find((item) => item.id === layerId);
+    const view = viewRef.current;
+    const Graphic = GraphicRef.current;
+    const highlight = highlightRef.current;
+    if (!def || !view || !Graphic) return undefined;
+    let dead = false;
+    const label = segmentFocus?.label || def.title;
+    setNote(`Zooming to ${label}…`);
+    loadFeature(def, objectId)
+      .then(async (feature) => {
+        if (dead || !viewRef.current || !feature?.geometry) {
+          if (!dead) setNote(`Could not load that ${def.title} segment.`);
+          return;
+        }
+        const raw = feature.geometry;
+        const geometry =
+          raw.paths && PolylineRef.current
+            ? new PolylineRef.current({
+                paths: raw.paths,
+                spatialReference: raw.spatialReference || { wkid: 4326 },
+              })
+            : raw;
+        highlight?.removeAll();
+        highlight?.add(
+          new Graphic({
+            geometry,
+            symbol: {
+              type: "simple-line",
+              color: [56, 189, 248, 1],
+              width: 6,
+              cap: "round",
+              join: "round",
+            },
+          }),
+        );
+        await viewRef.current
+          .goTo({ target: geometry, padding: FIT_PADDING }, { duration: 550 })
+          .catch(() => {});
+        if (!dead) setNote(`${label} on the map`);
+      })
+      .catch(() => {
+        if (!dead) setNote(`Could not zoom to that segment.`);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [
+    ready,
+    segmentFocus?.nonce,
+    segmentFocus?.objectId,
+    segmentFocus?.layerId,
+    segmentFocus?.label,
+  ]);
 
   const filterKey = choices
     .map((item) => `${item.def.id}:${item.on ? 1 : 0}:${item.where || ""}`)

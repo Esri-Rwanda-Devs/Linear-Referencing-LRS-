@@ -3,6 +3,7 @@ import {
   DRAINAGE_FIELDS,
   LRS,
   LRS_LAYER_DEFS,
+  PAVEMENT_FIELDS as PAVEMENT_FIELD_SPECS,
   PAVEMENT_LAYER_ID,
   PORTAL,
   SNAP_METERS,
@@ -1863,10 +1864,12 @@ async function countNearLine(def, line, extraWhere) {
  * Everything on one road: point asset counts and each line event's segments
  * (from/to km and category), optionally inside one boundary.
  */
-export async function loadRoadProfile(key, levelId = "", areaName = "") {
+export async function loadRoadProfile(key, levelId = "", areaName = "", options = {}) {
   const road = await resolveRoad(key);
   let linePromise = null;
   const centreline = () => (linePromise ||= roadLine(road).catch(() => null));
+  const pavementDim = String(options.pavementField || "category").trim();
+  const drainageDim = String(options.drainageMode || "type").trim();
   const layers = LRS_LAYER_DEFS.filter(
     (def) => (def.kind === "point" || def.kind === "line") && !def.route,
   );
@@ -1902,9 +1905,27 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
         }
         if (!clause) return { id: def.id, count: null, segments: [] };
         const where = areaWhere ? `${clause} AND ${areaWhere}` : clause;
-        const value = valueFieldOf(meta, def);
-        const drain = def.id === 6 ? drainagePair(fields, "type") : null;
+        // Pavement strip follows Category / Type / Surface / PCI like the analysis chart.
+        let value = valueFieldOf(meta, def);
+        if (def.id === PAVEMENT_LAYER_ID) {
+          const spec =
+            pavementDim === "paved_band"
+              ? PAVEMENT_FIELD_SPECS.category
+              : PAVEMENT_FIELD_SPECS[pavementDim] || PAVEMENT_FIELD_SPECS.category;
+          const override = String(spec?.field || "").trim();
+          if (override) {
+            value =
+              fields.find(
+                (field) => field.name.toLowerCase() === override.toLowerCase(),
+              ) || { name: override, type: "esriFieldTypeString" };
+          }
+        }
+        const drain =
+          def.id === 6 ? drainagePair(fields, drainageDim || "type") : null;
         const routeField = namedField(fields, ROUTE_ID_FIELDS, /routeid/i);
+        const oidField =
+          fields.find((field) => field.type === "esriFieldTypeOID")?.name ||
+          "OBJECTID";
         const widthField = fields.find((field) =>
           /^width(_m|m)?$/i.test(field.name),
         );
@@ -1917,6 +1938,7 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
         const outFields = [
           ...new Set(
             [
+              oidField,
               routeField,
               value?.name,
               drain?.lhs?.name,
@@ -1957,7 +1979,9 @@ export async function loadRoadProfile(key, levelId = "", areaName = "") {
           ) {
             km = Math.abs(to - from);
           }
+          const objectId = Number(attributeOf(attrs, oidField));
           const base = {
+            objectId: Number.isFinite(objectId) ? objectId : null,
             route: routeField ? String(attrs[routeField] ?? "").trim() : "",
             from: Number.isFinite(from) ? Math.min(from, to) : null,
             to: Number.isFinite(to) ? Math.max(from, to) : null,
