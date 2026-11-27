@@ -5,6 +5,7 @@ import {
   LRS,
   LRS_LAYER_DEFS,
   OVERVIEW_DEFAULT_POINTS,
+  PAVEMENT_CATEGORY,
   PAVEMENT_FIELDS,
   PAVEMENT_LAYER_ID,
   SNAP_METERS,
@@ -83,6 +84,22 @@ function mapLineColor(value, alpha = 0.98) {
   return rgb;
 }
 
+function lineWidthFor(def, key, baseWidth, widths = null) {
+  const name = String(key || "")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (widths?.[name] != null) return Number(widths[name]);
+  // Carriageway sketch: 4 lanes thick, 2 lanes medium, intermediate thin.
+  if (def?.id === 3) {
+    if (/four/.test(name)) return 10;
+    if (/two/.test(name)) return 5.5;
+    if (/intermediate/.test(name)) return 2.4;
+  }
+  return baseWidth;
+}
+
 function lineRenderer(def, valueField, colorMap = null) {
   // Thin enough that satellite / streets basemap stays visible under events.
   const width = def.route
@@ -97,6 +114,7 @@ function lineRenderer(def, valueField, colorMap = null) {
   };
   const rule = VALUE_COLORS[def.id];
   const colors = colorMap || rule?.colors;
+  const widths = rule?.widths || null;
   if (!colors || !valueField?.name || def.kind !== "line" || def.route) {
     return {
       type: "simple",
@@ -116,15 +134,26 @@ function lineRenderer(def, valueField, colorMap = null) {
     Object.keys(colors).some((key) =>
       /poor|fair|good|excellent/i.test(key),
     );
-  const valueExpression = needsStatus
+  const needsCarriage = def.id === 3;
+  const valueExpression = needsCarriage
     ? `var raw = $feature["${safe}"];
+       if (IsEmpty(raw)) return "no data";
+       var t = Lower(Trim(Text(raw)));
+       if (t == "" || t == "null" || t == "nan") return "no data";
+       t = Replace(Replace(Replace(t, "_", " "), "-", " "), "  ", " ");
+       if (Find("four", t) >= 0 || Find("4 lane", t) >= 0) return "four lane divided";
+       if (Find("intermediate", t) >= 0) return "intermediate lane";
+       if (Find("two", t) >= 0 || Find("2 lane", t) >= 0) return "two lane";
+       return Trim(t);`
+    : needsStatus
+      ? `var raw = $feature["${safe}"];
        if (IsEmpty(raw)) return "no data";
        var t = Lower(Trim(Text(raw)));
        if (t == "" || t == "null" || t == "nan") return "no data";
        t = Replace(Replace(Replace(t, "_", " "), "-", " "), "  ", " ");
        var p = Find("(", t);
        return p > 0 ? Trim(Left(t, p - 1)) : Trim(t);`
-    : `var raw = $feature["${safe}"];
+      : `var raw = $feature["${safe}"];
        if (IsEmpty(raw)) return "no data";
        var t = Lower(Trim(Text(raw)));
        if (t == "" || t == "null" || t == "nan") return "no data";
@@ -137,12 +166,18 @@ function lineRenderer(def, valueField, colorMap = null) {
       .trim();
     // Keep fully paved / paved as true black when that is the configured colour.
     const keepBlack = key === "fully paved" || key === "paved";
+    const lineWidth = lineWidthFor(
+      def,
+      key,
+      Math.max(width, needsStatus ? 3.6 : 3.2),
+      widths,
+    );
     return {
       value: key,
       symbol: {
         type: "simple-line",
         color: keepBlack ? cssToRgb(color, 0.98) : mapLineColor(color),
-        width: Math.max(width, needsStatus ? 3.6 : 3.2),
+        width: lineWidth,
         cap: "round",
         join: "round",
       },
@@ -185,7 +220,7 @@ function layerChoice(
   roadKey = "",
   typeRoadKeys = [],
   roadIds = [],
-  pavementField = "category",
+  pavementField = "paved_band",
 ) {
   const typeOn = Boolean(String(typeValue || "").trim());
   const roadOn = Boolean(String(roadKey || "").trim());
@@ -193,8 +228,12 @@ function layerChoice(
     !roadOn && Array.isArray(typeRoadKeys) && typeRoadKeys.length > 0;
   const isLineish = def.kind === "line";
   const isRoute = Boolean(def.route);
-  const pavedBand =
-    pavementField === "paved_band" && def.id === PAVEMENT_LAYER_ID;
+  // Road-level Fully/Partially bands — filter by road list, not attribute value.
+  const bandAnalysis =
+    (pavementField === "paved_band" && def.id === PAVEMENT_LAYER_ID) ||
+    def.id === 3 ||
+    def.id === 14 ||
+    def.id === 6;
   // When Line event is "all" but a type is set, treat Pavement as the focus layer
   // (paved/unpaved) or keep the explicit focus id.
   const focusId = (() => {
@@ -265,10 +304,10 @@ function layerChoice(
   if (muted.includes(def.id) && !forceOn)
     return { on: false, where: null, reason: "Turned off", locked: false };
 
-  // Paved band is a derived road attribute — filter by road list, not pavement_category.
-  // Surface / Type / PCI / Category: filter pavement segments by the field value so
-  // non-matching conditions are hidden; road list only for network (+ paved band).
-  const applyType = typeOn && isFocusLayer && !isRoute && !pavedBand;
+  // Fully/Partially bands are derived road attributes — filter by road list.
+  // Surface / Type / PCI: filter pavement segments by the field value so
+  // non-matching conditions are hidden; road list only for network (+ bands).
+  const applyType = typeOn && isFocusLayer && !isRoute && !bandAnalysis;
   const applyRoad =
     roadOn &&
     (isFocusLayer ||
@@ -276,7 +315,7 @@ function layerChoice(
       (!focusOn && !typeOn && isLineish) ||
       (roadPoint && fieldsReady && roadColumns));
   const applyRoadList =
-    typeRoadsOn && (isRoute || (pavedBand && isFocusLayer));
+    typeRoadsOn && (isRoute || (bandAnalysis && isFocusLayer));
   const extras = {
     typeValue: applyType ? typeValue : "",
     layerId: applyType ? def.id : null,
@@ -350,7 +389,7 @@ export default function OverviewMap({
   segmentFocus = null,
   typeRoadKeys = [],
   roadIds = [],
-  pavementField = "category",
+  pavementField = "paved_band",
   drainageMode = "type",
   analysisLabel = "",
   pavedPct = null,
@@ -966,7 +1005,7 @@ export default function OverviewMap({
     const focusSpec =
       pavementField === "paved_band"
         ? PAVEMENT_FIELDS.paved_band
-        : PAVEMENT_FIELDS[pavementField] || PAVEMENT_FIELDS.category;
+        : PAVEMENT_FIELDS[pavementField] || PAVEMENT_CATEGORY;
     const selectedKey = String(typeValue || "")
       .trim()
       .toLowerCase()
@@ -974,6 +1013,7 @@ export default function OverviewMap({
       .replace(/\s+/g, " ");
     const mergedColors = {
       ...(focusSpec?.colors || {}),
+      ...(PAVEMENT_CATEGORY.colors || {}),
       ...(chartColors || {}),
     };
     const resolveColor = (key) => {
@@ -1002,9 +1042,14 @@ export default function OverviewMap({
         join: "round",
       },
     });
-    if (pavement && pavementDef) {
+    const focusId =
+      lineFocus !== "all" && Number.isFinite(Number(lineFocus))
+        ? Number(lineFocus)
+        : PAVEMENT_LAYER_ID;
+    const paintPavement = focusId === PAVEMENT_LAYER_ID;
+    if (pavement && pavementDef && paintPavement) {
       if (selectedColor) {
-        // Clicked Surface / PCI / Paved band / Category bar → map uses that colour.
+        // Clicked Surface / PCI / Paved band bar → map uses that colour.
         const paint = solidLine(
           selectedColor,
           roadKey ? 4.4 : 3.8,
@@ -1018,9 +1063,7 @@ export default function OverviewMap({
       } else {
         // No bar selected — show full segment distribution (PCI / Surface / …).
         const fieldSpec =
-          pavementField === "paved_band"
-            ? PAVEMENT_FIELDS.category
-            : focusSpec;
+          pavementField === "paved_band" ? PAVEMENT_CATEGORY : focusSpec;
         if (fieldSpec?.field) {
           const distWidth =
             pavementField === "pci" || roadKey ? 4.2 : pavementDef.width;
@@ -1047,6 +1090,54 @@ export default function OverviewMap({
       } catch {
         /* ignore */
       }
+    } else if (!paintPavement && focusId === 3) {
+      // Carriageway: thick 4-lane, medium 2-lane, thin intermediate.
+      const carriageDef = LRS_LAYER_DEFS.find((item) => item.id === 3);
+      const carriage = layersRef.current.get(3);
+      const carriageColors = {
+        ...(VALUE_COLORS[3]?.colors || {}),
+        ...(focusId === 3 ? chartColors || {} : {}),
+      };
+      if (carriage && carriageDef) {
+        if (selectedColor) {
+          const w = lineWidthFor(carriageDef, selectedKey, roadKey ? 4.4 : 3.8);
+          carriage.renderer = solidLine(selectedColor, w);
+        } else {
+          carriage.renderer = lineRenderer(
+            carriageDef,
+            { name: VALUE_COLORS[3]?.field || "lane_type" },
+            carriageColors,
+          );
+        }
+        try {
+          carriage.refresh?.();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (network && selectedColor) {
+        const w = lineWidthFor(
+          { id: 3 },
+          selectedKey,
+          roadKey ? 4.4 : 3.8,
+        );
+        network.renderer = solidLine(selectedColor, w);
+        network.opacity = 0.95;
+        try {
+          network.refresh?.();
+        } catch {
+          /* ignore */
+        }
+      }
+    } else if (network && selectedColor && !paintPavement) {
+      // Speed / Drainage band selection → colour the network.
+      network.renderer = solidLine(selectedColor, roadKey ? 4.4 : 3.8);
+      network.opacity = 0.95;
+      try {
+        network.refresh?.();
+      } catch {
+        /* ignore */
+      }
     }
     const drainage = layersRef.current.get(6);
     if (drainage) {
@@ -1055,10 +1146,21 @@ export default function OverviewMap({
       drainage.renderer = lineRenderer(
         LRS_LAYER_DEFS.find((item) => item.id === 6),
         { name: fieldName },
-        spec.colors,
+        {
+          ...(spec.colors || {}),
+          ...(focusId === 6 ? chartColors || {} : {}),
+        },
       );
     }
-  }, [ready, pavementField, drainageMode, typeValue, chartColors, roadKey]);
+  }, [
+    ready,
+    pavementField,
+    drainageMode,
+    typeValue,
+    chartColors,
+    roadKey,
+    lineFocus,
+  ]);
 
   // Hide district administrative boundaries while a chart / road filter is active.
   useEffect(() => {

@@ -182,9 +182,9 @@ export const LRS_LAYER_DEFS = [
     group: "ATT",
     kind: "line",
     shape: "bar",
-    color: [196, 181, 253, 0.95],
-    width: 2,
-    swatch: "#c4b5fd",
+    color: [217, 119, 87, 0.95],
+    width: 4,
+    swatch: "#d97757",
   },
   {
     id: 14,
@@ -352,11 +352,18 @@ export const VALUE_COLORS = {
   },
   3: {
     field: "lane_type",
+    // Match overview sketch: 4 = thick terracotta, 2 = medium tan, I = thin cream.
     colors: {
-      "four lane divided": "#4C1D95",
-      "four lane divided carriageway": "#4C1D95",
-      "two lane": "#C4B5FD",
-      "intermediate lane": "#A78BFA",
+      "four lane divided": "#D97757",
+      "four lane divided carriageway": "#D97757",
+      "two lane": "#E6C29A",
+      "intermediate lane": "#F0E6A8",
+    },
+    widths: {
+      "four lane divided": 10,
+      "four lane divided carriageway": 10,
+      "two lane": 5.5,
+      "intermediate lane": 2.4,
     },
   },
   10: {
@@ -415,13 +422,14 @@ export const DRAINAGE_FIELDS = {
   },
 };
 
-/** Overview pavement analysis dimensions. */
+/** Paved / unpaved collapse used by paved-band analysis (not shown as a chip). */
+export const PAVEMENT_CATEGORY = {
+  field: "pavement_category",
+  colors: { paved: "#000000", unpaved: "#F0BEA5" },
+};
+
+/** Overview pavement analysis dimensions (Category removed — use Paved band). */
 export const PAVEMENT_FIELDS = {
-  category: {
-    field: "pavement_category",
-    label: "Category",
-    colors: { paved: "#000000", unpaved: "#F0BEA5" },
-  },
   pavement_type: {
     field: "pavement_type",
     label: "Type",
@@ -465,6 +473,9 @@ export const PAVEMENT_FIELDS = {
     },
   },
 };
+
+/** Share above this % counts as "Fully …" (paved band and other line events). */
+export const FULLY_BAND_PCT = 90;
 
 export const RWANDA_EXTENT = {
   xmin: 3195067.83,

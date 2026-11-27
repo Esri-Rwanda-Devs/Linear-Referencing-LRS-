@@ -3,6 +3,7 @@ import {
   DRAINAGE_FIELDS,
   LRS,
   LRS_LAYER_DEFS,
+  PAVEMENT_CATEGORY,
   PAVEMENT_FIELDS as PAVEMENT_FIELD_SPECS,
   PAVEMENT_LAYER_ID,
   PORTAL,
@@ -1868,7 +1869,7 @@ export async function loadRoadProfile(key, levelId = "", areaName = "", options 
   const road = await resolveRoad(key);
   let linePromise = null;
   const centreline = () => (linePromise ||= roadLine(road).catch(() => null));
-  const pavementDim = String(options.pavementField || "category").trim();
+  const pavementDim = String(options.pavementField || "paved_band").trim();
   const drainageDim = String(options.drainageMode || "type").trim();
   const layers = LRS_LAYER_DEFS.filter(
     (def) => (def.kind === "point" || def.kind === "line") && !def.route,
@@ -1910,8 +1911,8 @@ export async function loadRoadProfile(key, levelId = "", areaName = "", options 
         if (def.id === PAVEMENT_LAYER_ID) {
           const spec =
             pavementDim === "paved_band"
-              ? PAVEMENT_FIELD_SPECS.category
-              : PAVEMENT_FIELD_SPECS[pavementDim] || PAVEMENT_FIELD_SPECS.category;
+              ? PAVEMENT_CATEGORY
+              : PAVEMENT_FIELD_SPECS[pavementDim] || PAVEMENT_CATEGORY;
           const override = String(spec?.field || "").trim();
           if (override) {
             value =

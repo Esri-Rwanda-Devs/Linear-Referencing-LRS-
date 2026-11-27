@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { assetIcons } from "../../../assets";
 import {
   DRAINAGE_FIELDS,
+  FULLY_BAND_PCT,
   LRS_LAYER_DEFS,
   OVERVIEW_DEFAULT_POINTS,
   PAVEMENT_FIELDS,
@@ -90,7 +91,9 @@ function analysisTypeShares(types, totalKm, layerId, opts = {}) {
   const collapse =
     opts.collapsePavement !== false &&
     Number(layerId) === PAVEMENT_LAYER_ID &&
-    (!opts.pavementField || opts.pavementField === "category");
+    (!opts.pavementField ||
+      opts.pavementField === "paved_band" ||
+      opts.pavementField === "category");
   const source = collapse ? collapsePavementTypes(types) : types;
   const typeSum = (source || []).reduce(
     (sum, item) => sum + (Number(item.km) || 0),
@@ -124,9 +127,30 @@ function shortTitle(def) {
 /** Display name for a category, e.g. speed "60" → "60 km/h". */
 function typeLabel(layerId, name) {
   const text = String(name ?? "").trim();
+  const band = text.match(/^(fully|partially)\s+(.+)$/i);
+  if (band) {
+    const kind = band[1].replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+    return `${kind} ${typeLabel(layerId, band[2])}`;
+  }
   if (Number(layerId) === 14 && /^\d+(\.\d+)?$/.test(text))
     return `${text} km/h`;
   return text.replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+}
+
+/** Line events that categorise roads with Fully (>90%) / Partially bands. */
+function usesRoadBands(layerId, pavementField = "") {
+  const id = Number(layerId);
+  // Pavement: Category removed — Type / Surface / PCI / Paved band all use road bands.
+  if (id === PAVEMENT_LAYER_ID) {
+    return (
+      pavementField === "paved_band" ||
+      pavementField === "pavement_type" ||
+      pavementField === "surface_type" ||
+      pavementField === "pci"
+    );
+  }
+  // Carriageway, Speed, Drainage — same Fully / Partially rule.
+  return id === 3 || id === 14 || id === 6;
 }
 
 /** Sum each category's km and segments across roads. */
@@ -308,6 +332,15 @@ function typeColor(layerId, name, fallback, dim = "") {
     colors = DRAINAGE_FIELDS[dim].colors || colors;
   }
   if (colors[key]) return colors[key];
+  // Fully / Partially {type} bands reuse the underlying type colour.
+  const band = key.match(/^(fully|partially)\s+(.+)$/i);
+  if (band) {
+    const base = typeColor(layerId, band[2], fallback, dim);
+    if (band[1].toLowerCase() === "partially" && base) {
+      return base;
+    }
+    if (base) return base;
+  }
   if (Number(layerId) === 3) {
     if (/four/.test(key)) return colors["four lane divided"] || fallback;
     if (/two/.test(key)) return colors["two lane"] || fallback;
@@ -330,15 +363,24 @@ function typeColor(layerId, name, fallback, dim = "") {
 
 function pavedBandOf(pct) {
   if (!(Number.isFinite(pct) && pct > 0)) return "Unpaved";
-  if (pct > 90) return "Fully paved";
+  if (pct > FULLY_BAND_PCT) return "Fully paved";
   return "Partially paved";
+}
+
+/** Same thresholds as paved band, labelled for the dominant attribute. */
+function dominantBandOf(pct, typeName) {
+  const label = String(typeName || "").trim() || "value";
+  if (!(Number.isFinite(pct) && pct > 0)) return "No data";
+  if (/^no\s*data$/i.test(label)) return "No data";
+  if (pct > FULLY_BAND_PCT) return `Fully ${label}`;
+  return `Partially ${label}`;
 }
 
 function roadsToPavedBands(roads) {
   return (roads || []).map((road) => {
     const share = roadTypeShare(road, "paved", PAVEMENT_LAYER_ID, {
       collapsePavement: true,
-      pavementField: "category",
+      pavementField: "paved_band",
     });
     const pct = Number.isFinite(share.pct) ? share.pct : 0;
     return {
@@ -347,26 +389,63 @@ function roadsToPavedBands(roads) {
       pavedPct: pct,
       unpavedPct: Math.max(0, 100 - pct),
       pavedBand: pavedBandOf(pct),
+      typeBand: pavedBandOf(pct),
     };
   });
 }
 
-/** Share of roads (by km) in each paved band. */
+/** Classify each road by dominant type share (Fully >90% / Partially / No data). */
+function roadsToDominantBands(roads, layerId, opts = {}) {
+  return (roads || []).map((road) => {
+    const totalKm = Number(road.totalKm) || 0;
+    const shares = analysisTypeShares(
+      Object.values(road.byType || {}),
+      totalKm,
+      layerId,
+      opts,
+    );
+    const top =
+      [...shares].sort((a, b) => (Number(b.km) || 0) - (Number(a.km) || 0))[0] ||
+      null;
+    const pct = Number.isFinite(top?.pct) ? top.pct : 0;
+    const name = String(top?.name || "").trim();
+    return {
+      ...road,
+      dominantPct: pct,
+      dominantType: name,
+      typeBand: dominantBandOf(pct, name),
+    };
+  });
+}
 function bandTypeShares(roads) {
-  const buckets = {
-    Unpaved: { name: "Unpaved", km: 0, count: 0 },
-    "Partially paved": { name: "Partially paved", km: 0, count: 0 },
-    "Fully paved": { name: "Fully paved", km: 0, count: 0 },
-  };
+  const buckets = {};
   (roads || []).forEach((road) => {
-    const band = road.pavedBand || pavedBandOf(road.pavedPct);
-    const entry = buckets[band] || buckets.Unpaved;
+    const band =
+      road.typeBand ||
+      road.pavedBand ||
+      pavedBandOf(road.pavedPct) ||
+      "No data";
+    const entry = buckets[band] || { name: band, km: 0, count: 0 };
     entry.km += Number(road.totalKm) || 0;
     entry.count += 1;
+    buckets[band] = entry;
   });
-  const list = Object.values(buckets).filter(
-    (item) => item.km > 0 || item.count > 0,
-  );
+  const rank = (name) => {
+    const key = String(name || "")
+      .trim()
+      .toLowerCase();
+    if (key === "unpaved" || key === "no data") return 0;
+    if (key.startsWith("partially")) return 1;
+    if (key.startsWith("fully")) return 2;
+    return 3;
+  };
+  const list = Object.values(buckets)
+    .filter((item) => item.km > 0 || item.count > 0)
+    .sort(
+      (a, b) =>
+        rank(a.name) - rank(b.name) ||
+        String(a.name).localeCompare(String(b.name)),
+    );
   const total = list.reduce((sum, item) => sum + item.km, 0);
   return complementTypeShares(list, total).map((item) => ({
     ...item,
@@ -659,7 +738,10 @@ function RoadTypeBar({ road, layerId, shareLabel, dim = "" }) {
     Object.values(road?.byType || {}),
     totalKm,
     layerId,
-    { pavementField: dim, collapsePavement: dim === "category" || !dim },
+    {
+      pavementField: dim,
+      collapsePavement: dim === "paved_band" || dim === "category" || !dim,
+    },
   );
   if (!types.length || !(totalKm > 0)) return null;
   const focus = String(shareLabel || "")
@@ -723,7 +805,7 @@ function AnalysisBox({
   typeValue,
   shareLabel,
   layerId,
-  pavementField = "category",
+  pavementField = "paved_band",
   drainageMode = "type",
   roads,
   loading,
@@ -741,11 +823,13 @@ function AnalysisBox({
       : Number(layerId) === 6
         ? drainageMode
         : "";
-  const bandMode = dim === "paved_band";
-  // Paved-band rows still chart paved/unpaved km; chips filter by band.
+  const bandMode = usesRoadBands(layerId, pavementField);
+  const pavedBandMode =
+    Number(layerId) === PAVEMENT_LAYER_ID && pavementField === "paved_band";
+  // Band rows still chart raw type km; chips filter by Fully / Partially band.
   const shareOpts = {
-    pavementField: bandMode ? "category" : dim,
-    collapsePavement: bandMode || dim === "category" || !dim,
+    pavementField: pavedBandMode ? "paved_band" : dim,
+    collapsePavement: pavedBandMode || dim === "category" || !dim,
   };
   const needle = String(roadKey || "")
     .trim()
@@ -872,9 +956,11 @@ function AnalysisBox({
           <header>
             <strong>{selected.code || selected.label}</strong>
             <span>
-              {bandMode && Number.isFinite(selected.pavedPct)
+              {pavedBandMode && Number.isFinite(selected.pavedPct)
                 ? `${selected.pavedBand || ""} · Paved ${selected.pavedPct}% · Unpaved ${selected.unpavedPct ?? 100 - selected.pavedPct}% · `
-                : ""}
+                : bandMode && selected.typeBand
+                  ? `${typeLabel(layerId, selected.typeBand)}${Number.isFinite(selected.dominantPct) ? ` · ${selected.dominantPct}%` : ""} · `
+                  : ""}
               {kmText(selected.totalKm)} km · {numberText(selected.segments)}{" "}
               seg
               {Number(layerId) === 14 && selected.avgSpeed != null
@@ -886,8 +972,14 @@ function AnalysisBox({
           <RoadTypeBar
             road={selected}
             layerId={layerId}
-            shareLabel={bandMode ? "paved" : typeValue || shareLabel}
-            dim={bandMode ? "category" : dim}
+            shareLabel={
+              pavedBandMode
+                ? "paved"
+                : bandMode
+                  ? selected.dominantType || typeValue || shareLabel
+                  : typeValue || shareLabel
+            }
+            dim={pavedBandMode ? "paved_band" : dim}
           />
         </button>
       ) : null}
@@ -920,7 +1012,7 @@ function AnalysisBox({
               : pavedPct != null
                 ? Math.max(0, 100 - pavedPct)
                 : null;
-            const pairText = bandMode
+            const pairText = pavedBandMode
               ? [
                   road.pavedBand || null,
                   pavedPct != null ? `Paved ${pavedPct}%` : null,
@@ -928,24 +1020,39 @@ function AnalysisBox({
                 ]
                   .filter(Boolean)
                   .join(" · ")
-              : parts
-                  .map(
-                    (item) => `${typeLabel(layerId, item.name)} ${item.pct}%`,
-                  )
-                  .join(" · ");
+              : bandMode
+                ? [
+                    road.typeBand
+                      ? typeLabel(layerId, road.typeBand)
+                      : null,
+                    Number.isFinite(road.dominantPct)
+                      ? `${road.dominantPct}%`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : parts
+                    .map(
+                      (item) => `${typeLabel(layerId, item.name)} ${item.pct}%`,
+                    )
+                    .join(" · ");
             const speedNote =
               Number(layerId) === 14 && road.avgSpeed != null
                 ? ` · avg ${road.avgSpeed} km/h`
                 : "";
-            const headLabel = bandMode
+            const headLabel = pavedBandMode
               ? pavedPct != null
                 ? `Paved ${pavedPct}%`
                 : road.pavedBand || "—"
-              : Number(layerId) === 14 && road.avgSpeed != null
-                ? `Avg ${road.avgSpeed} km/h`
-                : focusPart
-                  ? `${typeLabel(layerId, focusPart.name)} ${focusPart.pct}%`
-                  : "—";
+              : bandMode
+                ? road.typeBand
+                  ? typeLabel(layerId, road.typeBand)
+                  : "—"
+                : Number(layerId) === 14 && road.avgSpeed != null
+                  ? `Avg ${road.avgSpeed} km/h`
+                  : focusPart
+                    ? `${typeLabel(layerId, focusPart.name)} ${focusPart.pct}%`
+                    : "—";
             return (
               <li key={road.key}>
                 <button
@@ -962,8 +1069,14 @@ function AnalysisBox({
                   <RoadTypeBar
                     road={road}
                     layerId={layerId}
-                    shareLabel={bandMode ? "paved" : typeValue || shareLabel}
-                    dim={bandMode ? "category" : dim}
+                    shareLabel={
+                      pavedBandMode
+                        ? "paved"
+                        : bandMode
+                          ? road.dominantType || typeValue || shareLabel
+                          : typeValue || shareLabel
+                    }
+                    dim={pavedBandMode ? "paved_band" : dim}
                   />
                   <span>
                     {pairText}
@@ -994,7 +1107,7 @@ function SegmentStrip({
   def,
   layer,
   typeValue,
-  pavementField = "category",
+  pavementField = "paved_band",
   drainageMode = "type",
   onZoomSegment,
   activeSegment,
@@ -1006,14 +1119,15 @@ function SegmentStrip({
   const isPavement = Number(def.id) === PAVEMENT_LAYER_ID;
   const dim = isPavement
     ? pavementField === "paved_band"
-      ? "category"
+      ? "paved_band"
       : pavementField
     : Number(def.id) === 6
       ? drainageMode
       : "";
-  // Only collapse to paved/unpaved for Category (and paved-band display).
+  // Collapse to paved/unpaved for paved-band display.
   const collapse =
-    isPavement && (pavementField === "category" || pavementField === "paved_band");
+    isPavement &&
+    (pavementField === "paved_band" || pavementField === "category");
   const colorOf = (type) =>
     typeColor(
       def.id,
@@ -1024,8 +1138,13 @@ function SegmentStrip({
   const matches = (type) => {
     if (!focus) return true;
     if (sameName(type, focus)) return true;
-    if (collapse && focus === "paved") return isPavedName(type);
+    if (collapse && (focus === "paved" || focus === "fully paved"))
+      return isPavedName(type);
     if (collapse && focus === "unpaved") return !isPavedName(type);
+    // Partially paved / other bands are road-level — keep all segments.
+    if (collapse && focus === "partially paved") return true;
+    const bandBase = focus.match(/^(fully|partially)\s+(.+)$/);
+    if (bandBase && sameName(type, bandBase[2])) return true;
     // PCI status may be stored as "Fair(25-50)" while the chart uses "Fair".
     const raw = String(type || "")
       .trim()
@@ -1430,7 +1549,7 @@ export default function Overview({ query = "", onQuery }) {
   const [muted, setMuted] = useState(DEFAULT_MUTED);
   const [lineFocus, setLineFocus] = useState(String(PAVEMENT_LAYER_ID));
   const [typeValue, setTypeValue] = useState("");
-  const [pavementField, setPavementField] = useState("category");
+  const [pavementField, setPavementField] = useState("paved_band");
   const [drainageMode, setDrainageMode] = useState("type");
   const [roadKey, setRoadKey] = useState("");
   const [roadZoomNonce, setRoadZoomNonce] = useState(0);
@@ -1715,31 +1834,38 @@ export default function Overview({ query = "", onQuery }) {
       : statsLayerId === 6
         ? drainageMode
         : "";
+  const bandMode = usesRoadBands(statsLayerId, pavementField);
   const shareOpts = useMemo(
     () => ({
       pavementField: analysisDim,
       collapsePavement:
+        analysisDim === "paved_band" ||
         analysisDim === "category" ||
         (statsLayerId === PAVEMENT_LAYER_ID && !analysisDim),
     }),
     [analysisDim, statsLayerId],
   );
   const analysisRoads = useMemo(() => {
+    // Paved band: Fully / Partially / Unpaved from paved %.
     if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
       return roadsToPavedBands(roadStats);
     }
+    // Type / Surface / PCI (+ carriageway, speed, drainage): band by dominant share.
+    if (usesRoadBands(statsLayerId, pavementField)) {
+      return roadsToDominantBands(roadStats, statsLayerId, {
+        ...shareOpts,
+        collapsePavement: false,
+      });
+    }
     return roadStats;
-  }, [roadStats, statsLayerId, pavementField]);
+  }, [roadStats, statsLayerId, pavementField, shareOpts]);
   const shareLabel = useMemo(() => {
     if (typeValue) return String(typeValue);
-    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "category")
-      return "paved";
-    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band")
-      return "";
+    if (bandMode) return "";
     return "";
-  }, [typeValue, statsLayerId, pavementField]);
+  }, [typeValue, bandMode]);
   const categories = useMemo(() => {
-    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
+    if (bandMode) {
       return bandTypeShares(analysisRoads);
     }
     const { types, totalKm } = aggregateTypes(analysisRoads);
@@ -1750,42 +1876,32 @@ export default function Overview({ query = "", onQuery }) {
         .trim()
         .toLowerCase();
       const roads = analysisRoads.filter((road) => {
-        if (
-          statsLayerId === PAVEMENT_LAYER_ID &&
-          pavementField === "paved_band"
-        ) {
-          return (
-            String(road.pavedBand || "")
-              .trim()
-              .toLowerCase() === needle
-          );
-        }
         if (roadHasType(road, needle)) return true;
         const share = roadTypeShare(road, needle, statsLayerId, shareOpts);
         return share.matchSeg > 0 || share.matchKm > 0;
       }).length;
       return { ...item, roads };
     });
-  }, [analysisRoads, statsLayerId, shareOpts, pavementField]);
+  }, [analysisRoads, statsLayerId, shareOpts, bandMode]);
   const typeFilteredRoads = useMemo(() => {
     const typeNeedle = String(typeValue || "")
       .trim()
       .toLowerCase();
     if (!typeNeedle) return analysisRoads;
-    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
-      return analysisRoads.filter(
-        (road) =>
-          String(road.pavedBand || "")
-            .trim()
-            .toLowerCase() === typeNeedle,
-      );
+    if (bandMode) {
+      return analysisRoads.filter((road) => {
+        const band = String(road.typeBand || road.pavedBand || "")
+          .trim()
+          .toLowerCase();
+        return band === typeNeedle;
+      });
     }
     return analysisRoads.filter((road) => {
       if (roadHasType(road, typeNeedle)) return true;
       const share = roadTypeShare(road, typeNeedle, statsLayerId, shareOpts);
       return share.matchSeg > 0 || share.matchKm > 0;
     });
-  }, [analysisRoads, typeValue, statsLayerId, shareOpts, pavementField]);
+  }, [analysisRoads, typeValue, statsLayerId, shareOpts, bandMode]);
   const filteredRoadStats = useMemo(() => {
     const needle = String(roadKey || "")
       .trim()
@@ -1801,7 +1917,7 @@ export default function Overview({ query = "", onQuery }) {
   const typeShares = useMemo(() => {
     // When a road is picked, share/KPI follow that road's distribution.
     const sourceRoads = roadKey ? filteredRoadStats : typeFilteredRoads;
-    if (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band") {
+    if (bandMode) {
       return bandTypeShares(sourceRoads);
     }
     if (sourceRoads.length) {
@@ -1814,7 +1930,7 @@ export default function Overview({ query = "", onQuery }) {
       );
       if (shares.length) return shares;
     }
-    if (statsLayerId !== PAVEMENT_LAYER_ID || pavementField !== "category")
+    if (statsLayerId !== PAVEMENT_LAYER_ID || pavementField !== "paved_band")
       return [];
     const groups = pavementGroups || [];
     const total = groups.reduce(
@@ -1823,7 +1939,7 @@ export default function Overview({ query = "", onQuery }) {
     );
     return analysisTypeShares(groups, total, PAVEMENT_LAYER_ID, {
       collapsePavement: true,
-      pavementField: "category",
+      pavementField: "paved_band",
     });
   }, [
     typeFilteredRoads,
@@ -1833,11 +1949,17 @@ export default function Overview({ query = "", onQuery }) {
     statsLayerId,
     pavementField,
     shareOpts,
+    bandMode,
   ]);
   // Map badge: share of the chosen category (or paved / dominant) across all analysed roads.
   const headline = useMemo(() => {
     const focus =
-      typeValue || (statsLayerId === PAVEMENT_LAYER_ID ? "paved" : "");
+      typeValue ||
+      (statsLayerId === PAVEMENT_LAYER_ID && pavementField === "paved_band"
+        ? ""
+        : statsLayerId === PAVEMENT_LAYER_ID
+          ? "paved"
+          : "");
     const hit = focus
       ? categories.find((item) => sameName(item.name, focus))
       : categories[0];
@@ -1849,7 +1971,7 @@ export default function Overview({ query = "", onQuery }) {
       if (Number.isFinite(pct)) return `Paved ${pct}%`;
     }
     return "";
-  }, [categories, typeValue, statsLayerId, pavementGroups]);
+  }, [categories, typeValue, statsLayerId, pavementField, pavementGroups]);
   // Same colours as the analysis chart → unique-value renderer on the map.
   const chartColors = useMemo(
     () =>

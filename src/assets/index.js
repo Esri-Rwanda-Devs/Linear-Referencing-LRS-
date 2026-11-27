@@ -14,7 +14,7 @@ import { MdOutlineDraw } from "react-icons/md";
 import { GiJoin } from "react-icons/gi";
 import { TbRulerMeasure } from "react-icons/tb";
 import { RiDeleteBin6Line } from "react-icons/ri";
-
+import { TfiLayoutLineSolid } from "react-icons/tfi";
 
 
 export const assetImages = {
@@ -40,4 +40,5 @@ export const assetIcons = {
   Join: GiJoin,
   Ruler: TbRulerMeasure,
   Delete: RiDeleteBin6Line,
+  Layout: TfiLayoutLineSolid,
 };
